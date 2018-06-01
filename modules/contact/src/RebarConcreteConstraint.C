@@ -125,7 +125,7 @@ RebarConcreteConstraint::jacobianSetup()
 }
 
 bool
-RebarConcreteConstraint::shouldApply(Node * node)
+RebarConcreteConstraint::shouldApply()
 {
   std::cout << "          In RebarConcreteConstraint::shouldApply" << std::endl;
   //currently always assume in contact
@@ -138,18 +138,18 @@ RebarConcreteConstraint::shouldApply(Node * node)
   // This computes the contact force once per constraint, rather than once per quad point
   // and for both master and slave cases.
   if (_component == 0)
-    computeContactForce(node, is_nonlinear);
+    computeContactForce(is_nonlinear);
 
   std::cout << "          Out RebarConcreteConstraint::shouldApply" << std::endl;
   return in_contact;
 }
 
 void
-RebarConcreteConstraint::computeContactForce(Node * node, bool update_contact_set)
+RebarConcreteConstraint::computeContactForce(bool update_contact_set)
 {
   std::cout << "          In RebarConcreteConstraint::computeContactForce" << std::endl;
   //const Node * node = pinfo->_node;
-  //const Node * node = _current_node;
+  const Node * node = _current_node;
   if (node != NULL)
     std::cout << "               current node id: " << node->id() << std::endl;
   else

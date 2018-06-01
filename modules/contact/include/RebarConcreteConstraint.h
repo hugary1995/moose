@@ -77,8 +77,8 @@ public:
 
   virtual bool addCouplingEntriesToJacobian() override { return _master_slave_jacobian; }
 
-  bool shouldApply(Node * node);
-  void computeContactForce(Node * node, bool update_contact_set);
+  bool shouldApply() override;
+  void computeContactForce(bool update_contact_set);
 
 protected:
   MooseSharedPointer<DisplacedProblem> _displaced_problem;
