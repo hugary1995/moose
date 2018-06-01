@@ -1132,8 +1132,14 @@ NonlinearSystemBase::constraintResiduals(NumericVector<Number> & residual, bool 
 
       if (bnode->_bnd_id == slave)
       {
+        //debug messages
         std::cout << "          MATCHED! on constrained Node: " << bnode->_node->id() << std::endl;
+        std::cout << "                     ";
+        bnode->_node->print();
+        std::cout << std::endl;
         std::cout << "                   on constrained Boundary: " << slave << std::endl;
+
+
         // NodeElemConstraint objects
         const auto & _node_element_constraints = necs_itr->second.getActiveObjects();
 
@@ -1143,6 +1149,15 @@ NonlinearSystemBase::constraintResiduals(NumericVector<Number> & residual, bool 
         auto pointLocator = _mesh.getPointLocator();
         const std::set<subdomain_id_type> allowed_subdomains {master};
         const Elem * master_elem = pointLocator->operator() (*slave_node, &allowed_subdomains);
+
+        //debug messages
+        std::cout << "                   master elem id: " << master_elem->id() << std::endl;
+        for (auto & n : master_elem->node_ref_range())
+        {
+          std::cout << "                     ";
+          n.print();
+          std::cout << std::endl;
+        }
 
         // *These next steps MUST be done in this order!*
 
