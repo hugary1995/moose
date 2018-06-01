@@ -47,8 +47,8 @@ public:
   getActiveElemElemConstraints(InterfaceID interface_id, bool displaced) const;
   const std::vector<std::shared_ptr<NodeFaceConstraint>> &
   getActiveNodeFaceConstraints(BoundaryID boundary_id, bool displaced) const;
-  const std::vector<std::shared_ptr<NodeElemConstraint>> &
-  getActiveNodeElemConstraints(BoundaryID boundary_id, bool displaced) const;
+  //const std::vector<std::shared_ptr<NodeElemConstraint>> &
+  //getActiveNodeElemConstraints(BoundaryID boundary_id, bool displaced) const;
   ///@}
 
   ///@{
@@ -59,7 +59,7 @@ public:
   bool hasActiveMortarConstraints(const std::string & interface) const;
   bool hasActiveElemElemConstraints(const InterfaceID interface_id, bool displaced) const;
   bool hasActiveNodeFaceConstraints(BoundaryID boundary_id, bool displaced) const;
-  bool hasActiveNodeElemConstraints(BoundaryID boundary_id, bool displaced) const;
+  //bool hasActiveNodeElemConstraints(BoundaryID boundary_id, bool displaced) const;
   ///@}
 
   /**
@@ -78,10 +78,10 @@ public:
 
 
   /// NodeElemConstraint objects (non-displaced)
-  std::map<BoundaryID, MooseObjectWarehouse<NodeElemConstraint>> _node_elem_constraints;
+  std::map<std::pair<BoundaryID, SubdomainID>, MooseObjectWarehouse<NodeElemConstraint>> _node_elem_constraints;
 
   /// NodeElemConstraint objects (displaced)
-  std::map<BoundaryID, MooseObjectWarehouse<NodeElemConstraint>> _displaced_node_elem_constraints;
+  std::map<std::pair<BoundaryID, SubdomainID>, MooseObjectWarehouse<NodeElemConstraint>> _displaced_node_elem_constraints;
 
 protected:
   /// NodalConstraint objects

@@ -1105,7 +1105,7 @@ NonlinearSystemBase::constraintResiduals(NumericVector<Number> & residual, bool 
   }
 
   //go over NodeELemConstraints
-  std::map<BoundaryID, MooseObjectWarehouse<NodeElemConstraint>>::const_iterator necs_itr, necs_begin, necs_end;
+  std::map<std::pair<BoundaryID, SubdomainID>, MooseObjectWarehouse<NodeElemConstraint>>::const_iterator necs_itr, necs_begin, necs_end;
   if (!displaced)
   {
     necs_begin = _constraints._node_elem_constraints.begin();
@@ -1126,8 +1126,9 @@ NonlinearSystemBase::constraintResiduals(NumericVector<Number> & residual, bool 
     for (necs_itr = necs_begin ; necs_itr != necs_end; necs_itr++)
     {
       //slave boundary id
-      BoundaryID slave = necs_itr->first;
-
+      BoundaryID slave = necs_itr->first.first;
+      //master block id
+      SubdomainID master = necs_itr->first.second;
 
       if (bnode->_bnd_id == slave)
       {
@@ -1135,6 +1136,29 @@ NonlinearSystemBase::constraintResiduals(NumericVector<Number> & residual, bool 
         std::cout << "                   on constrained Boundary: " << slave << std::endl;
         // NodeElemConstraint objects
         const auto & _node_element_constraints = necs_itr->second.getActiveObjects();
+
+        //slave node
+        const Node * slave_node = bnode->_node;
+        //master element
+        auto pointLocator = _mesh.getPointLocator();
+        const std::set<subdomain_id_type> allowed_subdomains {master};
+        const Elem * master_elem = pointLocator->operator() (*slave_node, &allowed_subdomains);
+
+        // *These next steps MUST be done in this order!*
+
+        // This reinits the variables that exist on the slave node and master element
+        _fe_problem.reinitNode(slave_node, 0);
+        _fe_problem.reinitElem(master_elem, 0);
+
+        // This will set aside residual and jacobian space for the variables that have dofs on
+        // the slave node
+        _fe_problem.prepareAssembly(0);
+
+        std::vector<Point> points;
+        points.push_back(*slave_node);
+
+        // reinit variables on the master element's faces at the contact point
+        _fe_problem.reinitElemPhys(master_elem, points, 0);
 
         //go over NodeElemConstraints
         std::cout << "          about to set up NodeElemConstraint" << std::endl;
