@@ -1161,9 +1161,8 @@ NonlinearSystemBase::constraintResiduals(NumericVector<Number> & residual, bool 
 
         // *These next steps MUST be done in this order!*
 
-        // This reinits the variables that exist on the slave node and master element
+        // This reinits the variables that exist on the slave node
         _fe_problem.reinitNode(slave_node, 0);
-        _fe_problem.reinitElem(master_elem, 0);
 
         // This will set aside residual and jacobian space for the variables that have dofs on
         // the slave node
@@ -1174,6 +1173,12 @@ NonlinearSystemBase::constraintResiduals(NumericVector<Number> & residual, bool 
 
         // reinit variables on the master element's faces at the contact point
         _fe_problem.reinitElemPhys(master_elem, points, 0);
+
+        //debug messages
+        std::cout << "          After initialization, current node: " << _fe_problem.assembly(0).node()->id() << std::endl;
+        std::cout << "                     ";
+        _fe_problem.assembly(0).node()->print();
+        std::cout << std::endl;
 
         //go over NodeElemConstraints
         std::cout << "          about to set up NodeElemConstraint" << std::endl;

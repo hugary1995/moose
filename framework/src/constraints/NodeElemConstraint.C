@@ -47,8 +47,8 @@ NodeElemConstraint::NodeElemConstraint(const InputParameters & parameters)
     _master_q_point(_assembly.qPoints()),
     _master_qrule(_assembly.qRule()),
 
-    _current_node(_var.node()),
-    _current_master(_var.neighbor()),
+    _current_node(_assembly.node()),
+    _current_master(_assembly.elem()),
     _u_slave(_var.dofValues()),
     _u_slave_old(_var.dofValuesOld()),
     _phi_slave(1),  // One entry
