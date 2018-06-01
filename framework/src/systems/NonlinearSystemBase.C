@@ -44,6 +44,7 @@
 #include "PenetrationLocator.h"
 #include "NodalConstraint.h"
 #include "NodeFaceConstraint.h"
+#include "NodeElemConstraint.h"
 #include "MortarConstraint.h"
 #include "ElemElemConstraint.h"
 #include "ScalarKernel.h"
@@ -1067,7 +1068,7 @@ NonlinearSystemBase::constraintResiduals(NumericVector<Number> & residual, bool 
     {
       // ElemElemConstraint objects
       const auto & _element_constraints =
-          _constraints.getActiveElemElemConstraints(it.first, displaced);
+        _constraints.getActiveElemElemConstraints(it.first, displaced);
 
       // go over pair elements
       const std::list<std::pair<const Elem *, const Elem *>> & elem_pairs =
@@ -1100,6 +1101,62 @@ NonlinearSystemBase::constraintResiduals(NumericVector<Number> & residual, bool 
         }
         _fe_problem.addCachedResidual(tid);
       }
+    }
+  }
+
+  //go over NodeELemConstraints
+  std::map<BoundaryID, MooseObjectWarehouse<NodeElemConstraint>>::const_iterator necs_itr, necs_begin, necs_end;
+  if (!displaced)
+  {
+    necs_begin = _constraints._node_elem_constraints.begin();
+    necs_end = _constraints._node_elem_constraints.end();
+  }
+  else
+  {
+    necs_begin = _constraints._displaced_node_elem_constraints.begin();
+    necs_end = _constraints._displaced_node_elem_constraints.end();
+  }
+
+  // go over slave nodes
+  ConstBndNodeRange & bnd_nodes = *_mesh.getBoundaryNodeRange();
+
+  std::cout << "about to iterate through boundary nodes" << std::endl;
+  for (const auto & bnode : bnd_nodes)
+  {
+    for (necs_itr = necs_begin ; necs_itr != necs_end; necs_itr++)
+    {
+      //slave boundary id
+      BoundaryID slave = necs_itr->first;
+
+
+      if (bnode->_bnd_id == slave)
+      {
+        std::cout << "          MATCHED! on constrained Node: " << bnode->_node->id() << std::endl;
+        std::cout << "                   on constrained Boundary: " << slave << std::endl;
+        // NodeElemConstraint objects
+        const auto & _node_element_constraints = necs_itr->second.getActiveObjects();
+
+        //go over NodeElemConstraints
+        std::cout << "          about to set up NodeElemConstraint" << std::endl;
+        for (const auto & nec : _node_element_constraints)
+        {
+          if (nec->shouldApply())
+          {
+            constraints_applied = true;
+            nec->computeResidual();
+
+            if (nec->overwriteSlaveResidual())
+            {
+              _fe_problem.setResidual(residual, 0);
+              residual_has_inserted_values = true;
+            }
+            else
+              _fe_problem.cacheResidual(0);
+            _fe_problem.cacheResidualNeighbor(0);
+          }
+        }
+      }
+      _fe_problem.addCachedResidual(tid);
     }
   }
 }
