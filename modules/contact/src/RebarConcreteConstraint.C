@@ -70,12 +70,13 @@ validParams<RebarConcreteConstraint>()
                         "variables that are not "
                         "displacement variables.");
 
+  params.set<bool>("use_displaced_mesh") = false;
+
   return params;
 }
 
 RebarConcreteConstraint::RebarConcreteConstraint(const InputParameters & parameters)
   : NodeElemConstraint(parameters),
-    _displaced_problem(parameters.get<FEProblemBase *>("_fe_problem_base")->getDisplacedProblem()),
     _fe_problem(*parameters.get<FEProblem *>("_fe_problem")),
     _component(getParam<unsigned int>("component")),
     _model(ContactMaster::contactModel(getParam<std::string>("model"))),
@@ -88,7 +89,7 @@ RebarConcreteConstraint::RebarConcreteConstraint(const InputParameters & paramet
     _connected_slave_nodes_jacobian(getParam<bool>("connected_slave_nodes_jacobian")),
     _non_displacement_vars_jacobian(getParam<bool>("non_displacement_variables_jacobian"))
 {
-  std::cout << "In RebarConcreteConstraint()" << std::endl;
+  // std::cout << "In RebarConcreteConstraint()" << std::endl;
   _overwrite_slave_residual = false;
 
   if (isParamValid("displacements"))
@@ -127,7 +128,7 @@ RebarConcreteConstraint::jacobianSetup()
 bool
 RebarConcreteConstraint::shouldApply()
 {
-  std::cout << "          In RebarConcreteConstraint::shouldApply" << std::endl;
+  // std::cout << "          In RebarConcreteConstraint::shouldApply" << std::endl;
   //currently always assume in contact
   bool in_contact = true;
 
@@ -140,14 +141,14 @@ RebarConcreteConstraint::shouldApply()
   if (_component == 0)
     computeContactForce(is_nonlinear);
 
-  std::cout << "          Out RebarConcreteConstraint::shouldApply" << std::endl;
+  // std::cout << "          Out RebarConcreteConstraint::shouldApply" << std::endl;
   return in_contact;
 }
 
 void
 RebarConcreteConstraint::computeContactForce(bool update_contact_set)
 {
-  std::cout << "          In RebarConcreteConstraint::computeContactForce" << std::endl;
+  // std::cout << "          In RebarConcreteConstraint::computeContactForce" << std::endl;
   //const Node * node = pinfo->_node;
   const Node * node = _current_node;
   if (node != NULL)
@@ -186,7 +187,7 @@ RebarConcreteConstraint::computeContactForce(bool update_contact_set)
       mooseError("Invalid or unavailable contact model");
       break;
   }
-  std::cout << "          Out RebarConcreteConstraint::computeContactForce" << std::endl;
+  // std::cout << "          Out RebarConcreteConstraint::computeContactForce" << std::endl;
 }
 
 Real
@@ -198,7 +199,7 @@ RebarConcreteConstraint::computeQpSlaveValue()
 Real
 RebarConcreteConstraint::computeQpResidual(Moose::ConstraintType type)
 {
-  std::cout << "          In RebarConcreteConstraint::computeQpResidual" << std::endl;
+  // std::cout << "          In RebarConcreteConstraint::computeQpResidual" << std::endl;
   Real resid = _contact_force(_component);
   switch (type)
   {
@@ -210,7 +211,7 @@ RebarConcreteConstraint::computeQpResidual(Moose::ConstraintType type)
         if (_model == CM_GLUED)
           resid += pen_force(_component);
       }
-      std::cout << "          Out RebarConcreteConstraint::computeQpResidual" << std::endl;
+      // std::cout << "          Out RebarConcreteConstraint::computeQpResidual" << std::endl;
       return _test_slave[_i][_qp] * resid;
 
     case Moose::Master:
@@ -380,7 +381,7 @@ RebarConcreteConstraint::computeQpOffDiagJacobian(Moose::ConstraintJacobianType 
 void
 RebarConcreteConstraint::computeJacobian()
 {
-  std::cout << "          In RebarConcreteConstraint::computeQpResidual" << std::endl;
+  // std::cout << "          In RebarConcreteConstraint::computeQpResidual" << std::endl;
   getConnectedDofIndices(_var.number());
 
   DenseMatrix<Number> & Knn =
@@ -414,7 +415,7 @@ RebarConcreteConstraint::computeJacobian()
       for (_j = 0; _j < _phi_master.size(); _j++)
         Knn(_i, _j) += computeQpJacobian(Moose::MasterMaster);
 
-  std::cout << "          Out RebarConcreteConstraint::computeQpResidual" << std::endl;
+  // std::cout << "          Out RebarConcreteConstraint::computeQpResidual" << std::endl;
 }
 
 void

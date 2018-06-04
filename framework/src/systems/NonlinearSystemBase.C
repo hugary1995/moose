@@ -1106,21 +1106,12 @@ NonlinearSystemBase::constraintResiduals(NumericVector<Number> & residual, bool 
 
   //go over NodeELemConstraints
   std::map<std::pair<BoundaryID, SubdomainID>, MooseObjectWarehouse<NodeElemConstraint>>::const_iterator necs_itr, necs_begin, necs_end;
-  if (!displaced)
-  {
-    necs_begin = _constraints._node_elem_constraints.begin();
-    necs_end = _constraints._node_elem_constraints.end();
-  }
-  else
-  {
-    necs_begin = _constraints._displaced_node_elem_constraints.begin();
-    necs_end = _constraints._displaced_node_elem_constraints.end();
-  }
+  necs_begin = _constraints._node_elem_constraints.begin();
+  necs_end = _constraints._node_elem_constraints.end();
 
   // go over slave nodes
   ConstBndNodeRange & bnd_nodes = *_mesh.getBoundaryNodeRange();
 
-  std::cout << "about to iterate through boundary nodes" << std::endl;
   for (const auto & bnode : bnd_nodes)
   {
     for (necs_itr = necs_begin ; necs_itr != necs_end; necs_itr++)
@@ -1132,12 +1123,12 @@ NonlinearSystemBase::constraintResiduals(NumericVector<Number> & residual, bool 
 
       if (bnode->_bnd_id == slave)
       {
-        //debug messages
-        std::cout << "          MATCHED! on constrained Node: " << bnode->_node->id() << std::endl;
-        std::cout << "                     ";
-        bnode->_node->print();
-        std::cout << std::endl;
-        std::cout << "                   on constrained Boundary: " << slave << std::endl;
+        // //debug messages
+        // std::cout << "          MATCHED! on constrained Node: " << bnode->_node->id() << std::endl;
+        // std::cout << "                     ";
+        // bnode->_node->print();
+        // std::cout << std::endl;
+        // std::cout << "                   on constrained Boundary: " << slave << std::endl;
 
 
         // NodeElemConstraint objects
@@ -1150,14 +1141,14 @@ NonlinearSystemBase::constraintResiduals(NumericVector<Number> & residual, bool 
         const std::set<subdomain_id_type> allowed_subdomains {master};
         const Elem * master_elem = pointLocator->operator() (*slave_node, &allowed_subdomains);
 
-        //debug messages
-        std::cout << "                   master elem id: " << master_elem->id() << std::endl;
-        for (auto & n : master_elem->node_ref_range())
-        {
-          std::cout << "                     ";
-          n.print();
-          std::cout << std::endl;
-        }
+        // //debug messages
+        // std::cout << "                   master elem id: " << master_elem->id() << std::endl;
+        // for (auto & n : master_elem->node_ref_range())
+        // {
+        //   std::cout << "                     ";
+        //   n.print();
+        //   std::cout << std::endl;
+        // }
 
         // *These next steps MUST be done in this order!*
 
@@ -1174,14 +1165,20 @@ NonlinearSystemBase::constraintResiduals(NumericVector<Number> & residual, bool 
         // reinit variables on the master element's faces at the contact point
         _fe_problem.reinitElemPhys(master_elem, points, 0);
 
-        //debug messages
-        std::cout << "          After initialization, current node: " << _fe_problem.assembly(0).node()->id() << std::endl;
-        std::cout << "                     ";
-        _fe_problem.assembly(0).node()->print();
-        std::cout << std::endl;
+        // //debug messages
+        // std::cout << "          After initialization, current node: " << _fe_problem.assembly(0).node()->id() << std::endl;
+        // std::cout << "                     ";
+        // _fe_problem.assembly(0).node()->print();
+        // std::cout << std::endl;
+        // std::cout << "          After initialization, current elem: " << _fe_problem.assembly(0).elem()->id() << std::endl;
+        // for (auto & n : _fe_problem.assembly(0).elem()->node_ref_range())
+        // {
+        //   std::cout << "                     ";
+        //   n.print();
+        //   std::cout << std::endl;
+        // }
 
         //go over NodeElemConstraints
-        std::cout << "          about to set up NodeElemConstraint" << std::endl;
         for (const auto & nec : _node_element_constraints)
         {
           if (nec->shouldApply())
