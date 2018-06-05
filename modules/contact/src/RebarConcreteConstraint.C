@@ -198,7 +198,7 @@ RebarConcreteConstraint::computeQpResidual(Moose::ConstraintType type)
     case Moose::Slave:
       if (_formulation == CF_KINEMATIC)
       {
-        RealVectorValue distance_vec(_u_slave[_qp] - _u_master[_qp]);
+        RealVectorValue distance_vec(_u_slave[_qp] - _u_slave_old[_qp]);
         RealVectorValue pen_force(_penalty * distance_vec);
         if (_model == CM_GLUED)
           resid += pen_force(_component);
