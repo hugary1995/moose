@@ -1947,6 +1947,134 @@ NonlinearSystemBase::constraintJacobians(bool displaced)
       }
     }
   }
+
+  //go over NodeELemConstraints
+  std::map<std::pair<BoundaryID, SubdomainID>, MooseObjectWarehouse<NodeElemConstraint>>::const_iterator necs_itr, necs_begin, necs_end;
+  necs_begin = _constraints._node_elem_constraints.begin();
+  necs_end = _constraints._node_elem_constraints.end();
+
+  // go over slave nodes
+  ConstBndNodeRange & bnd_nodes = *_mesh.getBoundaryNodeRange();
+
+  for (const auto & bnode : bnd_nodes)
+  {
+    for (necs_itr = necs_begin ; necs_itr != necs_end; necs_itr++)
+    {
+      //slave boundary id
+      BoundaryID slave = necs_itr->first.first;
+      //master block id
+      SubdomainID master = necs_itr->first.second;
+
+      if (bnode->_bnd_id == slave)
+      {
+        // NodeElemConstraint objects
+        const auto & _node_element_constraints = necs_itr->second.getActiveObjects();
+
+        //slave node
+        const Node * slave_node = bnode->_node;
+        //master element
+        auto pointLocator = _mesh.getPointLocator();
+        const std::set<subdomain_id_type> allowed_subdomains {master};
+        const Elem * master_elem = pointLocator->operator() (*slave_node, &allowed_subdomains);
+
+        // *These next steps MUST be done in this order!*
+
+        // This reinits the variables that exist on the slave node
+        _fe_problem.reinitNode(slave_node, 0);
+
+        // This will set aside residual and jacobian space for the variables that have dofs on
+        // the slave node
+        _fe_problem.prepareAssembly(0);
+
+        std::vector<Point> points;
+        points.push_back(*slave_node);
+
+        // reinit variables on the master element's faces at the contact point
+        _fe_problem.reinitElemPhys(master_elem, points, 0);
+
+        for (const auto & nec : _node_element_constraints)
+        {
+          nec->_jacobian = &jacobian;
+
+          if (nec->shouldApply())
+          {
+            constraints_applied = true;
+
+            nec->subProblem().prepareShapes(nec->variable().number(), 0);
+            nec->subProblem().prepareNeighborShapes(nec->variable().number(), 0);
+
+            nec->computeJacobian();
+
+            if (nec->overwriteSlaveJacobian())
+            {
+              // Add this variable's dof's row to be zeroed
+              zero_rows.push_back(nec->variable().nodalDofIndex());
+            }
+
+            std::vector<dof_id_type> slave_dofs(1, nec->variable().nodalDofIndex());
+
+            // Cache the jacobian block for the slave side
+            _fe_problem.assembly(0).cacheJacobianBlock(nec->_Kee,
+                                                       slave_dofs,
+                                                       nec->_connected_dof_indices,
+                                                       nec->variable().scalingFactor());
+
+            // Cache the jacobian block for the master side
+            if (nec->addCouplingEntriesToJacobian())
+              _fe_problem.assembly(0).cacheJacobianBlock(
+                  nec->_Kne,
+                  nec->masterVariable().dofIndicesNeighbor(),
+                  nec->_connected_dof_indices,
+                  nec->variable().scalingFactor());
+
+            _fe_problem.cacheJacobian(0);
+            if (nec->addCouplingEntriesToJacobian())
+              _fe_problem.cacheJacobianNeighbor(0);
+
+            // Do the off-diagonals next
+            const std::vector<MooseVariableFEBase *> coupled_vars = nec->getCoupledMooseVars();
+            for (const auto & jvar : coupled_vars)
+            {
+              // Only compute jacobians for nonlinear variables
+              if (jvar->kind() != Moose::VAR_NONLINEAR)
+                continue;
+
+              // Only compute Jacobian entries if this coupling is being used by the
+              // preconditioner
+              if (nec->variable().number() == jvar->number() ||
+                  !_fe_problem.areCoupled(nec->variable().number(), jvar->number()))
+                continue;
+
+              // Need to zero out the matrices first
+              _fe_problem.prepareAssembly(0);
+
+              nec->subProblem().prepareShapes(nec->variable().number(), 0);
+              nec->subProblem().prepareNeighborShapes(jvar->number(), 0);
+
+              nec->computeOffDiagJacobian(jvar->number());
+
+              // Cache the jacobian block for the slave side
+              _fe_problem.assembly(0).cacheJacobianBlock(nec->_Kee,
+                                                         slave_dofs,
+                                                         nec->_connected_dof_indices,
+                                                         nec->variable().scalingFactor());
+
+              // Cache the jacobian block for the master side
+              if (nec->addCouplingEntriesToJacobian())
+                _fe_problem.assembly(0).cacheJacobianBlock(nec->_Kne,
+                                                           nec->variable().dofIndicesNeighbor(),
+                                                           nec->_connected_dof_indices,
+                                                           nec->variable().scalingFactor());
+
+              _fe_problem.cacheJacobian(0);
+              if (nec->addCouplingEntriesToJacobian())
+                _fe_problem.cacheJacobianNeighbor(0);
+            }
+          }
+        }
+      }
+    }
+  }
 }
 
 void

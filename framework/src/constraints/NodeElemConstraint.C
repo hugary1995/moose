@@ -218,8 +218,6 @@ NodeElemConstraint::getConnectedDofIndices(unsigned int var_num)
   auto _pl = _mesh.getPointLocator();
   const std::set<subdomain_id_type> allowed_subdomains {_master};
   const Elem * elem = _pl->operator() (*_current_node, &allowed_subdomains);
-  std::cout << "               current node id: " << _current_node->id() << std::endl;
-  std::cout << "               resident element id: " << elem->id() << std::endl;
 
   var.getDofIndices(elem, _connected_dof_indices);
 }

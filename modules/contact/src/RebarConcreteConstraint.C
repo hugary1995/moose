@@ -151,20 +151,12 @@ RebarConcreteConstraint::computeContactForce(bool update_contact_set)
   // std::cout << "          In RebarConcreteConstraint::computeContactForce" << std::endl;
   //const Node * node = pinfo->_node;
   const Node * node = _current_node;
-  if (node != NULL)
-    std::cout << "               current node id: " << node->id() << std::endl;
-  else
-    std::cout << "               current node NULL " << std::endl;
-
-
 
   // Build up residual vector
-  std::cout << "               about to build residual vector" << std::endl;
   RealVectorValue res_vec;
   for (unsigned int i = 0; i < _mesh_dimension; ++i)
   {
     dof_id_type dof_number = node->dof_number(0, _vars[i], 0);
-    std::cout << "                    dof id: " << dof_number << std::endl;
     res_vec(i) = _residual_copy(dof_number);
   }
 
@@ -206,7 +198,7 @@ RebarConcreteConstraint::computeQpResidual(Moose::ConstraintType type)
     case Moose::Slave:
       if (_formulation == CF_KINEMATIC)
       {
-        RealVectorValue distance_vec(_u_slave[_qp] - _u_slave_old[_qp]);
+        RealVectorValue distance_vec(_u_slave[_qp] - _u_master[_qp]);
         RealVectorValue pen_force(_penalty * distance_vec);
         if (_model == CM_GLUED)
           resid += pen_force(_component);
