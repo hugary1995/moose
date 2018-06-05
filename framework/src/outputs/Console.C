@@ -20,6 +20,9 @@
 #include "FormattedTable.h"
 #include "NonlinearSystem.h"
 
+// libMesh includes
+#include "libmesh/enum_norm_type.h"
+
 registerMooseObject("MooseApp", Console);
 
 template <>
@@ -373,6 +376,9 @@ Console::writeStreamToFile(bool append)
     output.open(filename().c_str(), std::ios::app | std::ios::out);
   else
     output.open(filename().c_str(), std::ios::trunc);
+
+  if (output.fail())
+    mooseError("Unable to open file ", filename());
 
   std::string s = _file_output_stream.str();
   // Write contents of file output stream and close the file

@@ -113,10 +113,10 @@ AnnularMesh::getMaxInDimension(unsigned int component) const
   }
 }
 
-MooseMesh &
-AnnularMesh::clone() const
+std::unique_ptr<MooseMesh>
+AnnularMesh::safeClone() const
 {
-  return *(new AnnularMesh(*this));
+  return libmesh_make_unique<AnnularMesh>(*this);
 }
 
 void

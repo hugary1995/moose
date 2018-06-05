@@ -29,7 +29,8 @@ public:
   // No copy
   GeneratedMesh & operator=(const GeneratedMesh & other_mesh) = delete;
 
-  virtual MooseMesh & clone() const override;
+  virtual std::unique_ptr<MooseMesh> safeClone() const override;
+
   virtual void buildMesh() override;
   virtual Real getMinInDimension(unsigned int component) const override;
   virtual Real getMaxInDimension(unsigned int component) const override;

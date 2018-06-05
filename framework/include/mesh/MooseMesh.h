@@ -84,7 +84,14 @@ public:
   /**
    * Clone method.  Allocates memory you are responsible to clean up.
    */
-  virtual MooseMesh & clone() const = 0;
+  virtual MooseMesh & clone() const;
+
+  /**
+   * A safer version of the clone() method that hands back an
+   * allocated object wrapped in a smart pointer. This makes it much
+   * less likely that the caller will leak the memory in question.
+   */
+  virtual std::unique_ptr<MooseMesh> safeClone() const = 0;
 
   /**
    * Initialize the Mesh object.  Most of the time this will turn around

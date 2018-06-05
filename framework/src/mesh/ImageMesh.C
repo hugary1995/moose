@@ -56,10 +56,10 @@ ImageMesh::ImageMesh(const ImageMesh & other_mesh)
 {
 }
 
-MooseMesh &
-ImageMesh::clone() const
+std::unique_ptr<MooseMesh>
+ImageMesh::safeClone() const
 {
-  return *(new ImageMesh(*this));
+  return libmesh_make_unique<ImageMesh>(*this);
 }
 
 void

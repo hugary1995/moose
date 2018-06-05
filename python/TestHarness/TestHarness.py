@@ -148,6 +148,7 @@ class TestHarness:
             checks['cxx11'] = set(['ALL'])
             checks['asio'] =  set(['ALL'])
             checks['boost'] = set(['ALL'])
+            checks['fparser_jit'] = set(['ALL'])
         else:
             checks['compiler'] = util.getCompilers(self.libmesh_dir)
             checks['petsc_version'] = util.getPetscVersion(self.libmesh_dir)
@@ -169,6 +170,7 @@ class TestHarness:
             checks['cxx11'] =  util.getLibMeshConfigOption(self.libmesh_dir, 'cxx11')
             checks['asio'] =  util.getIfAsioExists(self.moose_dir)
             checks['boost'] =  util.getLibMeshConfigOption(self.libmesh_dir, 'boost')
+            checks['fparser_jit'] =  util.getLibMeshConfigOption(self.libmesh_dir, 'fparser_jit')
 
         # Override the MESH_MODE option if using the '--distributed-mesh'
         # or (deprecated) '--parallel-mesh' option.
@@ -473,7 +475,7 @@ class TestHarness:
 
             # Just print current status without saving results
             else:
-                print(util.formatResult(job, self.options, result='RUNNING...', caveats=False))
+                print(util.formatResult(job, self.options, result='RUNNING', caveats=False))
 
     # Print final results, close open files, and exit with the correct error code
     def cleanup(self):
@@ -583,14 +585,16 @@ class TestHarness:
             self.results_storage = os.path.join(self.options.output_dir, self.results_storage)
 
         if self.options.results_storage:
-            with open(self.results_storage, 'w') as data_file:
-                json.dump(self.options.results_storage, data_file, indent=2)
-        if self.options.results_storage:
             try:
                 with open(self.results_storage, 'w') as data_file:
                     json.dump(self.options.results_storage, data_file, indent=2)
             except UnicodeDecodeError:
                 print('\nERROR: Unable to write results due to unicode decode/encode error')
+
+                # write to a plain file to aid in reproducing error
+                with open(self.results_storage + '.unicode_error' , 'w') as f:
+                    f.write(self.options.results_storage)
+
                 sys.exit(1)
             except IOError:
                 print('\nERROR: Unable to write results due to permissions')

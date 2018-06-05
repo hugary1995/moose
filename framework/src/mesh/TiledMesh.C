@@ -77,10 +77,10 @@ TiledMesh::TiledMesh(const TiledMesh & other_mesh)
 {
 }
 
-MooseMesh &
-TiledMesh::clone() const
+std::unique_ptr<MooseMesh>
+TiledMesh::safeClone() const
 {
-  return *(new TiledMesh(*this));
+  return libmesh_make_unique<TiledMesh>(*this);
 }
 
 std::string

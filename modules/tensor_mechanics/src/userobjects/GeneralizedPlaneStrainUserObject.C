@@ -23,13 +23,16 @@ validParams<GeneralizedPlaneStrainUserObject>()
 {
   InputParameters params = validParams<ElementUserObject>();
   params.addClassDescription(
-      "Generalized Plane Strain UserObject to provide Residual and diagonal Jacobian entry");
+      "Generalized plane strain UserObject to provide residual and diagonal jacobian entries.");
   params.addParam<UserObjectName>("subblock_index_provider",
                                   "SubblockIndexProvider user object name");
   params.addParam<FunctionName>(
       "out_of_plane_pressure",
       "0",
       "Function used to prescribe pressure in the out-of-plane direction");
+  MooseEnum outOfPlaneDirection("x y z", "z");
+  params.addParam<MooseEnum>(
+      "out_of_plane_direction", outOfPlaneDirection, "The direction of the out-of-plane strain.");
   params.addParam<Real>("factor", 1.0, "Scale factor applied to prescribed pressure");
   params.addParam<std::string>("base_name", "Material properties base name");
   params.set<ExecFlagEnum>("execute_on") = EXEC_LINEAR;
@@ -55,7 +58,7 @@ GeneralizedPlaneStrainUserObject::initialize()
   if (isParamValid("subblock_index_provider"))
     _subblock_id_provider = &getUserObject<SubblockIndexProvider>("subblock_index_provider");
   if (_assembly.coordSystem() == Moose::COORD_XYZ)
-    _scalar_out_of_plane_strain_direction = 2;
+    _scalar_out_of_plane_strain_direction = getParam<MooseEnum>("out_of_plane_direction");
   else if (_assembly.coordSystem() == Moose::COORD_RZ)
     _scalar_out_of_plane_strain_direction = 1;
   else
@@ -76,21 +79,21 @@ GeneralizedPlaneStrainUserObject::execute()
   for (unsigned int _qp = 0; _qp < _qrule->n_points(); _qp++)
   {
     // residual, integral of stress_zz for COORD_XYZ
-    _residual[subblock_id] +=
-        _JxW[_qp] * _coord[_qp] * (_stress[_qp](_scalar_out_of_plane_strain_direction,
-                                                _scalar_out_of_plane_strain_direction) +
-                                   _out_of_plane_pressure.value(_t, _q_point[_qp]) * _factor);
+    _residual[subblock_id] += _JxW[_qp] * _coord[_qp] *
+                              (_stress[_qp](_scalar_out_of_plane_strain_direction,
+                                            _scalar_out_of_plane_strain_direction) +
+                               _out_of_plane_pressure.value(_t, _q_point[_qp]) * _factor);
 
     _reference_residual[subblock_id] += std::abs(
         _JxW[_qp] * _coord[_qp] *
         _stress[_qp](_scalar_out_of_plane_strain_direction, _scalar_out_of_plane_strain_direction));
 
     // diagonal jacobian, integral of C(2, 2, 2, 2) for COORD_XYZ
-    _jacobian[subblock_id] +=
-        _JxW[_qp] * _coord[_qp] * _Cijkl[_qp](_scalar_out_of_plane_strain_direction,
-                                              _scalar_out_of_plane_strain_direction,
-                                              _scalar_out_of_plane_strain_direction,
-                                              _scalar_out_of_plane_strain_direction);
+    _jacobian[subblock_id] += _JxW[_qp] * _coord[_qp] *
+                              _Cijkl[_qp](_scalar_out_of_plane_strain_direction,
+                                          _scalar_out_of_plane_strain_direction,
+                                          _scalar_out_of_plane_strain_direction,
+                                          _scalar_out_of_plane_strain_direction);
   }
 }
 

@@ -156,10 +156,10 @@ DistributedGeneratedMesh::getMaxInDimension(unsigned int component) const
   }
 }
 
-MooseMesh &
-DistributedGeneratedMesh::clone() const
+std::unique_ptr<MooseMesh>
+DistributedGeneratedMesh::safeClone() const
 {
-  return *(new DistributedGeneratedMesh(*this));
+  return libmesh_make_unique<DistributedGeneratedMesh>(*this);
 }
 
 namespace

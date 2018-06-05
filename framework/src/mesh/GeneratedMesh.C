@@ -131,10 +131,10 @@ GeneratedMesh::getMaxInDimension(unsigned int component) const
   }
 }
 
-MooseMesh &
-GeneratedMesh::clone() const
+std::unique_ptr<MooseMesh>
+GeneratedMesh::safeClone() const
 {
-  return *(new GeneratedMesh(*this));
+  return libmesh_make_unique<GeneratedMesh>(*this);
 }
 
 void

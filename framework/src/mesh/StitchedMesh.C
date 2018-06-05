@@ -79,10 +79,10 @@ StitchedMesh::StitchedMesh(const StitchedMesh & other_mesh)
 
 StitchedMesh::~StitchedMesh() {}
 
-MooseMesh &
-StitchedMesh::clone() const
+std::unique_ptr<MooseMesh>
+StitchedMesh::safeClone() const
 {
-  return *(new StitchedMesh(*this));
+  return libmesh_make_unique<StitchedMesh>(*this);
 }
 
 void

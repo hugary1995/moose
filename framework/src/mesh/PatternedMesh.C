@@ -97,10 +97,10 @@ PatternedMesh::PatternedMesh(const PatternedMesh & other_mesh)
 
 PatternedMesh::~PatternedMesh() {}
 
-MooseMesh &
-PatternedMesh::clone() const
+std::unique_ptr<MooseMesh>
+PatternedMesh::safeClone() const
 {
-  return *(new PatternedMesh(*this));
+  return libmesh_make_unique<PatternedMesh>(*this);
 }
 
 void
