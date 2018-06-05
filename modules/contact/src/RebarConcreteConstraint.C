@@ -425,21 +425,18 @@ RebarConcreteConstraint::computeOffDiagJacobian(unsigned int jvar)
     for (_j = 0; _j < _connected_dof_indices.size(); _j++)
       _Kee(_i, _j) += computeQpOffDiagJacobian(Moose::SlaveSlave, jvar);
 
-  if (_master_slave_jacobian)
-  {
-    DenseMatrix<Number> & Ken =
-        _assembly.jacobianBlockNeighbor(Moose::ElementNeighbor, _var.number(), jvar);
-    for (_i = 0; _i < _test_slave.size(); _i++)
-      for (_j = 0; _j < _phi_master.size(); _j++)
-        Ken(_i, _j) += computeQpOffDiagJacobian(Moose::SlaveMaster, jvar);
+  DenseMatrix<Number> & Ken =
+      _assembly.jacobianBlockNeighbor(Moose::ElementNeighbor, _var.number(), jvar);
+  for (_i = 0; _i < _test_slave.size(); _i++)
+    for (_j = 0; _j < _phi_master.size(); _j++)
+      Ken(_i, _j) += computeQpOffDiagJacobian(Moose::SlaveMaster, jvar);
 
-    _Kne.resize(_test_master.size(), _connected_dof_indices.size());
-    if (_Kne.m() && _Kne.n())
-      for (_i = 0; _i < _test_master.size(); _i++)
-        // Loop over the connected dof indices so we can get all the jacobian contributions
-        for (_j = 0; _j < _connected_dof_indices.size(); _j++)
-          _Kne(_i, _j) += computeQpOffDiagJacobian(Moose::MasterSlave, jvar);
-  }
+  _Kne.resize(_test_master.size(), _connected_dof_indices.size());
+  if (_Kne.m() && _Kne.n())
+    for (_i = 0; _i < _test_master.size(); _i++)
+      // Loop over the connected dof indices so we can get all the jacobian contributions
+      for (_j = 0; _j < _connected_dof_indices.size(); _j++)
+        _Kne(_i, _j) += computeQpOffDiagJacobian(Moose::MasterSlave, jvar);
 
   for (_i = 0; _i < _test_master.size(); _i++)
     for (_j = 0; _j < _phi_master.size(); _j++)
@@ -452,14 +449,7 @@ RebarConcreteConstraint::getConnectedDofIndices(unsigned int var_num)
   unsigned int component;
   if (getCoupledVarComponent(var_num, component) || _non_displacement_vars_jacobian)
   {
-    if (_master_slave_jacobian && _connected_slave_nodes_jacobian)
-      NodeElemConstraint::getConnectedDofIndices(var_num);
-    else
-    {
-      _connected_dof_indices.clear();
-      MooseVariableFEBase & var = _sys.getVariable(0, var_num);
-      _connected_dof_indices.push_back(var.nodalDofIndex());
-    }
+    NodeElemConstraint::getConnectedDofIndices(var_num);
   }
 
   _phi_slave.resize(_connected_dof_indices.size());

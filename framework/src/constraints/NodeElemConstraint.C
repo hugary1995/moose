@@ -47,7 +47,7 @@ NodeElemConstraint::NodeElemConstraint(const InputParameters & parameters)
     _master_q_point(_assembly.qPoints()),
     _master_qrule(_assembly.qRule()),
 
-    _current_node(_assembly.node()),
+    _current_node(_var.node()),
     _current_master(_assembly.elem()),
     _u_slave(_var.dofValues()),
     _u_slave_old(_var.dofValuesOld()),
@@ -57,14 +57,14 @@ NodeElemConstraint::NodeElemConstraint(const InputParameters & parameters)
     _master_var(*getVar("master_variable", 0)),
     _master_var_num(_master_var.number()),
 
-    _phi_master(_assembly.phiNeighbor(_master_var)),
-    _grad_phi_master(_assembly.gradPhiNeighbor(_master_var)),
+    _phi_master(_assembly.phi(_master_var)),
+    _grad_phi_master(_assembly.gradPhi(_master_var)),
 
-    _test_master(_var.phiNeighbor()),
-    _grad_test_master(_var.gradPhiNeighbor()),
+    _test_master(_var.phi()),
+    _grad_test_master(_var.gradPhi()),
 
-    _u_master(_master_var.slnNeighbor()),
-    _grad_u_master(_master_var.gradSlnNeighbor()),
+    _u_master(_master_var.sln()),
+    _grad_u_master(_master_var.gradSln()),
 
     _dof_map(_sys.dofMap()),
 

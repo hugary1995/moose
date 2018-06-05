@@ -1160,7 +1160,7 @@ NonlinearSystemBase::constraintResiduals(NumericVector<Number> & residual, bool 
         std::vector<Point> points;
         points.push_back(*slave_node);
 
-        // reinit variables on the master element's faces at the contact point
+        // reinit variables on the master element at the contact point
         _fe_problem.reinitElemPhys(master_elem, points, 0);
 
         // //debug messages
