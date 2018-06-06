@@ -1103,9 +1103,13 @@ NonlinearSystemBase::constraintResiduals(NumericVector<Number> & residual, bool 
   }
 
   //go over NodeELemConstraints
+  if (displaced) return;
   std::map<std::pair<BoundaryID, SubdomainID>, MooseObjectWarehouse<NodeElemConstraint>>::const_iterator necs_itr, necs_begin, necs_end;
   necs_begin = _constraints._node_elem_constraints.begin();
   necs_end = _constraints._node_elem_constraints.end();
+
+  std::cout << "\n\n\n";
+  std::cout << _constraints._node_elem_constraints.size() << " node element constraint(s)" << std::endl;
 
   // go over slave nodes
   ConstBndNodeRange & bnd_nodes = *_mesh.getBoundaryNodeRange();
@@ -1121,12 +1125,12 @@ NonlinearSystemBase::constraintResiduals(NumericVector<Number> & residual, bool 
 
       if (bnode->_bnd_id == slave)
       {
-        // //debug messages
-        // std::cout << "          MATCHED! on constrained Node: " << bnode->_node->id() << std::endl;
-        // std::cout << "                     ";
-        // bnode->_node->print();
-        // std::cout << std::endl;
-        // std::cout << "                   on constrained Boundary: " << slave << std::endl;
+        //debug messages
+        std::cout << "          MATCHED! on constrained Node: " << bnode->_node->id() << std::endl;
+        std::cout << "                     ";
+        bnode->_node->print();
+        std::cout << std::endl;
+        std::cout << "                   on constrained Boundary: " << slave << std::endl;
 
 
         // NodeElemConstraint objects
@@ -1139,16 +1143,14 @@ NonlinearSystemBase::constraintResiduals(NumericVector<Number> & residual, bool 
         const std::set<subdomain_id_type> allowed_subdomains {master};
         const Elem * master_elem = pointLocator->operator() (*slave_node, &allowed_subdomains);
 
-        // //debug messages
-        // std::cout << "                   master elem id: " << master_elem->id() << std::endl;
-        // for (auto & n : master_elem->node_ref_range())
-        // {
-        //   std::cout << "                     ";
-        //   n.print();
-        //   std::cout << std::endl;
-        // }
-
-        // *These next steps MUST be done in this order!*
+        //debug messages
+        std::cout << "                   master elem id: " << master_elem->id() << std::endl;
+        for (auto & n : master_elem->node_ref_range())
+        {
+          std::cout << "                     ";
+          n.print();
+          std::cout << std::endl;
+        }
 
         // This reinits the variables that exist on the slave node
         _fe_problem.reinitNode(slave_node, 0);
@@ -1622,6 +1624,7 @@ NonlinearSystemBase::addImplicitGeometricCouplingEntries(GeometricSearchData & g
 void
 NonlinearSystemBase::constraintJacobians(bool displaced)
 {
+  std::cout << "\n\n\nIn NonlinearSystemBase::constraintJacobians()" << std::endl;
   if (!hasMatrix(systemMatrixTag()))
     mooseError("A system matrix is required");
 
@@ -1951,15 +1954,20 @@ NonlinearSystemBase::constraintJacobians(bool displaced)
   necs_begin = _constraints._node_elem_constraints.begin();
   necs_end = _constraints._node_elem_constraints.end();
 
+  std::cout << _constraints._node_elem_constraints.size() << " node element constraint(s)" << std::endl;
+
   // go over slave nodes
   ConstBndNodeRange & bnd_nodes = *_mesh.getBoundaryNodeRange();
 
   for (const auto & bnode : bnd_nodes)
   {
+    //std::cout << "on node " << bnode->_node->id() << std::endl;
+    //std::cout << "on bndy " << bnode->_bnd_id << std::endl;
     for (necs_itr = necs_begin ; necs_itr != necs_end; necs_itr++)
     {
       //slave boundary id
       BoundaryID slave = necs_itr->first.first;
+      //std::cout << "     slave bnd " << slave << std::endl;
       //master block id
       SubdomainID master = necs_itr->first.second;
 

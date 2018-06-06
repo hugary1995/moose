@@ -75,10 +75,10 @@ public:
    */
   bool getCoupledVarComponent(unsigned int var_num, unsigned int & component);
 
-  virtual bool addCouplingEntriesToJacobian() override { return _master_slave_jacobian; }
+  virtual bool addCouplingEntriesToJacobian() override { return true; }
 
   bool shouldApply() override;
-  void computeContactForce(bool update_contact_set);
+  void computeContactForce();
 
 protected:
   MooseSharedPointer<DisplacedProblem> _displaced_problem;
@@ -96,14 +96,6 @@ protected:
   const unsigned int _mesh_dimension;
 
   std::vector<unsigned int> _vars;
-
-
-  /// Whether to include coupling between the master and slave nodes in the Jacobian
-  const bool _master_slave_jacobian;
-  /// Whether to include coupling terms with the nodes connected to the slave nodes in the Jacobian
-  const bool _connected_slave_nodes_jacobian;
-  /// Whether to include coupling terms with non-displacement variables in the Jacobian
-  const bool _non_displacement_vars_jacobian;
 
   static Threads::spin_mutex _contact_set_mutex;
   RealVectorValue _contact_force;

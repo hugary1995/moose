@@ -47,10 +47,12 @@ NodeElemConstraint::NodeElemConstraint(const InputParameters & parameters)
     _master_q_point(_assembly.qPoints()),
     _master_qrule(_assembly.qRule()),
 
-    _current_node(_var.node()),
+    _current_node(_assembly.node()),
     _current_master(_assembly.elem()),
-    _u_slave(_var.dofValues()),
-    _u_slave_old(_var.dofValuesOld()),
+    // _u_slave(_var.dofValues()),
+    // _u_slave_old(_var.dofValuesOld()),
+    _u_slave(_var.sln()),
+    _u_slave_old(_var.slnOld()),
     _phi_slave(1),  // One entry
     _test_slave(1), // One entry
 
@@ -64,6 +66,7 @@ NodeElemConstraint::NodeElemConstraint(const InputParameters & parameters)
     _grad_test_master(_var.gradPhi()),
 
     _u_master(_master_var.sln()),
+    _u_master_old(_master_var.slnOld()),
     _grad_u_master(_master_var.gradSln()),
 
     _dof_map(_sys.dofMap()),
@@ -93,16 +96,19 @@ NodeElemConstraint::computeSlaveValue(NumericVector<Number> & current_solution)
 void
 NodeElemConstraint::computeResidual()
 {
-  DenseVector<Number> & re = _assembly.residualBlock(_var.number());
-  DenseVector<Number> & neighbor_re = _assembly.residualBlockNeighbor(_master_var.number());
+  std::cout << "          In NodeElemConstrain::computeQpResidual()" << std::endl;
+  DenseVector<Number> & slave_re = _assembly.residualBlock(_var.number());
+  DenseVector<Number> & master_re = _assembly.residualBlock(_master_var.number());
 
   _qp = 0;
 
+  std::cout << "               _test_master.size() = " << _test_master.size() << std::endl;
   for (_i = 0; _i < _test_master.size(); _i++)
-    neighbor_re(_i) += computeQpResidual(Moose::Master);
+    master_re(_i) += computeQpResidual(Moose::Master);
 
   _i = 0;
-  re(0) = computeQpResidual(Moose::Slave);
+  slave_re(_i) = computeQpResidual(Moose::Slave);
+  std::cout << "          Out NodeElemConstrain::computeQpResidual()" << std::endl;
 }
 
 void

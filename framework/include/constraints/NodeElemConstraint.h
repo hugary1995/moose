@@ -214,7 +214,6 @@ protected:
   QBase *& _master_qrule;
 
 public:
-
 protected:
   /// current node being processed
   const Node *& _current_node;
@@ -247,6 +246,8 @@ protected:
 
   /// Holds the current solution at the current quadrature point
   const VariableValue & _u_master;
+  /// Holds the old solution at the current quadrature point
+  const VariableValue & _u_master_old;
   /// Holds the current solution gradient at the current quadrature point
   const VariableGradient & _grad_u_master;
 

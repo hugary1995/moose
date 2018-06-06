@@ -74,15 +74,8 @@ ConstraintWarehouse::addObject(std::shared_ptr<Constraint> object,
     MooseMesh & mesh = nec->getParam<FEProblemBase *>("_fe_problem_base")->mesh();
     BoundaryID slave = mesh.getBoundaryID(nec->getParam<BoundaryName>("slave"));
     SubdomainID master = mesh.getSubdomainID(nec->getParam<SubdomainName>("master"));
-    bool displaced = nec->parameters().have_parameter<bool>("use_displaced_mesh") &&
-                     nec->getParam<bool>("use_displaced_mesh");
 
-
-    if (displaced)
-      _displaced_node_elem_constraints[std::make_pair(slave, master)].addObject(nec);
-    else
-      _node_elem_constraints[std::make_pair(slave, master)].addObject(nec);
-
+    _node_elem_constraints[std::make_pair(slave, master)].addObject(nec);
 
     std::cout << "added NodeElemConstraint for slave id: " << slave << std::endl;
     std::cout << "                            master id: " << master << std::endl;
@@ -242,7 +235,7 @@ ConstraintWarehouse::hasActiveNodeFaceConstraints(BoundaryID boundary_id, bool d
 // ConstraintWarehouse::hasActiveNodeElemConstraints(BoundaryID boundary_id, bool displaced) const
 // {
 //   std::map<BoundaryID, MooseObjectWarehouse<NodeElemConstraint>>::const_iterator it, end_it;
-// 
+//
 //   if (displaced)
 //   {
 //     it = _displaced_node_elem_constraints.find(boundary_id);
