@@ -1144,6 +1144,7 @@ NonlinearSystemBase::constraintResiduals(NumericVector<Number> & residual, bool 
         const Elem * master_elem = pointLocator->operator() (*slave_node, &allowed_subdomains);
 
         //debug messages
+        std::cout << "                   master block id: " << master << std::endl;
         std::cout << "                   master elem id: " << master_elem->id() << std::endl;
         for (auto & n : master_elem->node_ref_range())
         {
