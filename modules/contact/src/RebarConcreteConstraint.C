@@ -128,10 +128,10 @@ RebarConcreteConstraint::shouldApply()
 void
 RebarConcreteConstraint::computeContactForce()
 {
-  std::cout << "          In RebarConcreteConstraint::computeContactForce()" << std::endl;
+  // std::cout << "          In RebarConcreteConstraint::computeContactForce()" << std::endl;
   //const Node * node = pinfo->_node;
   const Node * node = _current_node;
-  std::cout << "               current node id: " << node->id() << std::endl;
+  // std::cout << "               current node id: " << node->id() << std::endl;
 
   // Build up residual vector
   RealVectorValue res_vec;
@@ -160,7 +160,7 @@ RebarConcreteConstraint::computeContactForce()
       mooseError("Invalid or unavailable contact model");
       break;
   }
-  std::cout << "          Out RebarConcreteConstraint::computeContactForce()" << std::endl;
+  // std::cout << "          Out RebarConcreteConstraint::computeContactForce()" << std::endl;
 }
 
 Real
@@ -172,25 +172,30 @@ RebarConcreteConstraint::computeQpSlaveValue()
 Real
 RebarConcreteConstraint::computeQpResidual(Moose::ConstraintType type)
 {
-  std::cout << "          In RebarConcreteConstraint::computeQpResidual()" << std::endl;
+  // std::cout << "          In RebarConcreteConstraint::computeQpResidual()" << std::endl;
   Real resid = _contact_force(_component);
+  std::cout << "                    component: " << _component << std::endl;
   switch (type)
   {
     case Moose::Slave:
       if (_formulation == CF_KINEMATIC)
       {
-        std::cout << "               _u_slave[_qp] = " << _u_slave[_qp] << std::endl;
-        std::cout << "               _u_master_old[_qp] = " << _u_master_old[_qp] << std::endl;
-        RealVectorValue distance_vec(_u_slave[_qp] - _u_master_old[_qp]);
+        // std::cout << "               _u_slave[_qp] = " << _u_slave[_qp] << std::endl;
+        // std::cout << "               _u_master[_qp] = " << _u_master[_qp] << std::endl;
+        RealVectorValue distance_vec(_u_slave[_qp] - _u_master[_qp]);
         RealVectorValue pen_force(_penalty * distance_vec);
         if (_model == CM_GLUED)
           resid += pen_force(_component);
       }
-      std::cout << "          Out RebarConcreteConstraint::computeQpResidual(Slave)" << std::endl;
+      // std::cout << "          Out RebarConcreteConstraint::computeQpResidual(Slave)" << std::endl;
+      std::cout << "                    resid = " << resid << std::endl;
+      std::cout << "                    _test_slave" << "[" << _i << "][" << _qp << "] = " << _test_slave[_i][_qp] << std::endl;
       return _test_slave[_i][_qp] * resid;
 
     case Moose::Master:
-      std::cout << "          Out RebarConcreteConstraint::computeQpResidual(Master)" << std::endl;
+      // std::cout << "          Out RebarConcreteConstraint::computeQpResidual(Master)" << std::endl;
+      std::cout << "                    resid = " << resid << std::endl;
+      std::cout << "                    _test_master" << "[" << _i << "][" << _qp << "] = " << _test_master[_i][_qp] << std::endl;
       return _test_master[_i][_qp] * -resid;
   }
 
@@ -357,11 +362,11 @@ RebarConcreteConstraint::computeQpOffDiagJacobian(Moose::ConstraintJacobianType 
 void
 RebarConcreteConstraint::computeJacobian()
 {
-  std::cout << "          In RebarConcreteConstraint::computeJacobian()" << std::endl;
+  // std::cout << "          In RebarConcreteConstraint::computeJacobian()" << std::endl;
   getConnectedDofIndices(_var.number());
 
-  std::cout << "               _phi_master.size() = " << _phi_master.size() << std::endl;
-  std::cout << "               _phi_slave.size() = " << _phi_slave.size() << std::endl;
+  // std::cout << "               _phi_master.size() = " << _phi_master.size() << std::endl;
+  // std::cout << "               _phi_slave.size() = " << _phi_slave.size() << std::endl;
 
   DenseMatrix<Number> & Knn =
       _assembly.jacobianBlockNeighbor(Moose::NeighborNeighbor, _master_var.number(), _var.number());
@@ -391,7 +396,7 @@ RebarConcreteConstraint::computeJacobian()
       for (_j = 0; _j < _phi_master.size(); _j++)
         Knn(_i, _j) += computeQpJacobian(Moose::MasterMaster);
 
-  std::cout << "          Out RebarConcreteConstraint::computeJacobian()" << std::endl;
+  // std::cout << "          Out RebarConcreteConstraint::computeJacobian()" << std::endl;
 }
 
 void
@@ -430,7 +435,7 @@ RebarConcreteConstraint::computeOffDiagJacobian(unsigned int jvar)
 void
 RebarConcreteConstraint::getConnectedDofIndices(unsigned int var_num)
 {
-  std::cout << "          In RebarConcreteConstraint::getConnectedDofIndices()" << std::endl;
+  // std::cout << "          In RebarConcreteConstraint::getConnectedDofIndices()" << std::endl;
   unsigned int component;
   if (getCoupledVarComponent(var_num, component))
     NodeElemConstraint::getConnectedDofIndices(var_num);
@@ -438,15 +443,11 @@ RebarConcreteConstraint::getConnectedDofIndices(unsigned int var_num)
   _phi_slave.resize(_connected_dof_indices.size());
 
   dof_id_type current_node_var_dof_index = _sys.getVariable(0, var_num).nodalDofIndex();
-  _qp = 0;
-
-  //debug messages
-  std::cout << "               _connected_dof_indices.size() = " << _connected_dof_indices.size() << std::endl;
-  std::cout << "               _u_master_old.size() = " << _u_master_old.size() << std::endl;
 
   // Fill up _phi_slave so that it is 1 when j corresponds to the dof associated with this node
   // and 0 for every other dof
   // This corresponds to evaluating all of the connected shape functions at _this_ node
+  _qp = 0;
   for (unsigned int j = 0; j < _connected_dof_indices.size(); j++)
   {
     _phi_slave[j].resize(1);
@@ -456,7 +457,7 @@ RebarConcreteConstraint::getConnectedDofIndices(unsigned int var_num)
     else
       _phi_slave[j][_qp] = 0.0;
   }
-  std::cout << "          Out RebarConcreteConstraint::getConnectedDofIndices()" << std::endl;
+  // std::cout << "          Out RebarConcreteConstraint::getConnectedDofIndices()" << std::endl;
 }
 
 bool

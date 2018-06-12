@@ -1108,9 +1108,6 @@ NonlinearSystemBase::constraintResiduals(NumericVector<Number> & residual, bool 
   necs_begin = _constraints._node_elem_constraints.begin();
   necs_end = _constraints._node_elem_constraints.end();
 
-  std::cout << "\n\n\n";
-  std::cout << _constraints._node_elem_constraints.size() << " node element constraint(s)" << std::endl;
-
   // go over slave nodes
   ConstBndNodeRange & bnd_nodes = *_mesh.getBoundaryNodeRange();
 
@@ -1126,11 +1123,11 @@ NonlinearSystemBase::constraintResiduals(NumericVector<Number> & residual, bool 
       if (bnode->_bnd_id == slave)
       {
         //debug messages
-        std::cout << "          MATCHED! on constrained Node: " << bnode->_node->id() << std::endl;
-        std::cout << "                     ";
-        bnode->_node->print();
-        std::cout << std::endl;
-        std::cout << "                   on constrained Boundary: " << slave << std::endl;
+        // std::cout << "          MATCHED! on constrained Node: " << bnode->_node->id() << std::endl;
+        // std::cout << "                     ";
+        // bnode->_node->print();
+        // std::cout << std::endl;
+        // std::cout << "                   on constrained Boundary: " << slave << std::endl;
 
 
         // NodeElemConstraint objects
@@ -1144,14 +1141,14 @@ NonlinearSystemBase::constraintResiduals(NumericVector<Number> & residual, bool 
         const Elem * master_elem = pointLocator->operator() (*slave_node, &allowed_subdomains);
 
         //debug messages
-        std::cout << "                   master block id: " << master << std::endl;
-        std::cout << "                   master elem id: " << master_elem->id() << std::endl;
-        for (auto & n : master_elem->node_ref_range())
-        {
-          std::cout << "                     ";
-          n.print();
-          std::cout << std::endl;
-        }
+        // std::cout << "                   master block id: " << master << std::endl;
+        // std::cout << "                   master elem id: " << master_elem->id() << std::endl;
+        // for (auto & n : master_elem->node_ref_range())
+        // {
+        //   std::cout << "                     ";
+        //   n.print();
+        //   std::cout << std::endl;
+        // }
 
         // This reinits the variables that exist on the slave node
         _fe_problem.reinitNode(slave_node, 0);
@@ -1164,8 +1161,9 @@ NonlinearSystemBase::constraintResiduals(NumericVector<Number> & residual, bool 
         points.push_back(*slave_node);
 
         // reinit variables on the master element at the contact point
-        _fe_problem.reinitElemPhys(master_elem, points, 0);
-
+        // _fe_problem.reinitElemPhys(master_elem, points, 0);
+        _fe_problem.setNeighborSubdomainID(master_elem, 0);
+        _fe_problem.reinitNeighborPhys(master_elem, points, 0);
         // //debug messages
         // std::cout << "          After initialization, current node: " << _fe_problem.assembly(0).node()->id() << std::endl;
         // std::cout << "                     ";

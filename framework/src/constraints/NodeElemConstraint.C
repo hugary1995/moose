@@ -59,17 +59,18 @@ NodeElemConstraint::NodeElemConstraint(const InputParameters & parameters)
     _master_var(*getVar("master_variable", 0)),
     _master_var_num(_master_var.number()),
 
-    _phi_master(_assembly.phi(_master_var)),
-    _grad_phi_master(_assembly.gradPhi(_master_var)),
+    _phi_master(_assembly.phiNeighbor(_master_var)),
+    _grad_phi_master(_assembly.gradPhiNeighbor(_master_var)),
 
-    _test_master(_var.phi()),
-    _grad_test_master(_var.gradPhi()),
+    _test_master(_var.phiNeighbor()),
+    _grad_test_master(_var.gradPhiNeighbor()),
 
-    _u_master(_master_var.sln()),
-    _u_master_old(_master_var.slnOld()),
-    _grad_u_master(_master_var.gradSln()),
+    _u_master(_master_var.slnNeighbor()),
+    _u_master_old(_master_var.slnOldNeighbor()),
+    _grad_u_master(_master_var.gradSlnNeighbor()),
 
     _dof_map(_sys.dofMap()),
+    _node_to_elem_map(_mesh.nodeToElemMap()),
 
     _overwrite_slave_residual(true)
 {
@@ -96,19 +97,23 @@ NodeElemConstraint::computeSlaveValue(NumericVector<Number> & current_solution)
 void
 NodeElemConstraint::computeResidual()
 {
-  std::cout << "          In NodeElemConstrain::computeQpResidual()" << std::endl;
+  std::cout << "\n     at NODE " << _current_node->id() << std::endl;
+  // std::cout << "          In NodeElemConstrain::computeQpResidual()" << std::endl;
   DenseVector<Number> & slave_re = _assembly.residualBlock(_var.number());
-  DenseVector<Number> & master_re = _assembly.residualBlock(_master_var.number());
+  DenseVector<Number> & master_re = _assembly.residualBlockNeighbor(_master_var.number());
 
   _qp = 0;
 
-  std::cout << "               _test_master.size() = " << _test_master.size() << std::endl;
-  for (_i = 0; _i < _test_master.size(); _i++)
+  std::cout << "\n          _test_master.size() = " << _test_master.size() << std::endl;
+  for (_i = 0; _i < _test_master.size(); _i++) {
     master_re(_i) += computeQpResidual(Moose::Master);
+    std::cout << "               master_re#" << _i << " = " << master_re(_i) << std::endl;
+  }
 
   _i = 0;
   slave_re(_i) = computeQpResidual(Moose::Slave);
-  std::cout << "          Out NodeElemConstrain::computeQpResidual()" << std::endl;
+  std::cout << "               slave_re#" << _i << " = " << slave_re(_i) << std::endl;
+  // std::cout << "          Out NodeElemConstrain::computeQpResidual()" << std::endl;
 }
 
 void
@@ -220,12 +225,25 @@ NodeElemConstraint::getConnectedDofIndices(unsigned int var_num)
   MooseVariableFEBase & var = _sys.getVariable(0, var_num);
 
   _connected_dof_indices.clear();
+  std::set<dof_id_type> unique_dof_indices;
 
-  auto _pl = _mesh.getPointLocator();
-  const std::set<subdomain_id_type> allowed_subdomains {_master};
-  const Elem * elem = _pl->operator() (*_current_node, &allowed_subdomains);
+  auto node_to_elem_pair = _node_to_elem_map.find(_current_node->id());
+  mooseAssert(node_to_elem_pair != _node_to_elem_map.end(), "Missing entry in node to elem map");
+  const std::vector<dof_id_type> & elems = node_to_elem_pair->second;
 
-  var.getDofIndices(elem, _connected_dof_indices);
+  // Get the dof indices from each elem connected to the node
+  for (const auto & cur_elem : elems)
+  {
+    std::vector<dof_id_type> dof_indices;
+
+    var.getDofIndices(_mesh.elemPtr(cur_elem), dof_indices);
+
+    for (const auto & dof : dof_indices)
+      unique_dof_indices.insert(dof);
+  }
+
+  for (const auto & dof : unique_dof_indices)
+    _connected_dof_indices.push_back(dof);
 }
 
 bool

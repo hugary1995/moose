@@ -254,6 +254,8 @@ protected:
   /// DOF map
   const DofMap & _dof_map;
 
+  const std::map<dof_id_type, std::vector<dof_id_type>> & _node_to_elem_map;
+
   /**
    * Whether or not the slave's residual should be overwritten.
    *
