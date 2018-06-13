@@ -54,7 +54,7 @@ validParams<RebarConcreteConstraint>()
       "The penalty to apply.  This can vary depending on the stiffness of your materials");
   params.addParam<MooseEnum>("order", orders, "The finite element order");
 
-  params.set<bool>("use_displaced_mesh") = true;
+  params.set<bool>("use_displaced_mesh") = false;
 
   return params;
 }
@@ -72,7 +72,7 @@ RebarConcreteConstraint::RebarConcreteConstraint(const InputParameters & paramet
     _vars(3, libMesh::invalid_uint)
 {
   // std::cout << "In RebarConcreteConstraint()" << std::endl;
-  _overwrite_slave_residual = false;
+  _overwrite_slave_residual = true;
 
   if (isParamValid("displacements"))
   {
@@ -117,10 +117,8 @@ RebarConcreteConstraint::shouldApply()
   //currently does not support updating contact set
   //bool is_nonlinear = _fe_problem.computingNonlinearResid();
 
-  // This computes the contact force once per constraint, rather than once per quad point
-  // and for both master and slave cases.
-  if (_component == 0)
-    computeContactForce();
+  // This computes the contact force once per constraint per component
+  computeContactForce();
 
   // std::cout << "          Out RebarConcreteConstraint::shouldApply" << std::endl;
   return in_contact;
@@ -129,17 +127,8 @@ RebarConcreteConstraint::shouldApply()
 void
 RebarConcreteConstraint::computeContactForce()
 {
-  // std::cout << "          In RebarConcreteConstraint::computeContactForce()" << std::endl;
   const Node * node = _current_node;
-  // std::cout << "               current node id: " << node->id() << std::endl;
-
-  // Build up residual vector
-  RealVectorValue res_vec;
-  for (unsigned int i = 0; i < _mesh_dimension; ++i)
-  {
-    dof_id_type dof_number = node->dof_number(0, _vars[i], 0);
-    res_vec(i) = _residual_copy(dof_number);
-  }
+  dof_id_type dof_number = node->dof_number(0, _vars[_component], 0);
 
   switch (_model)
   {
@@ -147,7 +136,11 @@ RebarConcreteConstraint::computeContactForce()
       switch (_formulation)
       {
         case CF_KINEMATIC:
-          _contact_force =  -res_vec;
+          _contact_force = -_residual_copy(dof_number);
+          break;
+
+        case CF_PENALTY:
+          _contact_force = _penalty * (_u_slave[_qp] - _u_master[_qp]);
           break;
 
         default:
@@ -160,7 +153,6 @@ RebarConcreteConstraint::computeContactForce()
       mooseError("Invalid or unavailable contact model");
       break;
   }
-  // std::cout << "          Out RebarConcreteConstraint::computeContactForce()" << std::endl;
 }
 
 Real
@@ -172,8 +164,8 @@ RebarConcreteConstraint::computeQpSlaveValue()
 Real
 RebarConcreteConstraint::computeQpResidual(Moose::ConstraintType type)
 {
-  // std::cout << "          In RebarConcreteConstraint::computeQpResidual()" << std::endl;
-  Real resid = _contact_force(_component);
+  Real resid = _contact_force;
+  std::cout << "               ------------------------------\n";
   std::cout << "                    component: " << _component << std::endl;
   switch (type)
   {
@@ -182,18 +174,15 @@ RebarConcreteConstraint::computeQpResidual(Moose::ConstraintType type)
       {
         std::cout << "                    _u_master[_qp] = " << _u_master[_qp] << std::endl;
         std::cout << "                    _u_slave[_qp] = " << _u_slave[_qp] << std::endl;
-        RealVectorValue distance_vec(_u_slave[_qp] - _u_master[_qp]);
-        RealVectorValue pen_force(_penalty * distance_vec);
+        Real pen_force = _penalty * (_u_slave[_qp] - _u_master[_qp]);
         if (_model == CM_GLUED)
-          resid += pen_force(_component);
+          resid += pen_force;
       }
-      // std::cout << "          Out RebarConcreteConstraint::computeQpResidual(Slave)" << std::endl;
       std::cout << "                    resid = " << resid << std::endl;
       std::cout << "                    _test_slave" << "[" << _i << "][" << _qp << "] = " << _test_slave[_i][_qp] << std::endl;
       return _test_slave[_i][_qp] * resid;
 
     case Moose::Master:
-      // std::cout << "          Out RebarConcreteConstraint::computeQpResidual(Master)" << std::endl;
       std::cout << "                    resid = " << resid << std::endl;
       std::cout << "                    _test_master" << "[" << _i << "][" << _qp << "] = " << _test_master[_i][_qp] << std::endl;
       return _test_master[_i][_qp] * -resid;

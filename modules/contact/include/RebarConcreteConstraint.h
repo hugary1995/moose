@@ -98,7 +98,7 @@ protected:
   std::vector<unsigned int> _vars;
 
   static Threads::spin_mutex _contact_set_mutex;
-  RealVectorValue _contact_force;
+  Real _contact_force;
 };
 
 #endif

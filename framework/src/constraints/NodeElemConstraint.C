@@ -72,7 +72,7 @@ NodeElemConstraint::NodeElemConstraint(const InputParameters & parameters)
     _dof_map(_sys.dofMap()),
     _node_to_elem_map(_mesh.nodeToElemMap()),
 
-    _overwrite_slave_residual(false)
+    _overwrite_slave_residual(true)
 {
   addMooseVariableDependency(&_var);
   // Put a "1" into test_slave
@@ -111,7 +111,7 @@ NodeElemConstraint::computeResidual()
   }
 
   _i = 0;
-  slave_re(_i) = computeQpResidual(Moose::Slave);
+  slave_re(_i) += computeQpResidual(Moose::Slave);
   std::cout << "               slave_re#" << _i << " = " << slave_re(_i) << std::endl;
   // std::cout << "          Out NodeElemConstrain::computeQpResidual()" << std::endl;
 }

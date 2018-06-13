@@ -853,6 +853,12 @@ NonlinearSystemBase::setConstraintSlaveValues(NumericVector<Number> & solution, 
   }
 
   //go over NodeELemConstraints
+  std::unique_ptr<PointLocatorBase> pointLocator;
+  if (!displaced)
+    pointLocator = _fe_problem.mesh().getPointLocator();
+  else
+    pointLocator = _fe_problem.getDisplacedProblem()->mesh().getPointLocator();
+
   for (const auto & boundary_id : _mesh.meshBoundaryIds())
   {
     for (const auto & block_id : _mesh.meshSubdomains())
@@ -870,7 +876,7 @@ NonlinearSystemBase::setConstraintSlaveValues(NumericVector<Number> & solution, 
           if (slave_node.processor_id() == processor_id())
           {
             //master element
-            auto pointLocator = _mesh.getPointLocator();
+
             const std::set<subdomain_id_type> allowed_subdomains {block_id};
             const Elem * master_elem = pointLocator->operator() (slave_node, &allowed_subdomains);
 
@@ -933,7 +939,7 @@ NonlinearSystemBase::setConstraintSlaveValues(NumericVector<Number> & solution, 
   //       //slave node
   //       const Node * slave_node = bnode->_node;
   //       //master element
-  //       auto pointLocator = _mesh.getPointLocator();
+  //
   //       const std::set<subdomain_id_type> allowed_subdomains {master};
   //       const Elem * master_elem = pointLocator->operator() (*slave_node, &allowed_subdomains);
   //
@@ -1213,6 +1219,12 @@ NonlinearSystemBase::constraintResiduals(NumericVector<Number> & residual, bool 
   }
 
   //go over NodeELemConstraints
+  std::unique_ptr<PointLocatorBase> pointLocator;
+  if (!displaced)
+    pointLocator = _fe_problem.mesh().getPointLocator();
+  else
+    pointLocator = _fe_problem.getDisplacedProblem()->mesh().getPointLocator();
+
   constraints_applied = false;
   residual_has_inserted_values = false;
   for (const auto & boundary_id : _mesh.meshBoundaryIds())
@@ -1232,9 +1244,24 @@ NonlinearSystemBase::constraintResiduals(NumericVector<Number> & residual, bool 
           if (slave_node.processor_id() == processor_id())
           {
             //master element
-            auto pointLocator = _mesh.getPointLocator();
             const std::set<subdomain_id_type> allowed_subdomains {block_id};
             const Elem * master_elem = pointLocator->operator() (slave_node, &allowed_subdomains);
+
+            //debug messages
+            std::cout << "\n\n=============================================\n";
+            std::cout << "          MATCHED! on constrained Node: " << slave_node.id() << std::endl;
+            std::cout << "                     ";
+            slave_node.print();
+            std::cout << std::endl;
+            std::cout << "                   on constrained Boundary: " << boundary_id << std::endl;
+            std::cout << "                   master block id: " << block_id << std::endl;
+            std::cout << "                   master elem id: " << master_elem->id() << std::endl;
+            for (auto & n : master_elem->node_ref_range())
+            {
+              std::cout << "                     ";
+              n.print();
+              std::cout << std::endl;
+            }
 
             // This reinits the variables that exist on the slave node
             _fe_problem.reinitNodeFace(&slave_node, boundary_id, 0);
@@ -1329,7 +1356,7 @@ NonlinearSystemBase::constraintResiduals(NumericVector<Number> & residual, bool 
   //       //slave node
   //       const Node * slave_node = bnode->_node;
   //       //master element
-  //       auto pointLocator = _mesh.getPointLocator();
+  //
   //       const std::set<subdomain_id_type> allowed_subdomains {master};
   //       const Elem * master_elem = pointLocator->operator() (*slave_node, &allowed_subdomains);
   //
@@ -2146,6 +2173,12 @@ NonlinearSystemBase::constraintJacobians(bool displaced)
 
 
   //go over NodeELemConstraints
+  std::unique_ptr<PointLocatorBase> pointLocator;
+  if (!displaced)
+    pointLocator = _fe_problem.mesh().getPointLocator();
+  else
+    pointLocator = _fe_problem.getDisplacedProblem()->mesh().getPointLocator();
+
   constraints_applied = false;
   for (const auto & boundary_id : _mesh.meshBoundaryIds())
   {
@@ -2164,7 +2197,7 @@ NonlinearSystemBase::constraintJacobians(bool displaced)
           if (slave_node.processor_id() == processor_id())
           {
             //master element
-            auto pointLocator = _mesh.getPointLocator();
+
             const std::set<subdomain_id_type> allowed_subdomains {block_id};
             const Elem * master_elem = pointLocator->operator() (slave_node, &allowed_subdomains);
 
@@ -2329,7 +2362,7 @@ NonlinearSystemBase::constraintJacobians(bool displaced)
   //       //slave node
   //       const Node * slave_node = bnode->_node;
   //       //master element
-  //       auto pointLocator = _mesh.getPointLocator();
+  //
   //       const std::set<subdomain_id_type> allowed_subdomains {master};
   //       const Elem * master_elem = pointLocator->operator() (*slave_node, &allowed_subdomains);
   //
