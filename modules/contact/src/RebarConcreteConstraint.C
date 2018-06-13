@@ -211,6 +211,7 @@ RebarConcreteConstraint::computeQpJacobian(Moose::ConstraintJacobianType type)
               return -curr_jac + _phi_slave[_j][_qp] * penalty * _test_slave[_i][_qp];
             }
 
+            case CF_PENALTY:
             default:
               mooseError("Invalid contact formulation");
           }
@@ -233,6 +234,7 @@ RebarConcreteConstraint::computeQpJacobian(Moose::ConstraintJacobianType type)
               return -curr_jac - _phi_master[_j][_qp] * penalty * _test_slave[_i][_qp];
             }
 
+            case CF_PENALTY:
             default:
               mooseError("Invalid contact formulation");
           }
@@ -254,6 +256,7 @@ RebarConcreteConstraint::computeQpJacobian(Moose::ConstraintJacobianType type)
               return slave_jac * _test_master[_i][_qp];
             }
 
+            case CF_PENALTY:
             default:
               mooseError("Invalid contact formulation");
           }
@@ -270,10 +273,12 @@ RebarConcreteConstraint::computeQpJacobian(Moose::ConstraintJacobianType type)
           {
             case CF_KINEMATIC:
               return 0.0;
-
+            case CF_PENALTY:
+              return _test_master[_i][_qp] * _penalty * _phi_master[_j][_qp];
             default:
               mooseError("Invalid contact formulation");
           }
+
 
         default:
           mooseError("Invalid or unavailable contact model");
@@ -325,7 +330,7 @@ RebarConcreteConstraint::computeQpOffDiagJacobian(Moose::ConstraintJacobianType 
                   _current_node->dof_number(0, _vars[_component], 0), _connected_dof_indices[_j]);
               return slave_jac * _test_master[_i][_qp];
             }
-
+            case CF_PENALTY:
             default:
               mooseError("Invalid contact formulation");
           }
