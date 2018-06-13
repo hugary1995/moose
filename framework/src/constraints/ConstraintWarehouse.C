@@ -74,11 +74,21 @@ ConstraintWarehouse::addObject(std::shared_ptr<Constraint> object,
     MooseMesh & mesh = nec->getParam<FEProblemBase *>("_fe_problem_base")->mesh();
     BoundaryID slave = mesh.getBoundaryID(nec->getParam<BoundaryName>("slave"));
     SubdomainID master = mesh.getSubdomainID(nec->getParam<SubdomainName>("master"));
+    bool displaced = nec->parameters().have_parameter<bool>("use_displaced_mesh") &&
+                     nec->getParam<bool>("use_displaced_mesh");
 
-    _node_elem_constraints[std::make_pair(slave, master)].addObject(nec);
-
-    std::cout << "added NodeElemConstraint for slave id: " << slave << std::endl;
-    std::cout << "                            master id: " << master << std::endl;
+    if (displaced)
+    {
+      _displaced_node_elem_constraints[std::make_pair(slave, master)].addObject(nec);
+      std::cout << "added displaced NodeElemConstraint for slave id: " << slave << std::endl;
+      std::cout << "                                      master id: " << master << std::endl;
+    }
+    else
+    {
+      _node_elem_constraints[std::make_pair(slave, master)].addObject(nec);
+      std::cout << "added undisplaced NodeElemConstraint for slave id: " << slave << std::endl;
+      std::cout << "                                        master id: " << master << std::endl;
+    }
   }
 
   // NodalConstraint
@@ -153,28 +163,28 @@ ConstraintWarehouse::getActiveElemElemConstraints(const InterfaceID interface_id
   return it->second.getActiveObjects();
 }
 
-// const std::vector<std::shared_ptr<NodeElemConstraint>> &
-// ConstraintWarehouse::getActiveNodeElemConstraints(BoundaryID boundary_id, bool displaced) const
-// {
-//   std::map<BoundaryID, MooseObjectWarehouse<NodeElemConstraint>>::const_iterator it, end_it;
-//
-//   if (displaced)
-//   {
-//     it = _displaced_node_elem_constraints.find(boundary_id);
-//     end_it = _displaced_node_elem_constraints.end();
-//   }
-//
-//   else
-//   {
-//     it = _node_elem_constraints.find(boundary_id);
-//     end_it = _node_elem_constraints.end();
-//   }
-//
-//   mooseAssert(it != end_it,
-//               "Unable to locate storage for NodeElemConstraint objects for the given boundary id: "
-//                   << boundary_id);
-//   return it->second.getActiveObjects();
-// }
+const std::vector<std::shared_ptr<NodeElemConstraint>> &
+ConstraintWarehouse::getActiveNodeElemConstraints(BoundaryID boundary_id, SubdomainID block_id, bool displaced) const
+{
+  std::map<std::pair<BoundaryID, SubdomainID>, MooseObjectWarehouse<NodeElemConstraint>>::const_iterator it, end_it;
+
+  if (displaced)
+  {
+    it = _displaced_node_elem_constraints.find(std::make_pair(boundary_id, block_id));
+    end_it = _displaced_node_elem_constraints.end();
+  }
+
+  else
+  {
+    it = _node_elem_constraints.find(std::make_pair(boundary_id, block_id));
+    end_it = _node_elem_constraints.end();
+  }
+
+  mooseAssert(it != end_it,
+              "Unable to locate storage for NodeElemConstraint objects for the given boundary and block id pair: "
+                  << boundary_id);
+  return it->second.getActiveObjects();
+}
 
 bool
 ConstraintWarehouse::hasActiveNodalConstraints() const
@@ -231,25 +241,25 @@ ConstraintWarehouse::hasActiveNodeFaceConstraints(BoundaryID boundary_id, bool d
   return (it != end_it && it->second.hasActiveObjects());
 }
 
-// bool
-// ConstraintWarehouse::hasActiveNodeElemConstraints(BoundaryID boundary_id, bool displaced) const
-// {
-//   std::map<BoundaryID, MooseObjectWarehouse<NodeElemConstraint>>::const_iterator it, end_it;
-//
-//   if (displaced)
-//   {
-//     it = _displaced_node_elem_constraints.find(boundary_id);
-//     end_it = _displaced_node_elem_constraints.end();
-//   }
-//
-//   else
-//   {
-//     it = _node_elem_constraints.find(boundary_id);
-//     end_it = _node_elem_constraints.end();
-//   }
-//
-//   return (it != end_it && it->second.hasActiveObjects());
-// }
+bool
+ConstraintWarehouse::hasActiveNodeElemConstraints(BoundaryID boundary_id, SubdomainID block_id, bool displaced) const
+{
+  std::map<std::pair<BoundaryID, SubdomainID>, MooseObjectWarehouse<NodeElemConstraint>>::const_iterator it, end_it;
+
+  if (displaced)
+  {
+    it = _displaced_node_elem_constraints.find(std::make_pair(boundary_id, block_id));
+    end_it = _displaced_node_elem_constraints.end();
+  }
+
+  else
+  {
+    it = _node_elem_constraints.find(std::make_pair(boundary_id, block_id));
+    end_it = _node_elem_constraints.end();
+  }
+
+  return (it != end_it && it->second.hasActiveObjects());
+}
 
 void ConstraintWarehouse::updateActive(THREAD_ID /*tid*/)
 {

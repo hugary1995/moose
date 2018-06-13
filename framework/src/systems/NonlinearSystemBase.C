@@ -852,6 +852,116 @@ NonlinearSystemBase::setConstraintSlaveValues(NumericVector<Number> & solution, 
     }
   }
 
+  //go over NodeELemConstraints
+  for (const auto & boundary_id : _mesh.meshBoundaryIds())
+  {
+    for (const auto & block_id : _mesh.meshSubdomains())
+    {
+      if (_constraints.hasActiveNodeElemConstraints(boundary_id, block_id, displaced))
+      {
+        const auto & constraints =
+            _constraints.getActiveNodeElemConstraints(boundary_id, block_id, displaced);
+        const std::vector<dof_id_type> & slave_nodes = _mesh.getNodeList(boundary_id);
+        for (unsigned int i = 0; i < slave_nodes.size(); i++)
+        {
+          dof_id_type slave_node_num = slave_nodes[i];
+          Node & slave_node = _mesh.nodeRef(slave_node_num);
+
+          if (slave_node.processor_id() == processor_id())
+          {
+            //master element
+            auto pointLocator = _mesh.getPointLocator();
+            const std::set<subdomain_id_type> allowed_subdomains {block_id};
+            const Elem * master_elem = pointLocator->operator() (slave_node, &allowed_subdomains);
+
+            // This reinits the variables that exist on the slave node
+            _fe_problem.reinitNodeFace(&slave_node, boundary_id, 0);
+
+            // This will set aside residual and jacobian space for the variables that have dofs on
+            // the slave node
+            _fe_problem.prepareAssembly(0);
+
+            std::vector<Point> points;
+            points.push_back(slave_node);
+
+            // reinit variables on the master element at the contact point
+            // _fe_problem.reinitElemPhys(master_elem, points, 0);
+            _fe_problem.setNeighborSubdomainID(master_elem, 0);
+            _fe_problem.reinitNeighborPhys(master_elem, points, 0);
+
+            for (const auto & nec : constraints)
+              if (nec->shouldApply())
+              {
+                constraints_applied = true;
+                nec->computeSlaveValue(solution);
+              }
+          }
+        }
+      }
+    }
+  }
+  // std::map<std::pair<BoundaryID, SubdomainID>, MooseObjectWarehouse<NodeElemConstraint>>::const_iterator necs_itr, necs_begin, necs_end;
+  // if (!displaced)
+  // {
+  //   necs_begin = _constraints._node_elem_constraints.begin();
+  //   necs_end = _constraints._node_elem_constraints.end();
+  // }
+  // else
+  // {
+  //   necs_begin = _constraints._displaced_node_elem_constraints.begin();
+  //   necs_end = _constraints._displaced_node_elem_constraints.end();
+  // }
+  //
+  // // go over slave nodes
+  // ConstBndNodeRange & bnd_nodes = *_mesh.getBoundaryNodeRange();
+  //
+  // for (const auto & bnode : bnd_nodes)
+  // {
+  //   for (necs_itr = necs_begin ; necs_itr != necs_end; necs_itr++)
+  //   {
+  //     //slave boundary id
+  //     BoundaryID slave = necs_itr->first.first;
+  //     //master block id
+  //     SubdomainID master = necs_itr->first.second;
+  //
+  //     if (bnode->_bnd_id == slave)
+  //     {
+  //
+  //       // NodeElemConstraint objects
+  //       const auto & _node_element_constraints = necs_itr->second.getActiveObjects();
+  //
+  //       //slave node
+  //       const Node * slave_node = bnode->_node;
+  //       //master element
+  //       auto pointLocator = _mesh.getPointLocator();
+  //       const std::set<subdomain_id_type> allowed_subdomains {master};
+  //       const Elem * master_elem = pointLocator->operator() (*slave_node, &allowed_subdomains);
+  //
+  //       // This reinits the variables that exist on the slave node
+  //       _fe_problem.reinitNodeFace(slave_node, slave, 0);
+  //
+  //       // This will set aside residual and jacobian space for the variables that have dofs on
+  //       // the slave node
+  //       _fe_problem.prepareAssembly(0);
+  //
+  //       std::vector<Point> points;
+  //       points.push_back(*slave_node);
+  //
+  //       // reinit variables on the master element at the contact point
+  //       // _fe_problem.reinitElemPhys(master_elem, points, 0);
+  //       _fe_problem.setNeighborSubdomainID(master_elem, 0);
+  //       _fe_problem.reinitNeighborPhys(master_elem, points, 0);
+  //
+  //       const auto & nec = &(necs_itr->second);
+  //       if (nec->shouldApply())
+  //       {
+  //         constraints_applied = true;
+  //         nec->computeSlaveValue(solution);
+  //       }
+  //     }
+  //   }
+  // }
+
   // See if constraints were applied anywhere
   _communicator.max(constraints_applied);
 
@@ -1103,102 +1213,188 @@ NonlinearSystemBase::constraintResiduals(NumericVector<Number> & residual, bool 
   }
 
   //go over NodeELemConstraints
-  if (displaced) return;
-  std::map<std::pair<BoundaryID, SubdomainID>, MooseObjectWarehouse<NodeElemConstraint>>::const_iterator necs_itr, necs_begin, necs_end;
-  necs_begin = _constraints._node_elem_constraints.begin();
-  necs_end = _constraints._node_elem_constraints.end();
-
-  // go over slave nodes
-  ConstBndNodeRange & bnd_nodes = *_mesh.getBoundaryNodeRange();
-
-  for (const auto & bnode : bnd_nodes)
+  constraints_applied = false;
+  residual_has_inserted_values = false;
+  for (const auto & boundary_id : _mesh.meshBoundaryIds())
   {
-    for (necs_itr = necs_begin ; necs_itr != necs_end; necs_itr++)
+    for (const auto & block_id : _mesh.meshSubdomains())
     {
-      //slave boundary id
-      BoundaryID slave = necs_itr->first.first;
-      //master block id
-      SubdomainID master = necs_itr->first.second;
-
-      if (bnode->_bnd_id == slave)
+      if (_constraints.hasActiveNodeElemConstraints(boundary_id, block_id, displaced))
       {
-        //debug messages
-        // std::cout << "          MATCHED! on constrained Node: " << bnode->_node->id() << std::endl;
-        // std::cout << "                     ";
-        // bnode->_node->print();
-        // std::cout << std::endl;
-        // std::cout << "                   on constrained Boundary: " << slave << std::endl;
-
-
-        // NodeElemConstraint objects
-        const auto & _node_element_constraints = necs_itr->second.getActiveObjects();
-
-        //slave node
-        const Node * slave_node = bnode->_node;
-        //master element
-        auto pointLocator = _mesh.getPointLocator();
-        const std::set<subdomain_id_type> allowed_subdomains {master};
-        const Elem * master_elem = pointLocator->operator() (*slave_node, &allowed_subdomains);
-
-        //debug messages
-        // std::cout << "                   master block id: " << master << std::endl;
-        // std::cout << "                   master elem id: " << master_elem->id() << std::endl;
-        // for (auto & n : master_elem->node_ref_range())
-        // {
-        //   std::cout << "                     ";
-        //   n.print();
-        //   std::cout << std::endl;
-        // }
-
-        // This reinits the variables that exist on the slave node
-        _fe_problem.reinitNode(slave_node, 0);
-
-        // This will set aside residual and jacobian space for the variables that have dofs on
-        // the slave node
-        _fe_problem.prepareAssembly(0);
-
-        std::vector<Point> points;
-        points.push_back(*slave_node);
-
-        // reinit variables on the master element at the contact point
-        // _fe_problem.reinitElemPhys(master_elem, points, 0);
-        _fe_problem.setNeighborSubdomainID(master_elem, 0);
-        _fe_problem.reinitNeighborPhys(master_elem, points, 0);
-        // //debug messages
-        // std::cout << "          After initialization, current node: " << _fe_problem.assembly(0).node()->id() << std::endl;
-        // std::cout << "                     ";
-        // _fe_problem.assembly(0).node()->print();
-        // std::cout << std::endl;
-        // std::cout << "          After initialization, current elem: " << _fe_problem.assembly(0).elem()->id() << std::endl;
-        // for (auto & n : _fe_problem.assembly(0).elem()->node_ref_range())
-        // {
-        //   std::cout << "                     ";
-        //   n.print();
-        //   std::cout << std::endl;
-        // }
-
-        //go over NodeElemConstraints
-        for (const auto & nec : _node_element_constraints)
+        const auto & constraints =
+            _constraints.getActiveNodeElemConstraints(boundary_id, block_id, displaced);
+        const std::vector<dof_id_type> & slave_nodes = _mesh.getNodeList(boundary_id);
+        for (unsigned int i = 0; i < slave_nodes.size(); i++)
         {
-          if (nec->shouldApply())
-          {
-            constraints_applied = true;
-            nec->computeResidual();
+          dof_id_type slave_node_num = slave_nodes[i];
+          Node & slave_node = _mesh.nodeRef(slave_node_num);
 
-            if (nec->overwriteSlaveResidual())
+          if (slave_node.processor_id() == processor_id())
+          {
+            //master element
+            auto pointLocator = _mesh.getPointLocator();
+            const std::set<subdomain_id_type> allowed_subdomains {block_id};
+            const Elem * master_elem = pointLocator->operator() (slave_node, &allowed_subdomains);
+
+            // This reinits the variables that exist on the slave node
+            _fe_problem.reinitNodeFace(&slave_node, boundary_id, 0);
+
+            // This will set aside residual and jacobian space for the variables that have dofs on
+            // the slave node
+            _fe_problem.prepareAssembly(0);
+
+            std::vector<Point> points;
+            points.push_back(slave_node);
+
+            // reinit variables on the master element at the contact point
+            // _fe_problem.reinitElemPhys(master_elem, points, 0);
+            _fe_problem.setNeighborSubdomainID(master_elem, 0);
+            _fe_problem.reinitNeighborPhys(master_elem, points, 0);
+
+            for (const auto & nec : constraints)
             {
-              _fe_problem.setResidual(residual, 0);
-              residual_has_inserted_values = true;
+              if (nec->shouldApply())
+              {
+                constraints_applied = true;
+                nec->computeResidual();
+
+                if (nec->overwriteSlaveResidual())
+                {
+                  _fe_problem.setResidual(residual, 0);
+                  residual_has_inserted_values = true;
+                }
+                else
+                  _fe_problem.cacheResidual(0);
+                _fe_problem.cacheResidualNeighbor(0);
+              }
             }
-            else
-              _fe_problem.cacheResidual(0);
-            _fe_problem.cacheResidualNeighbor(0);
+            _fe_problem.addCachedResidual(0);
           }
         }
       }
-      _fe_problem.addCachedResidual(tid);
     }
   }
+  _communicator.max(constraints_applied);
+
+  if (constraints_applied)
+  {
+    // If any of the above constraints inserted values in the residual, it needs to be assembled
+    // before adding the cached residuals below.
+    _communicator.max(residual_has_inserted_values);
+    if (residual_has_inserted_values)
+      residual.close();
+
+    _fe_problem.addCachedResidualDirectly(residual, 0);
+    residual.close();
+
+    if (_need_residual_ghosted)
+      *_residual_ghosted = residual;
+  }
+  // std::map<std::pair<BoundaryID, SubdomainID>, MooseObjectWarehouse<NodeElemConstraint>>::const_iterator necs_itr, necs_begin, necs_end;
+  // if (!displaced)
+  // {
+  //   necs_begin = _constraints._node_elem_constraints.begin();
+  //   necs_end = _constraints._node_elem_constraints.end();
+  // }
+  // else
+  // {
+  //   necs_begin = _constraints._displaced_node_elem_constraints.begin();
+  //   necs_end = _constraints._displaced_node_elem_constraints.end();
+  // }
+  //
+  // // go over slave nodes
+  // ConstBndNodeRange & bnd_nodes = *_mesh.getBoundaryNodeRange();
+  //
+  // for (const auto & bnode : bnd_nodes)
+  // {
+  //   for (necs_itr = necs_begin ; necs_itr != necs_end; necs_itr++)
+  //   {
+  //     //slave boundary id
+  //     BoundaryID slave = necs_itr->first.first;
+  //     //master block id
+  //     SubdomainID master = necs_itr->first.second;
+  //
+  //     if (bnode->_bnd_id == slave)
+  //     {
+  //       //debug messages
+  //       // std::cout << "          MATCHED! on constrained Node: " << bnode->_node->id() << std::endl;
+  //       // std::cout << "                     ";
+  //       // bnode->_node->print();
+  //       // std::cout << std::endl;
+  //       // std::cout << "                   on constrained Boundary: " << slave << std::endl;
+  //
+  //       // NodeElemConstraint objects
+  //       const auto & _node_element_constraints = necs_itr->second.getActiveObjects();
+  //
+  //       //slave node
+  //       const Node * slave_node = bnode->_node;
+  //       //master element
+  //       auto pointLocator = _mesh.getPointLocator();
+  //       const std::set<subdomain_id_type> allowed_subdomains {master};
+  //       const Elem * master_elem = pointLocator->operator() (*slave_node, &allowed_subdomains);
+  //
+  //       //debug messages
+  //       // std::cout << "                   master block id: " << master << std::endl;
+  //       // std::cout << "                   master elem id: " << master_elem->id() << std::endl;
+  //       // for (auto & n : master_elem->node_ref_range())
+  //       // {
+  //       //   std::cout << "                     ";
+  //       //   n.print();
+  //       //   std::cout << std::endl;
+  //       // }
+  //
+  //       // This reinits the variables that exist on the slave node
+  //       _fe_problem.reinitNodeFace(slave_node, slave, 0);
+  //
+  //       // This will set aside residual and jacobian space for the variables that have dofs on
+  //       // the slave node
+  //       _fe_problem.prepareAssembly(0);
+  //
+  //       std::vector<Point> points;
+  //       points.push_back(*slave_node);
+  //
+  //       // reinit variables on the master element at the contact point
+  //       // _fe_problem.reinitElemPhys(master_elem, points, 0);
+  //       _fe_problem.setNeighborSubdomainID(master_elem, 0);
+  //       _fe_problem.reinitNeighborPhys(master_elem, points, 0);
+  //
+  //       // //debug messages
+  //       // std::cout << "          After initialization, current node: " << _fe_problem.assembly(0).node()->id() << std::endl;
+  //       // std::cout << "                     ";
+  //       // _fe_problem.assembly(0).node()->print();
+  //       // std::cout << std::endl;
+  //       // std::cout << "          After initialization, current elem: " << _fe_problem.assembly(0).elem()->id() << std::endl;
+  //       // for (auto & n : _fe_problem.assembly(0).elem()->node_ref_range())
+  //       // {
+  //       //   std::cout << "                     ";
+  //       //   n.print();
+  //       //   std::cout << std::endl;
+  //       // }
+  //
+  //       const auto & nec = &(necs_itr->second);
+  //
+  //       if (nec->shouldApply())
+  //       {
+  //         constraints_applied = true;
+  //         nec->computeResidual();
+  //
+  //         if (nec->overwriteSlaveResidual())
+  //         {
+  //           _fe_problem.setResidual(residual, 0);
+  //           residual_has_inserted_values = true;
+  //           std::cout << "I am overwriting slave residuals" << std::endl;
+  //         }
+  //         else
+  //         {
+  //           _fe_problem.cacheResidual(0);
+  //           std::cout << "I am NOT overwriting slave residuals" << std::endl;
+  //         }
+  //         _fe_problem.cacheResidualNeighbor(0);
+  //       }
+  //       _fe_problem.addCachedResidual(0);
+  //     }
+  //   }
+  // }
 }
 
 void
@@ -1948,138 +2144,288 @@ NonlinearSystemBase::constraintJacobians(bool displaced)
     }
   }
 
+
   //go over NodeELemConstraints
-  std::map<std::pair<BoundaryID, SubdomainID>, MooseObjectWarehouse<NodeElemConstraint>>::const_iterator necs_itr, necs_begin, necs_end;
-  necs_begin = _constraints._node_elem_constraints.begin();
-  necs_end = _constraints._node_elem_constraints.end();
-
-  std::cout << _constraints._node_elem_constraints.size() << " node element constraint(s)" << std::endl;
-
-  // go over slave nodes
-  ConstBndNodeRange & bnd_nodes = *_mesh.getBoundaryNodeRange();
-
-  for (const auto & bnode : bnd_nodes)
+  constraints_applied = false;
+  for (const auto & boundary_id : _mesh.meshBoundaryIds())
   {
-    //std::cout << "on node " << bnode->_node->id() << std::endl;
-    //std::cout << "on bndy " << bnode->_bnd_id << std::endl;
-    for (necs_itr = necs_begin ; necs_itr != necs_end; necs_itr++)
+    for (const auto & block_id : _mesh.meshSubdomains())
     {
-      //slave boundary id
-      BoundaryID slave = necs_itr->first.first;
-      //std::cout << "     slave bnd " << slave << std::endl;
-      //master block id
-      SubdomainID master = necs_itr->first.second;
-
-      if (bnode->_bnd_id == slave)
+      if (_constraints.hasActiveNodeElemConstraints(boundary_id, block_id, displaced))
       {
-        // NodeElemConstraint objects
-        const auto & _node_element_constraints = necs_itr->second.getActiveObjects();
-
-        //slave node
-        const Node * slave_node = bnode->_node;
-        //master element
-        auto pointLocator = _mesh.getPointLocator();
-        const std::set<subdomain_id_type> allowed_subdomains {master};
-        const Elem * master_elem = pointLocator->operator() (*slave_node, &allowed_subdomains);
-
-        // *These next steps MUST be done in this order!*
-
-        // This reinits the variables that exist on the slave node
-        _fe_problem.reinitNode(slave_node, 0);
-
-        // This will set aside residual and jacobian space for the variables that have dofs on
-        // the slave node
-        _fe_problem.prepareAssembly(0);
-
-        std::vector<Point> points;
-        points.push_back(*slave_node);
-
-        // reinit variables on the master element's faces at the contact point
-        _fe_problem.reinitElemPhys(master_elem, points, 0);
-
-        for (const auto & nec : _node_element_constraints)
+        const auto & constraints =
+            _constraints.getActiveNodeElemConstraints(boundary_id, block_id, displaced);
+        const std::vector<dof_id_type> & slave_nodes = _mesh.getNodeList(boundary_id);
+        for (unsigned int i = 0; i < slave_nodes.size(); i++)
         {
-          nec->_jacobian = &jacobian;
+          dof_id_type slave_node_num = slave_nodes[i];
+          Node & slave_node = _mesh.nodeRef(slave_node_num);
 
-          if (nec->shouldApply())
+          if (slave_node.processor_id() == processor_id())
           {
-            constraints_applied = true;
+            //master element
+            auto pointLocator = _mesh.getPointLocator();
+            const std::set<subdomain_id_type> allowed_subdomains {block_id};
+            const Elem * master_elem = pointLocator->operator() (slave_node, &allowed_subdomains);
 
-            nec->subProblem().prepareShapes(nec->variable().number(), 0);
-            nec->subProblem().prepareNeighborShapes(nec->variable().number(), 0);
+            // This reinits the variables that exist on the slave node
+            _fe_problem.reinitNodeFace(&slave_node, boundary_id, 0);
 
-            nec->computeJacobian();
+            // This will set aside residual and jacobian space for the variables that have dofs on
+            // the slave node
+            _fe_problem.prepareAssembly(0);
+            _fe_problem.reinitOffDiagScalars(0);
 
-            if (nec->overwriteSlaveJacobian())
+            std::vector<Point> points;
+            points.push_back(slave_node);
+
+            // reinit variables on the master element at the contact point
+            // _fe_problem.reinitElemPhys(master_elem, points, 0);
+            _fe_problem.setNeighborSubdomainID(master_elem, 0);
+            _fe_problem.reinitNeighborPhys(master_elem, points, 0);
+
+            for (const auto & nec : constraints)
             {
-              // Add this variable's dof's row to be zeroed
-              zero_rows.push_back(nec->variable().nodalDofIndex());
-            }
+              nec->_jacobian = &jacobian;
 
-            std::vector<dof_id_type> slave_dofs(1, nec->variable().nodalDofIndex());
+              if (nec->shouldApply())
+              {
+                constraints_applied = true;
 
-            // Cache the jacobian block for the slave side
-            _fe_problem.assembly(0).cacheJacobianBlock(nec->_Kee,
-                                                       slave_dofs,
-                                                       nec->_connected_dof_indices,
-                                                       nec->variable().scalingFactor());
+                nec->subProblem().prepareShapes(nec->variable().number(), 0);
+                nec->subProblem().prepareNeighborShapes(nec->variable().number(), 0);
 
-            // Cache the jacobian block for the master side
-            if (nec->addCouplingEntriesToJacobian())
-              _fe_problem.assembly(0).cacheJacobianBlock(
-                  nec->_Kne,
-                  nec->masterVariable().dofIndicesNeighbor(),
-                  nec->_connected_dof_indices,
-                  nec->variable().scalingFactor());
+                nec->computeJacobian();
 
-            _fe_problem.cacheJacobian(0);
-            if (nec->addCouplingEntriesToJacobian())
-              _fe_problem.cacheJacobianNeighbor(0);
+                if (nec->overwriteSlaveJacobian())
+                {
+                  // Add this variable's dof's row to be zeroed
+                  zero_rows.push_back(nec->variable().nodalDofIndex());
+                }
 
-            // Do the off-diagonals next
-            const std::vector<MooseVariableFEBase *> coupled_vars = nec->getCoupledMooseVars();
-            for (const auto & jvar : coupled_vars)
-            {
-              // Only compute jacobians for nonlinear variables
-              if (jvar->kind() != Moose::VAR_NONLINEAR)
-                continue;
+                std::vector<dof_id_type> slave_dofs(1, nec->variable().nodalDofIndex());
 
-              // Only compute Jacobian entries if this coupling is being used by the
-              // preconditioner
-              if (nec->variable().number() == jvar->number() ||
-                  !_fe_problem.areCoupled(nec->variable().number(), jvar->number()))
-                continue;
-
-              // Need to zero out the matrices first
-              _fe_problem.prepareAssembly(0);
-
-              nec->subProblem().prepareShapes(nec->variable().number(), 0);
-              nec->subProblem().prepareNeighborShapes(jvar->number(), 0);
-
-              nec->computeOffDiagJacobian(jvar->number());
-
-              // Cache the jacobian block for the slave side
-              _fe_problem.assembly(0).cacheJacobianBlock(nec->_Kee,
-                                                         slave_dofs,
-                                                         nec->_connected_dof_indices,
-                                                         nec->variable().scalingFactor());
-
-              // Cache the jacobian block for the master side
-              if (nec->addCouplingEntriesToJacobian())
-                _fe_problem.assembly(0).cacheJacobianBlock(nec->_Kne,
-                                                           nec->variable().dofIndicesNeighbor(),
+                // Cache the jacobian block for the slave side
+                _fe_problem.assembly(0).cacheJacobianBlock(nec->_Kee,
+                                                           slave_dofs,
                                                            nec->_connected_dof_indices,
                                                            nec->variable().scalingFactor());
 
-              _fe_problem.cacheJacobian(0);
-              if (nec->addCouplingEntriesToJacobian())
+                // Cache the jacobian block for the master side
+                _fe_problem.assembly(0).cacheJacobianBlock(
+                    nec->_Kne,
+                    nec->masterVariable().dofIndicesNeighbor(),
+                    nec->_connected_dof_indices,
+                    nec->variable().scalingFactor());
+
+                _fe_problem.cacheJacobian(0);
                 _fe_problem.cacheJacobianNeighbor(0);
+
+                // Do the off-diagonals next
+                const std::vector<MooseVariableFEBase *> coupled_vars = nec->getCoupledMooseVars();
+                for (const auto & jvar : coupled_vars)
+                {
+                  // Only compute jacobians for nonlinear variables
+                  if (jvar->kind() != Moose::VAR_NONLINEAR)
+                    continue;
+
+                  // Only compute Jacobian entries if this coupling is being used by the
+                  // preconditioner
+                  if (nec->variable().number() == jvar->number() ||
+                      !_fe_problem.areCoupled(nec->variable().number(), jvar->number()))
+                    continue;
+
+                  // Need to zero out the matrices first
+                  _fe_problem.prepareAssembly(0);
+
+                  nec->subProblem().prepareShapes(nec->variable().number(), 0);
+                  nec->subProblem().prepareNeighborShapes(jvar->number(), 0);
+
+                  nec->computeOffDiagJacobian(jvar->number());
+
+                  // Cache the jacobian block for the slave side
+                  _fe_problem.assembly(0).cacheJacobianBlock(nec->_Kee,
+                                                             slave_dofs,
+                                                             nec->_connected_dof_indices,
+                                                             nec->variable().scalingFactor());
+
+                  // Cache the jacobian block for the master side
+                  _fe_problem.assembly(0).cacheJacobianBlock(nec->_Kne,
+                                                             nec->variable().dofIndicesNeighbor(),
+                                                             nec->_connected_dof_indices,
+                                                             nec->variable().scalingFactor());
+
+                  _fe_problem.cacheJacobian(0);
+                  _fe_problem.cacheJacobianNeighbor(0);
+                }
+              }
             }
           }
         }
       }
     }
   }
+  // See if constraints were applied anywhere
+  _communicator.max(constraints_applied);
+
+  if (constraints_applied)
+  {
+#ifdef LIBMESH_HAVE_PETSC
+// Necessary for speed
+#if PETSC_VERSION_LESS_THAN(3, 0, 0)
+    MatSetOption(static_cast<PetscMatrix<Number> &>(jacobian).mat(), MAT_KEEP_ZEROED_ROWS);
+#elif PETSC_VERSION_LESS_THAN(3, 1, 0)
+    // In Petsc 3.0.0, MatSetOption has three args...the third arg
+    // determines whether the option is set (true) or unset (false)
+    MatSetOption(
+        static_cast<PetscMatrix<Number> &>(jacobian).mat(), MAT_KEEP_ZEROED_ROWS, PETSC_TRUE);
+#else
+    MatSetOption(static_cast<PetscMatrix<Number> &>(jacobian).mat(),
+                 MAT_KEEP_NONZERO_PATTERN, // This is changed in 3.1
+                 PETSC_TRUE);
+#endif
+#endif
+
+    jacobian.close();
+    jacobian.zero_rows(zero_rows, 0.0);
+    jacobian.close();
+    _fe_problem.addCachedJacobian(0);
+    jacobian.close();
+  }
+  // std::map<std::pair<BoundaryID, SubdomainID>, MooseObjectWarehouse<NodeElemConstraint>>::const_iterator necs_itr, necs_begin, necs_end;
+  // if (!displaced)
+  // {
+  //   necs_begin = _constraints._node_elem_constraints.begin();
+  //   necs_end = _constraints._node_elem_constraints.end();
+  // }
+  // else
+  // {
+  //   necs_begin = _constraints._displaced_node_elem_constraints.begin();
+  //   necs_end = _constraints._displaced_node_elem_constraints.end();
+  // }
+  //
+  // std::cout << _constraints._node_elem_constraints.size() << " node element constraint(s)" << std::endl;
+  //
+  // // go over slave nodes
+  // ConstBndNodeRange & bnd_nodes = *_mesh.getBoundaryNodeRange();
+  //
+  // for (const auto & bnode : bnd_nodes)
+  // {
+  //   //std::cout << "on node " << bnode->_node->id() << std::endl;
+  //   //std::cout << "on bndy " << bnode->_bnd_id << std::endl;
+  //   for (necs_itr = necs_begin ; necs_itr != necs_end; necs_itr++)
+  //   {
+  //     //slave boundary id
+  //     BoundaryID slave = necs_itr->first.first;
+  //     //std::cout << "     slave bnd " << slave << std::endl;
+  //     //master block id
+  //     SubdomainID master = necs_itr->first.second;
+  //
+  //     if (bnode->_bnd_id == slave)
+  //     {
+  //       // NodeElemConstraint objects
+  //       const auto & _node_element_constraints = necs_itr->second.getActiveObjects();
+  //
+  //       //slave node
+  //       const Node * slave_node = bnode->_node;
+  //       //master element
+  //       auto pointLocator = _mesh.getPointLocator();
+  //       const std::set<subdomain_id_type> allowed_subdomains {master};
+  //       const Elem * master_elem = pointLocator->operator() (*slave_node, &allowed_subdomains);
+  //
+  //       // *These next steps MUST be done in this order!*
+  //
+  //       // This reinits the variables that exist on the slave node
+  //       _fe_problem.reinitNodeFace(slave_node, slave, 0);
+  //
+  //       // This will set aside residual and jacobian space for the variables that have dofs on
+  //       // the slave node
+  //       _fe_problem.prepareAssembly(0);
+  //
+  //       std::vector<Point> points;
+  //       points.push_back(*slave_node);
+  //
+  //       // reinit variables on the master element's faces at the contact point
+  //       _fe_problem.setNeighborSubdomainID(master_elem, 0);
+  //       _fe_problem.reinitNeighborPhys(master_elem, points, 0);
+  //
+  //       const auto & nec = &(necs_itr->second);
+  //       nec->_jacobian = &jacobian;
+  //
+  //       if (nec->shouldApply())
+  //       {
+  //         constraints_applied = true;
+  //
+  //         nec->subProblem().prepareShapes(nec->variable().number(), 0);
+  //         nec->subProblem().prepareNeighborShapes(nec->variable().number(), 0);
+  //
+  //         nec->computeJacobian();
+  //
+  //         if (nec->overwriteSlaveJacobian())
+  //         {
+  //           // Add this variable's dof's row to be zeroed
+  //           zero_rows.push_back(nec->variable().nodalDofIndex());
+  //         }
+  //
+  //         std::vector<dof_id_type> slave_dofs(1, nec->variable().nodalDofIndex());
+  //
+  //         // Cache the jacobian block for the slave side
+  //         _fe_problem.assembly(0).cacheJacobianBlock(nec->_Kee,
+  //                                                    slave_dofs,
+  //                                                    nec->_connected_dof_indices,
+  //                                                    nec->variable().scalingFactor());
+  //
+  //         // Cache the jacobian block for the master side
+  //         _fe_problem.assembly(0).cacheJacobianBlock(
+  //             nec->_Kne,
+  //             nec->masterVariable().dofIndicesNeighbor(),
+  //             nec->_connected_dof_indices,
+  //             nec->variable().scalingFactor());
+  //
+  //         _fe_problem.cacheJacobian(0);
+  //         _fe_problem.cacheJacobianNeighbor(0);
+  //
+  //         // Do the off-diagonals next
+  //         const std::vector<MooseVariableFEBase *> coupled_vars = nec->getCoupledMooseVars();
+  //         for (const auto & jvar : coupled_vars)
+  //         {
+  //           // Only compute jacobians for nonlinear variables
+  //           if (jvar->kind() != Moose::VAR_NONLINEAR)
+  //             continue;
+  //
+  //           // Only compute Jacobian entries if this coupling is being used by the
+  //           // preconditioner
+  //           if (nec->variable().number() == jvar->number() ||
+  //               !_fe_problem.areCoupled(nec->variable().number(), jvar->number()))
+  //             continue;
+  //
+  //           // Need to zero out the matrices first
+  //           _fe_problem.prepareAssembly(0);
+  //
+  //           nec->subProblem().prepareShapes(nec->variable().number(), 0);
+  //           nec->subProblem().prepareNeighborShapes(jvar->number(), 0);
+  //
+  //           nec->computeOffDiagJacobian(jvar->number());
+  //
+  //           // Cache the jacobian block for the slave side
+  //           _fe_problem.assembly(0).cacheJacobianBlock(nec->_Kee,
+  //                                                      slave_dofs,
+  //                                                      nec->_connected_dof_indices,
+  //                                                      nec->variable().scalingFactor());
+  //
+  //           // Cache the jacobian block for the master side
+  //           _fe_problem.assembly(0).cacheJacobianBlock(nec->_Kne,
+  //                                                      nec->variable().dofIndicesNeighbor(),
+  //                                                      nec->_connected_dof_indices,
+  //                                                      nec->variable().scalingFactor());
+  //
+  //           _fe_problem.cacheJacobian(0);
+  //           _fe_problem.cacheJacobianNeighbor(0);
+  //         }
+  //       }
+  //     }
+  //   }
+  // }
 }
 
 void

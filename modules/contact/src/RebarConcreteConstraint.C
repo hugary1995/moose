@@ -54,13 +54,14 @@ validParams<RebarConcreteConstraint>()
       "The penalty to apply.  This can vary depending on the stiffness of your materials");
   params.addParam<MooseEnum>("order", orders, "The finite element order");
 
-  params.set<bool>("use_displaced_mesh") = false;
+  params.set<bool>("use_displaced_mesh") = true;
 
   return params;
 }
 
 RebarConcreteConstraint::RebarConcreteConstraint(const InputParameters & parameters)
   : NodeElemConstraint(parameters),
+    _displaced_problem(parameters.get<FEProblemBase *>("_fe_problem_base")->getDisplacedProblem()),
     _fe_problem(*parameters.get<FEProblem *>("_fe_problem")),
     _component(getParam<unsigned int>("component")),
     _model(ContactMaster::contactModel(getParam<std::string>("model"))),
@@ -129,7 +130,6 @@ void
 RebarConcreteConstraint::computeContactForce()
 {
   // std::cout << "          In RebarConcreteConstraint::computeContactForce()" << std::endl;
-  //const Node * node = pinfo->_node;
   const Node * node = _current_node;
   // std::cout << "               current node id: " << node->id() << std::endl;
 
@@ -180,8 +180,8 @@ RebarConcreteConstraint::computeQpResidual(Moose::ConstraintType type)
     case Moose::Slave:
       if (_formulation == CF_KINEMATIC)
       {
-        // std::cout << "               _u_slave[_qp] = " << _u_slave[_qp] << std::endl;
-        // std::cout << "               _u_master[_qp] = " << _u_master[_qp] << std::endl;
+        std::cout << "                    _u_master[_qp] = " << _u_master[_qp] << std::endl;
+        std::cout << "                    _u_slave[_qp] = " << _u_slave[_qp] << std::endl;
         RealVectorValue distance_vec(_u_slave[_qp] - _u_master[_qp]);
         RealVectorValue pen_force(_penalty * distance_vec);
         if (_model == CM_GLUED)

@@ -47,8 +47,8 @@ NodeElemConstraint::NodeElemConstraint(const InputParameters & parameters)
     _master_q_point(_assembly.qPoints()),
     _master_qrule(_assembly.qRule()),
 
-    _current_node(_assembly.node()),
-    _current_master(_assembly.elem()),
+    _current_node(_var.node()),
+    _current_master(_var.neighbor()),
     // _u_slave(_var.dofValues()),
     // _u_slave_old(_var.dofValuesOld()),
     _u_slave(_var.sln()),
@@ -72,7 +72,7 @@ NodeElemConstraint::NodeElemConstraint(const InputParameters & parameters)
     _dof_map(_sys.dofMap()),
     _node_to_elem_map(_mesh.nodeToElemMap()),
 
-    _overwrite_slave_residual(true)
+    _overwrite_slave_residual(false)
 {
   addMooseVariableDependency(&_var);
   // Put a "1" into test_slave
