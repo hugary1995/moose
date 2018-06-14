@@ -263,6 +263,7 @@ protected:
    * the residual previously at that node for that variable.
    */
   bool _overwrite_slave_residual;
+  bool _debug;
 
 public:
   std::vector<dof_id_type> _connected_dof_indices;

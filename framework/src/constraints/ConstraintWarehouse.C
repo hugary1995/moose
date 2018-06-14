@@ -78,17 +78,9 @@ ConstraintWarehouse::addObject(std::shared_ptr<Constraint> object,
                      nec->getParam<bool>("use_displaced_mesh");
 
     if (displaced)
-    {
       _displaced_node_elem_constraints[std::make_pair(slave, master)].addObject(nec);
-      std::cout << "added displaced NodeElemConstraint for slave id: " << slave << std::endl;
-      std::cout << "                                      master id: " << master << std::endl;
-    }
     else
-    {
       _node_elem_constraints[std::make_pair(slave, master)].addObject(nec);
-      std::cout << "added undisplaced NodeElemConstraint for slave id: " << slave << std::endl;
-      std::cout << "                                        master id: " << master << std::endl;
-    }
   }
 
   // NodalConstraint

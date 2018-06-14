@@ -1247,21 +1247,21 @@ NonlinearSystemBase::constraintResiduals(NumericVector<Number> & residual, bool 
             const std::set<subdomain_id_type> allowed_subdomains {block_id};
             const Elem * master_elem = pointLocator->operator() (slave_node, &allowed_subdomains);
 
-            //debug messages
-            std::cout << "\n\n=============================================\n";
-            std::cout << "          MATCHED! on constrained Node: " << slave_node.id() << std::endl;
-            std::cout << "                     ";
-            slave_node.print();
-            std::cout << std::endl;
-            std::cout << "                   on constrained Boundary: " << boundary_id << std::endl;
-            std::cout << "                   master block id: " << block_id << std::endl;
-            std::cout << "                   master elem id: " << master_elem->id() << std::endl;
-            for (auto & n : master_elem->node_ref_range())
-            {
-              std::cout << "                     ";
-              n.print();
-              std::cout << std::endl;
-            }
+            // //debug messages
+            // std::cout << "\n\n=============================================\n";
+            // std::cout << "          MATCHED! on constrained Node: " << slave_node.id() << std::endl;
+            // std::cout << "                     ";
+            // slave_node.print();
+            // std::cout << std::endl;
+            // std::cout << "                   on constrained Boundary: " << boundary_id << std::endl;
+            // std::cout << "                   master block id: " << block_id << std::endl;
+            // std::cout << "                   master elem id: " << master_elem->id() << std::endl;
+            // for (auto & n : master_elem->node_ref_range())
+            // {
+            //   std::cout << "                     ";
+            //   n.print();
+            //   std::cout << std::endl;
+            // }
 
             // This reinits the variables that exist on the slave node
             _fe_problem.reinitNodeFace(&slave_node, boundary_id, 0);
@@ -1846,7 +1846,6 @@ NonlinearSystemBase::addImplicitGeometricCouplingEntries(GeometricSearchData & g
 void
 NonlinearSystemBase::constraintJacobians(bool displaced)
 {
-  std::cout << "\n\n\nIn NonlinearSystemBase::constraintJacobians()" << std::endl;
   if (!hasMatrix(systemMatrixTag()))
     mooseError("A system matrix is required");
 

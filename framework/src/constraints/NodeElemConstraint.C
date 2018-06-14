@@ -28,7 +28,7 @@ validParams<NodeElemConstraint>()
   params.addRequiredParam<SubdomainName>("master",
                                         "The block ID associated with the master side");
   params.addParam<MooseEnum>("order", orders, "The finite element order used for projections");
-
+  params.addParam<bool>("debug", false, "whether to print debug messages");
   params.addRequiredCoupledVar("master_variable", "The variable on the master side of the domain");
 
   return params;
@@ -72,7 +72,8 @@ NodeElemConstraint::NodeElemConstraint(const InputParameters & parameters)
     _dof_map(_sys.dofMap()),
     _node_to_elem_map(_mesh.nodeToElemMap()),
 
-    _overwrite_slave_residual(true)
+    _overwrite_slave_residual(true),
+    _debug(getParam<bool>("debug"))
 {
   addMooseVariableDependency(&_var);
   // Put a "1" into test_slave
@@ -97,23 +98,25 @@ NodeElemConstraint::computeSlaveValue(NumericVector<Number> & current_solution)
 void
 NodeElemConstraint::computeResidual()
 {
-  std::cout << "\n     at NODE " << _current_node->id() << std::endl;
-  // std::cout << "          In NodeElemConstrain::computeQpResidual()" << std::endl;
+  if (_debug)
+    std::cout << "\n     at NODE " << _current_node->id() << std::endl;
   DenseVector<Number> & slave_re = _assembly.residualBlock(_var.number());
   DenseVector<Number> & master_re = _assembly.residualBlockNeighbor(_master_var.number());
 
   _qp = 0;
 
-  std::cout << "\n          _test_master.size() = " << _test_master.size() << std::endl;
+  if (_debug)
+    std::cout << "\n          _test_master.size() = " << _test_master.size() << std::endl;
   for (_i = 0; _i < _test_master.size(); _i++) {
     master_re(_i) += computeQpResidual(Moose::Master);
-    std::cout << "               master_re#" << _i << " = " << master_re(_i) << std::endl;
+    if (_debug)
+      std::cout << "               master_re#" << _i << " = " << master_re(_i) << std::endl;
   }
 
   _i = 0;
   slave_re(_i) += computeQpResidual(Moose::Slave);
-  std::cout << "               slave_re#" << _i << " = " << slave_re(_i) << std::endl;
-  // std::cout << "          Out NodeElemConstrain::computeQpResidual()" << std::endl;
+  if (_debug)
+    std::cout << "               slave_re#" << _i << " = " << slave_re(_i) << std::endl;
 }
 
 void
