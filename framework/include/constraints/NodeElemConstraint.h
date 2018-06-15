@@ -76,6 +76,8 @@ public:
    */
   virtual bool shouldApply() { return true; }
 
+  virtual void computeContactForce(){};
+
   /**
    * Whether or not the slave's residual should be overwritten.
    *
@@ -205,9 +207,9 @@ protected:
     return coupledNeighborSecond(var_name, comp);
   }
 
-  /// Boundary ID for the slave surface
-  unsigned int _slave;
-  /// Block ID for the master surface
+  /// slave block id
+  unsigned short _slave;
+  /// master block id
   unsigned short _master;
 
   const MooseArray<Point> & _master_q_point;
@@ -217,7 +219,7 @@ public:
 protected:
   /// current node being processed
   const Node *& _current_node;
-  const Elem *& _current_master;
+  const Elem *& _current_elem;
 
   /// Value of the unknown variable this BC is action on
   const VariableValue & _u_slave;

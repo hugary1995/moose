@@ -72,7 +72,7 @@ ConstraintWarehouse::addObject(std::shared_ptr<Constraint> object,
   else if (nec)
   {
     MooseMesh & mesh = nec->getParam<FEProblemBase *>("_fe_problem_base")->mesh();
-    BoundaryID slave = mesh.getBoundaryID(nec->getParam<BoundaryName>("slave"));
+    SubdomainID slave = mesh.getSubdomainID(nec->getParam<SubdomainName>("slave"));
     SubdomainID master = mesh.getSubdomainID(nec->getParam<SubdomainName>("master"));
     bool displaced = nec->parameters().have_parameter<bool>("use_displaced_mesh") &&
                      nec->getParam<bool>("use_displaced_mesh");
@@ -156,25 +156,29 @@ ConstraintWarehouse::getActiveElemElemConstraints(const InterfaceID interface_id
 }
 
 const std::vector<std::shared_ptr<NodeElemConstraint>> &
-ConstraintWarehouse::getActiveNodeElemConstraints(BoundaryID boundary_id, SubdomainID block_id, bool displaced) const
+ConstraintWarehouse::getActiveNodeElemConstraints(SubdomainID slave_id,
+                                                  SubdomainID master_id,
+                                                  bool displaced) const
 {
-  std::map<std::pair<BoundaryID, SubdomainID>, MooseObjectWarehouse<NodeElemConstraint>>::const_iterator it, end_it;
+  std::map<std::pair<SubdomainID, SubdomainID>,
+           MooseObjectWarehouse<NodeElemConstraint>>::const_iterator it,
+      end_it;
 
   if (displaced)
   {
-    it = _displaced_node_elem_constraints.find(std::make_pair(boundary_id, block_id));
+    it = _displaced_node_elem_constraints.find(std::make_pair(slave_id, master_id));
     end_it = _displaced_node_elem_constraints.end();
   }
-
   else
   {
-    it = _node_elem_constraints.find(std::make_pair(boundary_id, block_id));
+    it = _node_elem_constraints.find(std::make_pair(slave_id, master_id));
     end_it = _node_elem_constraints.end();
   }
 
   mooseAssert(it != end_it,
-              "Unable to locate storage for NodeElemConstraint objects for the given boundary and block id pair: "
-                  << boundary_id);
+              "Unable to locate storage for NodeElemConstraint objects for the given slave and "
+              "master id pair: ["
+                  << slave_id << ", " << master_id << "]");
   return it->second.getActiveObjects();
 }
 
@@ -234,19 +238,23 @@ ConstraintWarehouse::hasActiveNodeFaceConstraints(BoundaryID boundary_id, bool d
 }
 
 bool
-ConstraintWarehouse::hasActiveNodeElemConstraints(BoundaryID boundary_id, SubdomainID block_id, bool displaced) const
+ConstraintWarehouse::hasActiveNodeElemConstraints(SubdomainID slave_id,
+                                                  SubdomainID master_id,
+                                                  bool displaced) const
 {
-  std::map<std::pair<BoundaryID, SubdomainID>, MooseObjectWarehouse<NodeElemConstraint>>::const_iterator it, end_it;
+  std::map<std::pair<SubdomainID, SubdomainID>,
+           MooseObjectWarehouse<NodeElemConstraint>>::const_iterator it,
+      end_it;
 
   if (displaced)
   {
-    it = _displaced_node_elem_constraints.find(std::make_pair(boundary_id, block_id));
+    it = _displaced_node_elem_constraints.find(std::make_pair(slave_id, master_id));
     end_it = _displaced_node_elem_constraints.end();
   }
 
   else
   {
-    it = _node_elem_constraints.find(std::make_pair(boundary_id, block_id));
+    it = _node_elem_constraints.find(std::make_pair(slave_id, master_id));
     end_it = _node_elem_constraints.end();
   }
 

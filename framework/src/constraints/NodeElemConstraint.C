@@ -24,9 +24,8 @@ validParams<NodeElemConstraint>()
 {
   MooseEnum orders("FIRST SECOND THIRD FOURTH", "FIRST");
   InputParameters params = validParams<Constraint>();
-  params.addRequiredParam<BoundaryName>("slave", "The boundary ID associated with the slave side");
-  params.addRequiredParam<SubdomainName>("master",
-                                        "The block ID associated with the master side");
+  params.addRequiredParam<SubdomainName>("slave", "slave block id");
+  params.addRequiredParam<SubdomainName>("master", "master block id");
   params.addParam<MooseEnum>("order", orders, "The finite element order used for projections");
   params.addParam<bool>("debug", false, "whether to print debug messages");
   params.addRequiredCoupledVar("master_variable", "The variable on the master side of the domain");
@@ -41,16 +40,16 @@ NodeElemConstraint::NodeElemConstraint(const InputParameters & parameters)
     NeighborCoupleableMooseVariableDependencyIntermediateInterface(this, true, false),
     NeighborMooseVariableInterface<Real>(
         this, true, Moose::VarKindType::VAR_NONLINEAR, Moose::VarFieldType::VAR_FIELD_STANDARD),
-    _slave(_mesh.getBoundaryID(getParam<BoundaryName>("slave"))),
+
+    _slave(_mesh.getSubdomainID(getParam<SubdomainName>("slave"))),
     _master(_mesh.getSubdomainID(getParam<SubdomainName>("master"))),
 
     _master_q_point(_assembly.qPoints()),
     _master_qrule(_assembly.qRule()),
 
     _current_node(_var.node()),
-    _current_master(_var.neighbor()),
-    // _u_slave(_var.dofValues()),
-    // _u_slave_old(_var.dofValuesOld()),
+    _current_elem(_var.neighbor()),
+
     _u_slave(_var.sln()),
     _u_slave_old(_var.slnOld()),
     _phi_slave(1),  // One entry
@@ -107,16 +106,19 @@ NodeElemConstraint::computeResidual()
 
   if (_debug)
     std::cout << "\n          _test_master.size() = " << _test_master.size() << std::endl;
-  for (_i = 0; _i < _test_master.size(); _i++) {
+  for (_i = 0; _i < _test_master.size(); _i++)
+  {
     master_re(_i) += computeQpResidual(Moose::Master);
     if (_debug)
       std::cout << "               master_re#" << _i << " = " << master_re(_i) << std::endl;
   }
 
-  _i = 0;
-  slave_re(_i) += computeQpResidual(Moose::Slave);
-  if (_debug)
-    std::cout << "               slave_re#" << _i << " = " << slave_re(_i) << std::endl;
+  for (_i = 0; _i < _test_slave.size(); _i++)
+  {
+    slave_re(_i) += computeQpResidual(Moose::Slave);
+    if (_debug)
+      std::cout << "               slave_re#" << _i << " = " << slave_re(_i) << std::endl;
+  }
 }
 
 void

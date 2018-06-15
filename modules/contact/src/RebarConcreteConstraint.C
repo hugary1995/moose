@@ -43,9 +43,9 @@ validParams<RebarConcreteConstraint>()
       "displacements",
       "The displacements appropriate for the simulation geometry and coordinate system");
 
-  //only supports glued for now
+  // only supports glued for now
   params.addParam<std::string>("model", "glued", "The contact model to use");
-  //only supports kinematic(default) for now
+  // only supports kinematic(default) for now
   params.addParam<std::string>("formulation", "default", "The contact formulation");
 
   params.addParam<Real>(
@@ -74,53 +74,31 @@ RebarConcreteConstraint::RebarConcreteConstraint(const InputParameters & paramet
   // std::cout << "In RebarConcreteConstraint()" << std::endl;
   _overwrite_slave_residual = false;
 
-  if (isParamValid("displacements"))
-  {
-    // modern parameter scheme for displacements
-    for (unsigned int i = 0; i < coupledComponents("displacements"); ++i)
-      _vars[i] = coupled("displacements", i);
-  }
-  else
-  {
-    // Legacy parameter scheme for displacements
-    if (isParamValid("disp_x"))
-      _vars[0] = coupled("disp_x");
-    if (isParamValid("disp_y"))
-      _vars[1] = coupled("disp_y");
-    if (isParamValid("disp_z"))
-      _vars[2] = coupled("disp_z");
-
-    mooseDeprecated("use the `displacements` parameter rather than the `disp_*` parameters (those "
-                    "will go away with the deprecation of the Solid Mechanics module).");
-  }
+  // modern parameter scheme for displacements
+  for (unsigned int i = 0; i < coupledComponents("displacements"); ++i)
+    _vars[i] = coupled("displacements", i);
 }
 
 void
 RebarConcreteConstraint::timestepSetup()
 {
-
 }
 
 void
 RebarConcreteConstraint::jacobianSetup()
 {
-
 }
 
 bool
 RebarConcreteConstraint::shouldApply()
 {
-  //TODO fix this
-  //currently always assume in contact
-  bool in_contact = true;
-
-  //currently does not support updating contact set
-  //bool is_nonlinear = _fe_problem.computingNonlinearResid();
-
-  // This computes the contact force once per constraint per component
-  computeContactForce();
-
-  return in_contact;
+  if (_current_elem != NULL)
+  {
+    // This computes the contact force once per constraint per component
+    computeContactForce();
+    return true;
+  }
+  return false;
 }
 
 void
@@ -164,10 +142,16 @@ RebarConcreteConstraint::computeQpSlaveValue()
 Real
 RebarConcreteConstraint::computeQpResidual(Moose::ConstraintType type)
 {
+  // Node * curr_master_node = _current_elem->get_node(_i);
+  // unsigned int sys_num = _sys.number();
+  // dof_id_type dof_number = curr_master_node->dof_number(sys_num, _vars[_component], 0);
+  // _contact_force = -_residual_copy(dof_number);
+
   Real resid = _contact_force;
 
-  //debug messages
-  if (_debug) {
+  // debug messages
+  if (_debug)
+  {
     std::cout << "               ------------------------------\n";
     std::cout << "                    component: " << _component << std::endl;
   }
@@ -175,10 +159,12 @@ RebarConcreteConstraint::computeQpResidual(Moose::ConstraintType type)
   switch (type)
   {
     case Moose::Slave:
+    {
       if (_formulation == CF_KINEMATIC)
       {
-        //debug messages
-        if (_debug) {
+        // debug messages
+        if (_debug)
+        {
           std::cout << "                    _u_master[_qp] = " << _u_master[_qp] << std::endl;
           std::cout << "                    _u_slave[_qp] = " << _u_slave[_qp] << std::endl;
         }
@@ -186,20 +172,30 @@ RebarConcreteConstraint::computeQpResidual(Moose::ConstraintType type)
         if (_model == CM_GLUED)
           resid += pen_force;
       }
-      //debug messages
-      if (_debug) {
+      // debug messages
+      if (_debug)
+      {
         std::cout << "                    resid = " << resid << std::endl;
-        std::cout << "                    _test_slave" << "[" << _i << "][" << _qp << "] = " << _test_slave[_i][_qp] << std::endl;
+        std::cout << "                    _test_slave"
+                  << "[" << _i << "][" << _qp << "] = " << _test_slave[_i][_qp] << std::endl;
       }
       return _test_slave[_i][_qp] * resid;
+      // return _test_slave[0][_qp] * -_contact_force;
+    }
 
     case Moose::Master:
-      //debug messages
-      if (_debug) {
+    {
+      Real pen_force = _penalty * (_u_slave[_qp] - _u_master[_qp]);
+      return _contact_force + _test_master[_i][_qp] * pen_force;
+      // debug messages
+      if (_debug)
+      {
         std::cout << "                    resid = " << resid << std::endl;
-        std::cout << "                    _test_master" << "[" << _i << "][" << _qp << "] = " << _test_master[_i][_qp] << std::endl;
+        std::cout << "                    _test_master"
+                  << "[" << _i << "][" << _qp << "] = " << _test_master[_i][_qp] << std::endl;
       }
       return _test_master[_i][_qp] * -resid;
+    }
   }
 
   return 0.0;
@@ -221,13 +217,15 @@ RebarConcreteConstraint::computeQpJacobian(Moose::ConstraintJacobianType type)
           {
             case CF_KINEMATIC:
             {
-              const Real curr_jac = (*_jacobian)(_current_node->dof_number(sys_num, _vars[_component], 0),
-                                                 _connected_dof_indices[_j]);
+              const Real curr_jac =
+                  (*_jacobian)(_current_node->dof_number(sys_num, _vars[_component], 0),
+                               _connected_dof_indices[_j]);
               return -curr_jac + _phi_slave[_j][_qp] * penalty * _test_slave[_i][_qp];
+              // return _phi_slave[_j][_qp] * penalty * _test_slave[_i][_qp];
             }
 
             case CF_PENALTY:
-              return 0.0;
+              return _phi_slave[_j][_qp] * penalty * _test_slave[_i][_qp];
             default:
               mooseError("Invalid contact formulation");
           }
@@ -243,15 +241,16 @@ RebarConcreteConstraint::computeQpJacobian(Moose::ConstraintJacobianType type)
           {
             case CF_KINEMATIC:
             {
-              Node * curr_master_node = _current_master->get_node(_j);
-              const Real curr_jac =
-                  (*_jacobian)(_current_node->dof_number(sys_num, _vars[_component], 0),
-                               curr_master_node->dof_number(sys_num, _vars[_component], 0));
-              return -curr_jac - _phi_master[_j][_qp] * penalty * _test_slave[_i][_qp];
+              // Node * curr_master_node = _current_elem->get_node(_j);
+              // const Real curr_jac =
+              //     (*_jacobian)(_current_node->dof_number(sys_num, _vars[_component], 0),
+              //                  curr_master_node->dof_number(sys_num, _vars[_component], 0));
+              // return -curr_jac - _phi_master[_j][_qp] * penalty * _test_slave[_i][_qp];
+              return -_phi_master[_j][_qp] * penalty * _test_slave[_i][_qp];
             }
 
             case CF_PENALTY:
-              return 0.0;
+              return -_phi_master[_j][_qp] * penalty * _test_slave[_i][_qp];
             default:
               mooseError("Invalid contact formulation");
           }
@@ -268,13 +267,14 @@ RebarConcreteConstraint::computeQpJacobian(Moose::ConstraintJacobianType type)
           {
             case CF_KINEMATIC:
             {
-              const Real slave_jac = (*_jacobian)(
-                  _current_node->dof_number(sys_num, _vars[_component], 0), _connected_dof_indices[_j]);
+              const Real slave_jac =
+                  (*_jacobian)(_current_node->dof_number(sys_num, _vars[_component], 0),
+                               _connected_dof_indices[_j]);
               return slave_jac * _test_master[_i][_qp];
             }
 
             case CF_PENALTY:
-              return 0.0;
+              return -_phi_slave[_j][_qp] * penalty * _test_master[_i][_qp];
             default:
               mooseError("Invalid contact formulation");
           }
@@ -290,13 +290,27 @@ RebarConcreteConstraint::computeQpJacobian(Moose::ConstraintJacobianType type)
           switch (_formulation)
           {
             case CF_KINEMATIC:
-              return 0.0;
+            {
+              Node * curr_master_node_i = _current_elem->get_node(_i);
+              Node * curr_master_node_j = _current_elem->get_node(_j);
+              const Real curr_jac =
+                  (*_jacobian)(curr_master_node_i->dof_number(sys_num, _vars[_component], 0),
+                               curr_master_node_j->dof_number(sys_num, _vars[_component], 0));
+              return curr_jac;
+            }
+
             case CF_PENALTY:
-              return _test_master[_i][_qp] * _penalty * _phi_master[_j][_qp];
+            {
+              Node * curr_master_node_i = _current_elem->get_node(_i);
+              Node * curr_master_node_j = _current_elem->get_node(_j);
+              const Real curr_jac =
+                  (*_jacobian)(curr_master_node_i->dof_number(sys_num, _vars[_component], 0),
+                               curr_master_node_j->dof_number(sys_num, _vars[_component], 0));
+              return curr_jac - _test_master[_i][_qp] * _penalty * _phi_master[_j][_qp];
+            }
             default:
               mooseError("Invalid contact formulation");
           }
-
 
         default:
           mooseError("Invalid or unavailable contact model");
@@ -308,7 +322,7 @@ RebarConcreteConstraint::computeQpJacobian(Moose::ConstraintJacobianType type)
 
 Real
 RebarConcreteConstraint::computeQpOffDiagJacobian(Moose::ConstraintJacobianType type,
-                                                      unsigned int jvar)
+                                                  unsigned int jvar)
 {
   unsigned int sys_num = _sys.number();
   switch (type)
@@ -318,8 +332,8 @@ RebarConcreteConstraint::computeQpOffDiagJacobian(Moose::ConstraintJacobianType 
       {
         case CM_GLUED:
         {
-          const Real curr_jac = (*_jacobian)(_current_node->dof_number(sys_num, _vars[_component], 0),
-                                             _connected_dof_indices[_j]);
+          const Real curr_jac = (*_jacobian)(
+              _current_node->dof_number(sys_num, _vars[_component], 0), _connected_dof_indices[_j]);
           return -curr_jac;
         }
         default:
@@ -344,8 +358,9 @@ RebarConcreteConstraint::computeQpOffDiagJacobian(Moose::ConstraintJacobianType 
           {
             case CF_KINEMATIC:
             {
-              const Real slave_jac = (*_jacobian)(
-                  _current_node->dof_number(sys_num, _vars[_component], 0), _connected_dof_indices[_j]);
+              const Real slave_jac =
+                  (*_jacobian)(_current_node->dof_number(sys_num, _vars[_component], 0),
+                               _connected_dof_indices[_j]);
               return slave_jac * _test_master[_i][_qp];
             }
             case CF_PENALTY:
@@ -362,7 +377,7 @@ RebarConcreteConstraint::computeQpOffDiagJacobian(Moose::ConstraintJacobianType 
       switch (_model)
       {
         case CM_GLUED:
-            return 0.0;
+          return 0.0;
 
         default:
           mooseError("Invalid or unavailable contact model");
@@ -404,7 +419,6 @@ RebarConcreteConstraint::computeJacobian()
     for (_i = 0; _i < _test_master.size(); _i++)
       for (_j = 0; _j < _phi_master.size(); _j++)
         Knn(_i, _j) += computeQpJacobian(Moose::MasterMaster);
-
 }
 
 void
@@ -486,5 +500,4 @@ RebarConcreteConstraint::getCoupledVarComponent(unsigned int var_num, unsigned i
 void
 RebarConcreteConstraint::residualEnd()
 {
-
 }

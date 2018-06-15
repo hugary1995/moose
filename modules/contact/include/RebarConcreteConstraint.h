@@ -78,7 +78,7 @@ public:
   virtual bool addCouplingEntriesToJacobian() override { return true; }
 
   bool shouldApply() override;
-  void computeContactForce();
+  void computeContactForce() override;
 
 protected:
   MooseSharedPointer<DisplacedProblem> _displaced_problem;
