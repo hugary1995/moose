@@ -133,7 +133,15 @@ Coupleable::isCoupled(const std::string & var_name, unsigned int i)
 unsigned int
 Coupleable::coupledComponents(const std::string & var_name)
 {
-  return _coupled_vars[var_name].size();
+  if (isCoupled(var_name))
+    return _coupled_vars[var_name].size();
+  else
+  {
+    if (_c_parameters.hasDefaultCoupledValue(var_name))
+      return 1;
+    else
+      return 0;
+  }
 }
 
 void
@@ -957,6 +965,11 @@ Coupleable::coupledNodalValue(const std::string & var_name, unsigned int comp)
   MooseVariable * var = getVar(var_name, comp);
   if (var == NULL)
     mooseError("Call corresponding vector variable method");
+  if (!var->isNodal())
+    mooseError(_c_name,
+               ": Trying to get nodal values of variable '",
+               var->name(),
+               "', but it is not nodal.");
 
   if (!_coupleable_neighbor)
     return (_c_is_implicit) ? var->dofValues() : var->dofValuesOld();
@@ -976,6 +989,11 @@ Coupleable::coupledNodalValueOld(const std::string & var_name, unsigned int comp
   MooseVariable * var = getVar(var_name, comp);
   if (var == NULL)
     mooseError("Call corresponding vector variable method");
+  if (!var->isNodal())
+    mooseError(_c_name,
+               ": Trying to get old nodal values of variable '",
+               var->name(),
+               "', but it is not nodal.");
 
   if (!_coupleable_neighbor)
     return (_c_is_implicit) ? var->dofValuesOld() : var->dofValuesOlder();
@@ -995,6 +1013,11 @@ Coupleable::coupledNodalValueOlder(const std::string & var_name, unsigned int co
   MooseVariable * var = getVar(var_name, comp);
   if (var == NULL)
     mooseError("Call corresponding vector variable method");
+  if (!var->isNodal())
+    mooseError(_c_name,
+               ": Trying to get older nodal values of variable '",
+               var->name(),
+               "', but it is not nodal.");
   if (_c_is_implicit)
   {
     if (!_coupleable_neighbor)

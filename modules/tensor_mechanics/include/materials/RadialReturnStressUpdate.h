@@ -21,11 +21,11 @@ InputParameters validParams<RadialReturnStressUpdate>();
 
 /**
  * RadialReturnStressUpdate computes the radial return stress increment for
- * an isotropic viscoplasticity plasticity model after interating on the difference
+ * an isotropic elastic-viscoplasticity model after interating on the difference
  * between new and old trial stress increments.  This radial return mapping class
  * acts as a base class for the radial return creep and plasticity classes / combinations.
  * The stress increment computed by RadialReturnStressUpdate is used by
- * ComputeRadialReturnMappingStress which computes the elastic stress for finite
+ * ComputeMultipleInelasticStress which computes the elastic stress for finite
  * strains.  This return mapping class is acceptable for finite strains but not
  * total strains.
  * This class is based on the Elasto-viscoplasticity algorithm in F. Dunne and N.
@@ -119,6 +119,9 @@ protected:
    * @param inelasticStrainIncrement Inelastic strain increment
    */
   virtual void computeStressFinalize(const RankTwoTensor & /*inelasticStrainIncrement*/) {}
+
+  void outputIterationSummary(std::stringstream * iter_output,
+                              const unsigned int total_it) override;
 
   /// 3 * shear modulus
   Real _three_shear_modulus;

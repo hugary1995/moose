@@ -40,7 +40,7 @@
   [damage_index]
     type = MaterialRealAux
     variable = damage_index
-    property = damage_index
+    property = damage_index_prop
     execute_on = timestep_end
   []
 []
@@ -82,14 +82,14 @@
 []
 
 [Materials]
-  [./damage_index]
+  [damage_index]
     type = GenericFunctionMaterial
-    prop_names = damage_index
+    prop_names = damage_index_prop
     prop_values = damage_evolution
   []
   [damage]
     type = ScalarMaterialDamage
-    damage_index = damage_index
+    damage_index = damage_index_prop
   []
   [stress]
     type = ComputeDamageStress
