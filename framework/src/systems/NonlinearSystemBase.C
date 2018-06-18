@@ -855,11 +855,11 @@ NonlinearSystemBase::setConstraintSlaveValues(NumericVector<Number> & solution, 
   // go over NodeELemConstraints
   bool nec_shouldApply = false;
   std::set<dof_id_type> unique_slave_node_ids;
-  std::unique_ptr<PointLocatorBase> pointLocator;
-  if (!displaced)
-    pointLocator = _fe_problem.mesh().getPointLocator();
-  else
-    pointLocator = _fe_problem.getDisplacedProblem()->mesh().getPointLocator();
+  std::unique_ptr<PointLocatorBase> pointLocator = _fe_problem.mesh().getPointLocator();
+  // if (!displaced)
+  //   pointLocator = _fe_problem.mesh().getPointLocator();
+  // else
+  //   pointLocator = _fe_problem.getDisplacedProblem()->mesh().getPointLocator();
 
   for (const auto & slave_id : _mesh.meshSubdomains())
   {
@@ -900,7 +900,7 @@ NonlinearSystemBase::setConstraintSlaveValues(NumericVector<Number> & solution, 
             if (nec_shouldApply)
             {
               // This reinits the variables that exist on the slave node
-              _fe_problem.reinitNodeFace(&slave_node, slave_id, 0);
+              _fe_problem.reinitNodeElem(&slave_node, slave_id, 0);
 
               // This will set aside residual and jacobian space for the variables that have dofs
               // on the slave node
@@ -1242,11 +1242,11 @@ NonlinearSystemBase::constraintResiduals(NumericVector<Number> & residual, bool 
   // go over NodeELemConstraints
   bool nec_shouldApply = false;
   std::set<dof_id_type> unique_slave_node_ids;
-  std::unique_ptr<PointLocatorBase> pointLocator;
-  if (!displaced)
-    pointLocator = _fe_problem.mesh().getPointLocator();
-  else
-    pointLocator = _fe_problem.getDisplacedProblem()->mesh().getPointLocator();
+  std::unique_ptr<PointLocatorBase> pointLocator = _fe_problem.mesh().getPointLocator();
+  // if (!displaced)
+  //   pointLocator = _fe_problem.mesh().getPointLocator();
+  // else
+  //   pointLocator = _fe_problem.getDisplacedProblem()->mesh().getPointLocator();
 
   constraints_applied = false;
   residual_has_inserted_values = false;
@@ -1287,24 +1287,8 @@ NonlinearSystemBase::constraintResiduals(NumericVector<Number> & residual, bool 
 
             if (nec_shouldApply)
             {
-              // //debug messages
-              // std::cout << "\n\n=============================================\n";
-              // std::cout << "          MATCHED! on constrained Node: " << slave_node.id() <<
-              // std::endl; std::cout << "                     "; slave_node.print(); std::cout <<
-              // std::endl; std::cout << "                   on constrained Boundary: " <<
-              // boundary_id
-              // << std::endl; std::cout << "                   master block id: " << block_id <<
-              // std::endl; std::cout << "                   master elem id: " <<
-              // master_elem->id()
-              // << std::endl; for (auto & n : master_elem->node_ref_range())
-              // {
-              //   std::cout << "                     ";
-              //   n.print();
-              //   std::cout << std::endl;
-              // }
-
               // This reinits the variables that exist on the slave node
-              _fe_problem.reinitNodeFace(&slave_node, slave_id, 0);
+              _fe_problem.reinitNodeElem(&slave_node, slave_id, 0);
 
               // This will set aside residual and jacobian space for the variables that have dofs
               // on the slave node
@@ -2213,11 +2197,11 @@ NonlinearSystemBase::constraintJacobians(bool displaced)
   // go over NodeELemConstraints
   bool nec_shouldApply = false;
   std::set<dof_id_type> unique_slave_node_ids;
-  std::unique_ptr<PointLocatorBase> pointLocator;
-  if (!displaced)
-    pointLocator = _fe_problem.mesh().getPointLocator();
-  else
-    pointLocator = _fe_problem.getDisplacedProblem()->mesh().getPointLocator();
+  std::unique_ptr<PointLocatorBase> pointLocator = _fe_problem.mesh().getPointLocator();
+  // if (!displaced)
+  //   pointLocator = _fe_problem.mesh().getPointLocator();
+  // else
+  //   pointLocator = _fe_problem.getDisplacedProblem()->mesh().getPointLocator();
 
   constraints_applied = false;
   for (const auto & slave_id : _mesh.meshSubdomains())
@@ -2259,7 +2243,7 @@ NonlinearSystemBase::constraintJacobians(bool displaced)
             if (nec_shouldApply)
             {
               // This reinits the variables that exist on the slave node
-              _fe_problem.reinitNodeFace(&slave_node, slave_id, 0);
+              _fe_problem.reinitNodeElem(&slave_node, slave_id, 0);
 
               // This will set aside residual and jacobian space for the variables that have dofs
               // on the slave node

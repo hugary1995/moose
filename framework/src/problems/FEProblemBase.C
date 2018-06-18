@@ -1492,9 +1492,15 @@ FEProblemBase::reinitNeighborPhys(const Elem * neighbor,
   _aux->reinitNeighbor(neighbor, tid);
 
   // Do the same for the displaced problem
+  std::cout << "is _displaced_problem == NULL? " << (_displaced_problem == NULL) << std::endl;
+  std::cout << "is _reinit_displaced_elem == false? " << (_reinit_displaced_elem == false)
+            << std::endl;
   if (_displaced_problem != NULL && _reinit_displaced_elem)
+  {
     _displaced_problem->reinitNeighborPhys(
         _displaced_mesh->elemPtr(neighbor->id()), physical_points, tid);
+    std::cout << "I doubt if this is called at all.\n";
+  }
 }
 
 void

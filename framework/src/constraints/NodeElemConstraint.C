@@ -98,7 +98,21 @@ void
 NodeElemConstraint::computeResidual()
 {
   if (_debug)
-    std::cout << "\n     at NODE " << _current_node->id() << std::endl;
+  {
+    // debug messages
+    std::cout << "\n\n=============================================\n";
+    std::cout << "                    slave node id: " << _current_node->id() << std::endl;
+    std::cout << "                     ";
+    _current_node->print();
+    std::cout << std::endl;
+    std::cout << "                   master elem id: " << _current_elem->id() << std::endl;
+    for (auto & n : _current_elem->node_ref_range())
+    {
+      std::cout << "                     ";
+      n.print();
+      std::cout << std::endl;
+    }
+  }
   DenseVector<Number> & slave_re = _assembly.residualBlock(_var.number());
   DenseVector<Number> & master_re = _assembly.residualBlockNeighbor(_master_var.number());
 

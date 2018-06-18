@@ -54,7 +54,7 @@ validParams<RebarConcreteConstraint>()
       "The penalty to apply.  This can vary depending on the stiffness of your materials");
   params.addParam<MooseEnum>("order", orders, "The finite element order");
 
-  params.set<bool>("use_displaced_mesh") = false;
+  params.set<bool>("use_displaced_mesh") = true;
 
   return params;
 }
