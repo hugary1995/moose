@@ -89,6 +89,10 @@ ADLAROMANCEStressUpdateBase::validParams()
       "Optional forcing function for the creep strain from the previous timestep. If provided, "
       "the old creep strain will be reset to the function value at the beginning of the "
       "timestep. Used for testing purposes only.");
+  params.addParam<Real>("rom_strain_cutoff",
+                        1.0e-10,
+                        "ROM-material specific value for the low bound cutoff of the ROM output, "
+                        "before transformation.");
   params.addParamNamesToGroup(
       "cell_dislocation_density_forcing_function wall_dislocation_density_forcing_function "
       "old_creep_strain_forcing_function",
@@ -131,6 +135,7 @@ ADLAROMANCEStressUpdateBase::ADLAROMANCEStressUpdateBase(const InputParameters &
     _cell_output_index(0),
     _wall_output_index(1),
     _strain_output_index(2),
+    _rom_strain_output_cutoff(getParam<Real>("rom_strain_cutoff")),
 
     _creep_strain_old_forcing_function(isParamValid("old_creep_strain_forcing_function")
                                            ? &getFunction("old_creep_strain_forcing_function")
@@ -692,10 +697,11 @@ ADLAROMANCEStressUpdateBase::convertOutput(const std::vector<Real> & old_input_v
     return 0.0;
 
   ADReal expout = std::exp(rom_output);
-  if (expout > 1.0e-10)
-    expout -= 1.000000E-10;
+  if (expout > _rom_strain_output_cutoff)
+    expout -= _rom_strain_output_cutoff;
   else
-    expout = -1.0E-10 * 1.0E-10 / expout + 1.0E-10;
+    expout =
+        -_rom_strain_output_cutoff * _rom_strain_output_cutoff / expout + _rom_strain_output_cutoff;
 
   return -expout * old_input_values[out_index] * _dt;
 }
@@ -799,7 +805,11 @@ ADLAROMANCEStressUpdateBase::computeStressFinalize(const ADRankTwoTensor & plast
   {
     _cell_dislocations[_qp] = _old_input_values[_cell_output_index];
     _wall_dislocations[_qp] = _old_input_values[_wall_output_index];
-    mooseException("The negative values of the cell dislocation density, ", MetaPhysicL::raw_value(_cell_dislocations[_qp]), ", and/or wall dislocation density, ", MetaPhysicL::raw_value(_wall_dislocations[_qp]), ". Cutting timestep.");
+    mooseException("The negative values of the cell dislocation density, ",
+                   MetaPhysicL::raw_value(_cell_dislocations[_qp]),
+                   ", and/or wall dislocation density, ",
+                   MetaPhysicL::raw_value(_wall_dislocations[_qp]),
+                   ". Cutting timestep.");
   }
 
   if (_verbose)

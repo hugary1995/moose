@@ -408,6 +408,9 @@ protected:
   /// Index corresponding to the position for strain increment in the output vector
   const unsigned int _strain_output_index;
 
+  /// Value of the low bound cutoff for the ROM strain output, before transformation
+  const Real _rom_strain_output_cutoff;
+
   /// Optional old creep strain forcing function
   const Function * const _creep_strain_old_forcing_function;
 
