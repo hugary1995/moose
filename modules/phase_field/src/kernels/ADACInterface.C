@@ -8,6 +8,7 @@
 //* https://www.gnu.org/licenses/lgpl-2.1.html
 
 #include "ADACInterface.h"
+#include "Assembly.h"
 
 registerMooseObject("PhaseFieldApp", ADACInterface);
 
@@ -38,7 +39,8 @@ ADACInterface::ADACInterface(const InputParameters & parameters)
                : nullptr),
     _nvar(Coupleable::_coupled_standard_moose_vars.size()),
     _dLdarg(_nvar),
-    _gradarg(_nvar)
+    _gradarg(_nvar),
+    _coord_sys(_assembly.coordSystem())
 {
   // Get mobility and kappa derivatives and coupled variable gradients
   if (_variable_L)
@@ -70,5 +72,10 @@ ADACInterface::computeQpResidual()
     nabla_Lpsi += grad_L * _test[_i][_qp];
   }
 
-  return _grad_u[_qp] * _kappa[_qp] * nabla_Lpsi;
+  ADReal residual = _grad_u[_qp] * _kappa[_qp] * nabla_Lpsi;
+
+  if (_coord_sys == Moose::COORD_RZ)
+    residual -= _test[_i][_qp] / _ad_q_point[_qp](0) * _grad_u[_qp](0) * _kappa[_qp] * _prop_L[_qp];
+
+  return residual;
 }

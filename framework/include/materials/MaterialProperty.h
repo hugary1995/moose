@@ -84,6 +84,25 @@ public:
   virtual void
   qpCopy(const unsigned int to_qp, PropertyValue * rhs, const unsigned int from_qp) = 0;
 
+  /**
+   * Merge the values of two Properties from their qps to a specific qp in this Property.
+   * Important note: this merge operation loses AD derivative information if either this,
+   * the rhs1, or the rhs2 is not an AD material property
+   *
+   * @param to_qp The quadrature point in _this_ Property that you want to copy to.
+   * @param rhs1 The first Property you want to merge _from_.
+   * @param from_qp1 The quadrature point in rhs1 you want to copy _from_.
+   * @param rhs2 The second Property you want to merge _from_.
+   * @param from_qp2 The quadrature point in rhs2 you want to copy _from_.
+   * @param weight1 The weight to be applied to the first Property. The merged Property = weight1
+   *
+   * Property1 + (1 - weight1) * Property2. The default weight is 0.5.
+   */
+  virtual void qpMerge(const unsigned int to_qp,
+                       PropertyValue * rhs,
+                       const unsigned int from_qp,
+                       Real weight) = 0;
+
   // save/restore in a file
   virtual void store(std::ostream & stream) = 0;
   virtual void load(std::istream & stream) = 0;
@@ -173,6 +192,23 @@ public:
   qpCopy(const unsigned int to_qp, PropertyValue * rhs, const unsigned int from_qp) override;
 
   /**
+   * Merge the values of two Properties from their qps to a specific qp in this Property.
+   *
+   * @param to_qp The quadrature point in _this_ Property that you want to copy to.
+   * @param rhs1 The first Property you want to merge _from_.
+   * @param from_qp1 The quadrature point in rhs1 you want to copy _from_.
+   * @param rhs2 The second Property you want to merge _from_.
+   * @param from_qp2 The quadrature point in rhs2 you want to copy _from_.
+   * @param weight1 The weight to be applied to the first Property. The merged Property = weight1
+   *
+   * Property1 + (1 - weight1) * Property2. The default weight is 0.5.
+   */
+  virtual void qpMerge(const unsigned int to_qp,
+                       PropertyValue * rhs,
+                       const unsigned int from_qp,
+                       Real weight) override;
+
+  /**
    * Store the property into a binary stream
    */
   virtual void store(std::ostream & stream) override;
@@ -254,8 +290,71 @@ rawValueEqualityHelper(std::vector<std::vector<T1>> & out, const std::vector<std
   for (MooseIndex(in) i = 0; i < in.size(); ++i)
   {
     out[i].resize(in[i].size());
-    for (MooseIndex(in[i].size()) j = 0; j < in[i].size(); ++j)
+    for (MooseIndex(in[i]) j = 0; j < in[i].size(); ++j)
       out[i][j] = MetaPhysicL::raw_value(in[i][j]);
+  }
+}
+
+template <typename T1, typename T2>
+void
+mergeHelper(T1 & out, const T2 & in, Real weight)
+{
+  out = weight * out + (1 - weight) * in;
+}
+
+template <typename T1, typename T2>
+void
+mergeHelper(std::vector<T1> & out, const std::vector<T2> & in, Real weight)
+{
+  mooseAssert(out.size() == in.size(), "merge size mismatch");
+  for (MooseIndex(in) i = 0; i < in.size(); ++i)
+    out[i] = weight * out[i] + (1 - weight) * in[i];
+}
+
+template <typename T1, typename T2>
+void
+mergeHelper(std::vector<std::vector<T1>> & out,
+            const std::vector<std::vector<T2>> & in,
+            Real weight)
+{
+  mooseAssert(out.size() == in.size(), "merge size mismatch");
+  for (MooseIndex(in) i = 0; i < in.size(); ++i)
+  {
+    mooseAssert(out[i].size() == in[i].size(), "merge size mismatch");
+    for (MooseIndex(in[i]) j = 0; j < in[i].size(); ++j)
+      out[i][j] = weight * out[i][j] + (1 - weight) * in[i][j];
+  }
+}
+
+template <typename T1, typename T2>
+void
+rawValueMergeHelper(T1 & out, const T2 & in, Real weight)
+{
+  out = weight * MetaPhysicL::raw_value(out) + (1 - weight) * MetaPhysicL::raw_value(in);
+}
+
+template <typename T1, typename T2>
+void
+rawValueMergeHelper(std::vector<T1> & out, const std::vector<T2> & in, Real weight)
+{
+  mooseAssert(out.size() == in.size(), "merge size mismatch");
+  for (MooseIndex(in) i = 0; i < in.size(); ++i)
+    out[i] = weight * MetaPhysicL::raw_value(out[i]) + (1 - weight) * MetaPhysicL::raw_value(in[i]);
+}
+
+template <typename T1, typename T2>
+void
+rawValueMergeHelper(std::vector<std::vector<T1>> & out,
+                    const std::vector<std::vector<T2>> & in,
+                    Real weight)
+{
+  mooseAssert(out.size() == in.size(), "merge size mismatch");
+  for (MooseIndex(in) i = 0; i < in.size(); ++i)
+  {
+    mooseAssert(out[i].size() == in[i].size(), "merge size mismatch");
+    for (MooseIndex(in[i]) j = 0; j < in[i].size(); ++j)
+      out[i][j] = weight * MetaPhysicL::raw_value(out[i][j]) +
+                  (1 - weight) * MetaPhysicL::raw_value(in[i][j]);
   }
 }
 }
@@ -326,6 +425,92 @@ MaterialPropertyBase<T, is_ad>::qpCopy(const unsigned int to_qp,
   else
     moose::internal::rawValueEqualityHelper(
         _value[to_qp], (*cast_ptr<const MaterialPropertyBase<T, !is_ad> *>(rhs))[from_qp]);
+}
+
+template <typename T, bool is_ad>
+inline void
+MaterialPropertyBase<T, is_ad>::qpMerge(const unsigned int /*to_qp*/,
+                                        PropertyValue * /*rhs*/,
+                                        const unsigned int /*from_qp*/,
+                                        Real /*weight*/)
+{
+  mooseError("not implemented yet");
+}
+
+template <>
+inline void
+MaterialPropertyBase<Real, false>::qpMerge(const unsigned int to_qp,
+                                           PropertyValue * rhs,
+                                           const unsigned int from_qp,
+                                           Real weight)
+{
+  mooseAssert(rhs != NULL, "Assigning NULL?");
+
+  // If we're the same
+  if (!rhs->isAD())
+    moose::internal::mergeHelper(
+        _value[to_qp],
+        cast_ptr<const MaterialPropertyBase<Real, false> *>(rhs)->_value[from_qp],
+        weight);
+
+  else
+    moose::internal::rawValueMergeHelper(
+        _value[to_qp],
+        cast_ptr<const MaterialPropertyBase<Real, false> *>(rhs)->_value[from_qp],
+        weight);
+}
+
+template <>
+inline void
+MaterialPropertyBase<Real, true>::qpMerge(const unsigned int to_qp,
+                                          PropertyValue * rhs,
+                                          const unsigned int from_qp,
+                                          Real weight)
+{
+  mooseAssert(rhs != NULL, "Assigning NULL?");
+
+  moose::internal::mergeHelper(
+      _value[to_qp],
+      cast_ptr<const MaterialPropertyBase<Real, true> *>(rhs)->_value[from_qp],
+      weight);
+}
+
+template <>
+inline void
+MaterialPropertyBase<RankTwoTensor, false>::qpMerge(const unsigned int to_qp,
+                                                    PropertyValue * rhs,
+                                                    const unsigned int from_qp,
+                                                    Real weight)
+{
+  mooseAssert(rhs != NULL, "Assigning NULL?");
+
+  // If we're the same
+  if (!rhs->isAD())
+    moose::internal::mergeHelper(
+        _value[to_qp],
+        cast_ptr<const MaterialPropertyBase<RankTwoTensor, false> *>(rhs)->_value[from_qp],
+        weight);
+
+  else
+    moose::internal::rawValueMergeHelper(
+        _value[to_qp],
+        cast_ptr<const MaterialPropertyBase<RankTwoTensor, false> *>(rhs)->_value[from_qp],
+        weight);
+}
+
+template <>
+inline void
+MaterialPropertyBase<RankTwoTensor, true>::qpMerge(const unsigned int to_qp,
+                                                   PropertyValue * rhs,
+                                                   const unsigned int from_qp,
+                                                   Real weight)
+{
+  mooseAssert(rhs != NULL, "Assigning NULL?");
+
+  moose::internal::mergeHelper(
+      _value[to_qp],
+      cast_ptr<const MaterialPropertyBase<RankTwoTensor, true> *>(rhs)->_value[from_qp],
+      weight);
 }
 
 template <typename T, bool is_ad>

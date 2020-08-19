@@ -145,6 +145,34 @@ public:
             unsigned int side,
             unsigned int n_qpoints);
 
+  void copy(MaterialData & material_data,
+            const Elem & elem_to,
+            const HashMap<unsigned int, MaterialProperties> & props_from,
+            const HashMap<unsigned int, MaterialProperties> & props_from_old,
+            const HashMap<unsigned int, MaterialProperties> & props_from_older,
+            unsigned int side,
+            unsigned int n_qpoints);
+
+  /**
+   * Merge material properties elem_from1 and elem_from2 into elem_to. Thread safe.
+   *
+   * WARNING: This is not capable of copying material data to/from elements on other processors.
+   *          It only works if both elem_to and elem_from are both on the local processor.
+   *          We can't currently check to ensure that they're on processor here because this
+   * isn't a ParallelObject.
+   *
+   * @param material_data MaterialData object to work with
+   * @param elem_to Element to copy data to
+   * @param elem_from Element to copy data from
+   * @param side Side number (elemental material properties have this equal to zero)
+   */
+  void merge(MaterialData & material_data,
+             const Elem & elem_to,
+             const Elem & elem_from,
+             unsigned int side,
+             unsigned int n_qpoints,
+             Real weight = 0.5);
+
   /**
    * Swap (shallow copy) material properties in MaterialData and MaterialPropertyStorage
    * Thread safe

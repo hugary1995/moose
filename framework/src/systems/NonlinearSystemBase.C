@@ -1240,9 +1240,23 @@ NonlinearSystemBase::constraintResiduals(NumericVector<Number> & residual, bool 
         for (const auto & ec : _element_constraints)
         {
           _fe_problem.setCurrentSubdomainID(elem1, tid);
-          _fe_problem.reinitElemPhys(elem1, info._elem1_constraint_q_point, tid);
+          try
+          {
+            _fe_problem.reinitElemPhys(elem1, info._elem1_constraint_q_point, tid);
+          }
+          catch (libMesh::LogicError & e)
+          {
+            throw MooseException("We caught a libMesh error");
+          }
           _fe_problem.setNeighborSubdomainID(elem2, tid);
-          _fe_problem.reinitNeighborPhys(elem2, info._elem2_constraint_q_point, tid);
+          try
+          {
+            _fe_problem.reinitNeighborPhys(elem2, info._elem2_constraint_q_point, tid);
+          }
+          catch (libMesh::LogicError & e)
+          {
+            throw MooseException("We caught a libMesh error");
+          }
 
           ec->subProblem().prepareShapes(ec->variable().number(), tid);
           ec->subProblem().prepareNeighborShapes(ec->variable().number(), tid);
@@ -2049,9 +2063,23 @@ NonlinearSystemBase::constraintJacobians(bool displaced)
         for (const auto & ec : _element_constraints)
         {
           _fe_problem.setCurrentSubdomainID(elem1, tid);
-          _fe_problem.reinitElemPhys(elem1, info._elem1_constraint_q_point, tid);
+          try
+          {
+            _fe_problem.reinitElemPhys(elem1, info._elem1_constraint_q_point, tid);
+          }
+          catch (libMesh::LogicError & e)
+          {
+            throw MooseException("We caught a libMesh error");
+          }
           _fe_problem.setNeighborSubdomainID(elem2, tid);
-          _fe_problem.reinitNeighborPhys(elem2, info._elem2_constraint_q_point, tid);
+          try
+          {
+            _fe_problem.reinitNeighborPhys(elem2, info._elem2_constraint_q_point, tid);
+          }
+          catch (libMesh::LogicError & e)
+          {
+            throw MooseException("We caught a libMesh error");
+          }
 
           ec->subProblem().prepareShapes(ec->variable().number(), tid);
           ec->subProblem().prepareNeighborShapes(ec->variable().number(), tid);

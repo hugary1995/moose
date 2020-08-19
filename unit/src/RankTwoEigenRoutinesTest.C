@@ -181,6 +181,63 @@ TEST(RankTwoEigenRoutines, symmetricEigenvaluesEigenvectors_dual_number_consiste
     }
 }
 
+TEST(RankTwoEigenRoutines, symmetricEigenvaluesEigenvectors_identity)
+{
+  // consider a dual rank two tensor
+  // m = [     1(1,2,3),  1.4e-8(2,3,4),   0(1,3,5)
+  //      1.4e-8(2,3,4),     1(-2,-5,1),   0(2,4,6)
+  //           0(1,3,5),       0(2,4,6),   1(2,1,4)]
+  DNDerivativeType da11_dx;
+  Moose::derivInsert(da11_dx, 0, 1);
+  Moose::derivInsert(da11_dx, 1, 2);
+  Moose::derivInsert(da11_dx, 2, 3);
+  DualReal a11(1, da11_dx);
+  DNDerivativeType da22_dx;
+  Moose::derivInsert(da22_dx, 0, -2);
+  Moose::derivInsert(da22_dx, 1, -5);
+  Moose::derivInsert(da22_dx, 2, 1);
+  DualReal a22(1, da22_dx);
+  DNDerivativeType da33_dx;
+  Moose::derivInsert(da33_dx, 0, 2);
+  Moose::derivInsert(da33_dx, 1, 1);
+  Moose::derivInsert(da33_dx, 2, 4);
+  DualReal a33(1, da33_dx);
+  DNDerivativeType da23_dx;
+  Moose::derivInsert(da23_dx, 0, 2);
+  Moose::derivInsert(da23_dx, 1, 4);
+  Moose::derivInsert(da23_dx, 2, 6);
+  DualReal a23(0, da23_dx);
+  DNDerivativeType da13_dx;
+  Moose::derivInsert(da13_dx, 0, 1);
+  Moose::derivInsert(da13_dx, 1, 3);
+  Moose::derivInsert(da13_dx, 2, 5);
+  DualReal a13(0, da13_dx);
+  DNDerivativeType da12_dx;
+  Moose::derivInsert(da12_dx, 0, 2);
+  Moose::derivInsert(da12_dx, 1, 3);
+  Moose::derivInsert(da12_dx, 2, 4);
+  DualReal a12(1.4e-8, da12_dx);
+
+  ADRankTwoTensor m(a11, a22, a33, a23, a13, a12);
+  ADRankTwoTensor eigvecs;
+  std::vector<DualReal> eigvals;
+
+  m.symmetricEigenvaluesEigenvectors(eigvals, eigvecs);
+  ADRankTwoTensor D_ad;
+  D_ad.fillFromInputVector(eigvals);
+  ADRankTwoTensor m_ad = eigvecs * D_ad * eigvecs.transpose();
+
+  // m_ad should be equal to m in values and dual numbers!
+  for (unsigned i = 0; i < 3; i++)
+    for (unsigned j = 0; j < 3; j++)
+    {
+      EXPECT_NEAR(m(i, j).value(), m_ad(i, j).value(), 0.0001);
+      EXPECT_NEAR(m(i, j).derivatives()[0], m_ad(i, j).derivatives()[0], 0.0001);
+      EXPECT_NEAR(m(i, j).derivatives()[1], m_ad(i, j).derivatives()[1], 0.0001);
+      EXPECT_NEAR(m(i, j).derivatives()[2], m_ad(i, j).derivatives()[2], 0.0001);
+    }
+}
+
 TEST(RankTwoEigenRoutines, dsymmetricEigenvalues)
 {
   RankTwoTensor m2(1, 0, 0, 0, 2, 0, 0, 0, 3);

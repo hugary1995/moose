@@ -120,6 +120,54 @@ DerivativeSumMaterialTempl<is_ad>::initialSetup()
 
 template <bool is_ad>
 void
+DerivativeSumMaterialTempl<is_ad>::initQpStatefulProperties()
+{
+  unsigned int i, j, k;
+  // set function value
+  if (_prop_F)
+  {
+    (*_prop_F)[_qp] = (*_summand_F[0])[_qp] * _prefactor[0];
+    for (unsigned int n = 1; n < _num_materials; ++n)
+      (*_prop_F)[_qp] += (*_summand_F[n])[_qp] * _prefactor[n];
+  }
+
+  for (i = 0; i < _nargs; ++i)
+  {
+    // set first derivatives
+    if (_prop_dF[i])
+    {
+      (*_prop_dF[i])[_qp] = (*_summand_dF[0][i])[_qp] * _prefactor[0];
+      for (unsigned int n = 1; n < _num_materials; ++n)
+        (*_prop_dF[i])[_qp] += (*_summand_dF[n][i])[_qp] * _prefactor[n];
+    }
+
+    // second derivatives
+    for (j = i; j < _nargs; ++j)
+    {
+      if (_prop_d2F[i][j])
+      {
+        (*_prop_d2F[i][j])[_qp] = (*_summand_d2F[0][i][j])[_qp] * _prefactor[0];
+        for (unsigned int n = 1; n < _num_materials; ++n)
+          (*_prop_d2F[i][j])[_qp] += (*_summand_d2F[n][i][j])[_qp] * _prefactor[n];
+      }
+
+      // third derivatives
+      if (_third_derivatives)
+      {
+        for (k = j; k < _nargs; ++k)
+          if (_prop_d3F[i][j][k])
+          {
+            (*_prop_d3F[i][j][k])[_qp] = (*_summand_d3F[0][i][j][k])[_qp] * _prefactor[0];
+            for (unsigned int n = 1; n < _num_materials; ++n)
+              (*_prop_d3F[i][j][k])[_qp] += (*_summand_d3F[n][i][j][k])[_qp] * _prefactor[n];
+          }
+      }
+    }
+  }
+}
+
+template <bool is_ad>
+void
 DerivativeSumMaterialTempl<is_ad>::computeProperties()
 {
   unsigned int i, j, k;

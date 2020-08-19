@@ -38,6 +38,8 @@ LevelSetBiMaterialBaseTempl<is_ad>::LevelSetBiMaterialBaseTempl(const InputParam
   : Material(parameters),
     _base_name(isParamValid("base_name") ? getParam<std::string>("base_name") + "_" : ""),
     _prop_name(getParam<std::string>("prop_name")),
+    _positive_base_name(getParam<std::string>("levelset_positive_base") + "_"),
+    _negative_base_name(getParam<std::string>("levelset_negative_base") + "_"),
     _level_set_var_number(_subproblem
                               .getVariable(_tid,
                                            parameters.get<VariableName>("level_set_var"),
@@ -54,6 +56,12 @@ LevelSetBiMaterialBaseTempl<is_ad>::LevelSetBiMaterialBaseTempl(const InputParam
     mooseError("Problem casting _subproblem to FEProblemBase in XFEMMaterialStateMarkerBase");
 
   _xfem = MooseSharedNamespace::dynamic_pointer_cast<XFEM>(fe_problem->getXFEM());
+}
+
+template <bool is_ad>
+void
+LevelSetBiMaterialBaseTempl<is_ad>::initQpStatefulProperties()
+{
 }
 
 template <bool is_ad>

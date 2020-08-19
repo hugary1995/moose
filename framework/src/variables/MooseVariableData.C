@@ -2337,6 +2337,8 @@ void
 MooseVariableData<OutputType>::fetchADDoFValues()
 {
   auto n = _dof_indices.size();
+  if (n >= 50)
+    std::cout << "**********************bala********************* n = " << n << std::endl;
   libmesh_assert(n);
   _ad_dof_values.resize(n);
   auto ad_offset = _var_num * _sys.getMaxVarNDofsPerNode();

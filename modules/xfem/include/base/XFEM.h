@@ -18,6 +18,7 @@
 #include "libmesh/quadrature.h"
 
 #include "GeometricCutUserObject.h"
+#include "LevelSetCutUserObject.h"
 
 // Forward declarations
 class SystemBase;
@@ -176,6 +177,13 @@ public:
    */
   void setDebugOutputLevel(unsigned int debug_output_level);
 
+  /**
+   * Controls the minimum average weight multiplier for each element
+   * @param min_weight_multiplier The minimum average weight multiplier applied
+   * by XFEM to the standard quadrature weights
+   */
+  void setMinWeightMultiplier(Real min_weight_multiplier);
+
   virtual bool getXFEMWeights(MooseArray<Real> & weights,
                               const Elem * elem,
                               QBase * qrule,
@@ -301,6 +309,10 @@ private:
   /// 3: Full dump of element fragment algorithm mesh
   unsigned int _debug_output_level;
 
+  /// The minimum average multiplier applied by XFEM to the standard quadrature weights
+  /// to integrate partial elements
+  Real _min_weight_multiplier;
+
   /**
    * Data structure to store the nonlinear solution for nodes/elements affected by XFEM
    * For each node/element, this is stored as a vector that contains all components
@@ -318,6 +330,27 @@ private:
    * order, followed by the old and older solutions, also in that same order.
    */
   std::map<unique_id_type, std::vector<Real>> _cached_aux_solution;
+
+  /**
+   * Data structures to store material properties of the children elements prior to heal. These
+   * material properties are copied back to the children elements if the healed element is re-cut.
+   */
+  std::map<const Elem *,
+           std::pair<HashMap<unsigned int, MaterialProperties>,
+                     HashMap<unsigned int, MaterialProperties>>>
+      _healed_material_properties;
+  std::map<const Elem *,
+           std::pair<HashMap<unsigned int, MaterialProperties>,
+                     HashMap<unsigned int, MaterialProperties>>>
+      _healed_material_properties_old;
+  std::map<const Elem *,
+           std::pair<HashMap<unsigned int, MaterialProperties>,
+                     HashMap<unsigned int, MaterialProperties>>>
+      _healed_material_properties_older;
+  std::map<const Elem *, std::pair<bool, bool>> _healed_material_properties_used;
+
+  /// healed levelset cut
+  std::map<const Elem *, const LevelSetCutUserObject *> _healed_ls;
 
   /**
    * Store the solution in stored_solution for a given node
@@ -398,4 +431,18 @@ private:
    * @param sys  System for which the dof indices are found
    */
   std::vector<dof_id_type> getNodeSolutionDofs(const Node * node, SystemBase & sys) const;
+
+  const GeometricCutUserObject * getGeometricCutForElem(const Elem * elem) const;
+
+  void storeMaterialPropertiesForElements(const Elem *, const Elem *, const Elem *);
+  void setMaterialPropertiesForElement(
+      const Elem * parent_elem,
+      const Elem * cut_elem,
+      const HashMap<unsigned int, MaterialProperties> & props,
+      const HashMap<unsigned int, MaterialProperties> & props_old,
+      const HashMap<unsigned int, MaterialProperties> & props_older) const;
+
+  /// Check if this element is on the positive side of the levelset cut
+  bool
+  isElemOnLevelSetPositiveSide(const Elem *, const Elem *, const LevelSetCutUserObject *) const;
 };

@@ -24,6 +24,7 @@ public:
 protected:
   usingDerivativeFunctionMaterialBaseMembers(is_ad);
 
+  virtual void initQpStatefulProperties() override;
   virtual void computeProperties();
 
   std::vector<std::string> _sum_materials;

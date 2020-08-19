@@ -2252,7 +2252,6 @@ Assembly::reinitNeighborAtPhysical(const Elem * neighbor,
 
   unsigned int neighbor_dim = neighbor->dim();
   FEInterface::inverse_map(neighbor_dim, FEType(), neighbor, physical_points, reference_points);
-
   reinitFENeighbor(neighbor, reference_points);
   reinitNeighbor(neighbor, reference_points);
   // Save off the physical points

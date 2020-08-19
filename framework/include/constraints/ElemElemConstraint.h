@@ -84,9 +84,11 @@ protected:
   const Elem * const & _neighbor_elem;
 
   /// Quadrature points used in integration of constraint
-  std::vector<Point> _constraint_q_point;
+  std::vector<Point> _element_qp;
+  std::vector<Point> _neighbor_qp;
   /// Weights of quadrature points used in integration of constraint
-  std::vector<Real> _constraint_weight;
+  std::vector<Real> _element_JxW;
+  std::vector<Real> _neighbor_JxW;
 
   /// Indices for looping over DOFs
   unsigned int _i, _j;
@@ -133,4 +135,3 @@ protected:
    */
   virtual Real computeQpJacobian(Moose::DGJacobianType type) = 0;
 };
-

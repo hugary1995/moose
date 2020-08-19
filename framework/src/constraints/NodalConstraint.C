@@ -79,8 +79,7 @@ NodalConstraint::computeResidual(NumericVector<Number> & residual)
           // Transfer the current residual of the secondary node to the primary nodes
           Real res = residual(secondarydof[_i]);
           re(_j) += res * _weights[_j];
-          neighbor_re(_i) +=
-              -res / _primary_node_vector.size() + computeQpResidual(Moose::Secondary);
+          neighbor_re(_i) += -res / primarydof.size() + computeQpResidual(Moose::Secondary);
           break;
       }
     }
@@ -116,14 +115,14 @@ NodalConstraint::computeJacobian(SparseMatrix<Number> & jacobian)
       switch (_formulation)
       {
         case Moose::Penalty:
-          Kee(_j, _j) += computeQpJacobian(Moose::PrimaryPrimary);
-          Ken(_j, _i) += computeQpJacobian(Moose::PrimarySecondary);
-          Kne(_i, _j) += computeQpJacobian(Moose::SecondaryPrimary);
-          Knn(_i, _i) += computeQpJacobian(Moose::SecondarySecondary);
+          Kee(_j, _j) += computeQpJacobian(Moose::PrimaryPrimary) * _var.scalingFactor();
+          Ken(_j, _i) += computeQpJacobian(Moose::PrimarySecondary) * _var.scalingFactor();
+          Kne(_i, _j) += computeQpJacobian(Moose::SecondaryPrimary) * _var.scalingFactor();
+          Knn(_i, _i) += computeQpJacobian(Moose::SecondarySecondary) * _var.scalingFactor();
           break;
         case Moose::Kinematic:
-          Kee(_j, _j) = 0.;
-          Ken(_j, _i) += jacobian(secondarydof[_i], primarydof[_j]) * _weights[_j];
+          Kee(_j, _j) += jacobian(secondarydof[_i], primarydof[_j]) * _weights[_j];
+          Ken(_j, _i) += jacobian(secondarydof[_i], secondarydof[_i]) * _weights[_j];
           Kne(_i, _j) += -jacobian(secondarydof[_i], primarydof[_j]) / primarydof.size() +
                          computeQpJacobian(Moose::SecondaryPrimary);
           Knn(_i, _i) += -jacobian(secondarydof[_i], secondarydof[_i]) / primarydof.size() +
@@ -132,10 +131,11 @@ NodalConstraint::computeJacobian(SparseMatrix<Number> & jacobian)
       }
     }
   }
-  _assembly.cacheJacobianBlock(Kee, primarydof, primarydof, _var.scalingFactor());
-  _assembly.cacheJacobianBlock(Ken, primarydof, secondarydof, _var.scalingFactor());
-  _assembly.cacheJacobianBlock(Kne, secondarydof, primarydof, _var.scalingFactor());
-  _assembly.cacheJacobianBlock(Knn, secondarydof, secondarydof, _var.scalingFactor());
+
+  _assembly.cacheJacobianBlock(Kee, primarydof, primarydof, 1.);
+  _assembly.cacheJacobianBlock(Ken, primarydof, secondarydof, 1.);
+  _assembly.cacheJacobianBlock(Kne, secondarydof, primarydof, 1.);
+  _assembly.cacheJacobianBlock(Knn, secondarydof, secondarydof, 1.);
 }
 
 void

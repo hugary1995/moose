@@ -27,6 +27,7 @@ public:
   LevelSetBiMaterialBaseTempl(const InputParameters & parameters);
 
 protected:
+  virtual void initQpStatefulProperties() override;
   virtual void computeProperties() override;
   virtual void computeQpProperties() override;
 
@@ -45,6 +46,10 @@ protected:
 
   /// Property name
   std::string _prop_name;
+
+  /// levelset base names
+  std::string _positive_base_name;
+  std::string _negative_base_name;
 
   /// shared pointer to XFEM
   std::shared_ptr<XFEM> _xfem;

@@ -6091,6 +6091,9 @@ FEProblemBase::meshChangedHelper(bool intermediate_change)
   // repartitioning done in EquationSystems::reinit().
   _mesh.meshChanged();
 
+  for (const auto & mci : _notify_when_mesh_changes)
+    mci->meshChanged();
+
   // Since the Mesh changed, update the PointLocator object used by DiracKernels.
   _dirac_kernel_info.updatePointLocator(_mesh);
 
@@ -6148,9 +6151,6 @@ FEProblemBase::meshChangedHelper(bool intermediate_change)
     setVariableAllDoFMap(_uo_jacobian_moose_vars[0]);
 
   _has_jacobian = false; // we have to recompute jacobian when mesh changed
-
-  for (const auto & mci : _notify_when_mesh_changes)
-    mci->meshChanged();
 }
 
 void

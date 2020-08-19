@@ -48,4 +48,7 @@ protected:
 
   /// Gradients for all coupled variables
   std::vector<const ADVariableGradient *> _gradarg;
+
+  /// the coordinate system
+  const Moose::CoordinateSystemType & _coord_sys;
 };
