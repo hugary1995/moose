@@ -59,14 +59,15 @@ public:
    * @param bnd The boundary id where this variable is defined
    * @param var The variable
    */
-  void addBoundaryVar(BoundaryID bnd, MooseVariableFieldBase * var);
+  void addBoundaryVar(BoundaryID bnd, const MooseVariableFieldBase * var);
 
   /**
    * Add a variable to a set of boundaries
    * @param boundary_ids The boundary ids where this variable is defined
    * @param var The variable
    */
-  void addBoundaryVar(const std::set<BoundaryID> & boundary_ids, MooseVariableFieldBase * var);
+  void addBoundaryVar(const std::set<BoundaryID> & boundary_ids,
+                      const MooseVariableFieldBase * var);
 
   /**
    * Add a map of variables to a set of boundaries
@@ -82,14 +83,14 @@ public:
    * @param var_name The name of the variable to retrieve
    * @return The retrieved variable
    */
-  MooseVariableBase * getVariable(const std::string & var_name);
+  MooseVariableBase * getVariable(const std::string & var_name) const;
 
   /**
    * Get a variable from the warehouse
    * @param var_number The number of the variable to retrieve
    * @return The retrieved variable
    */
-  MooseVariableBase * getVariable(unsigned int var_number);
+  MooseVariableBase * getVariable(unsigned int var_number) const;
 
   /**
    * Get a finite element variable from the warehouse
@@ -146,13 +147,23 @@ public:
    * @param bnd The boundary ID
    * @return The list of variables
    */
-  const std::set<MooseVariableFieldBase *> & boundaryVars(BoundaryID bnd) const;
+  const std::set<const MooseVariableFieldBase *> & boundaryVars(BoundaryID bnd) const;
 
   /**
    * Get the list of scalar variables
    * @return The list of scalar variables
    */
   const std::vector<MooseVariableScalar *> & scalars() const;
+
+  /**
+   * Call residualSetup for all variables
+   */
+  void residualSetup();
+
+  /**
+   * Call jacobianSetup for all variables
+   */
+  void jacobianSetup();
 
 protected:
   /// list of variable names
@@ -189,7 +200,7 @@ protected:
   std::map<std::string, MooseVariableBase *> _var_name;
 
   /// Map to variables that need to be evaluated on a boundary
-  std::map<BoundaryID, std::set<MooseVariableFieldBase *>> _boundary_vars;
+  std::map<BoundaryID, std::set<const MooseVariableFieldBase *>> _boundary_vars;
 
   /// list of all scalar, non-finite element variables
   std::vector<MooseVariableScalar *> _scalar_vars;

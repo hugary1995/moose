@@ -72,5 +72,43 @@ class Test(unittest.TestCase):
         status_func.assert_called_with(root)
         call_func.assert_called_with(['git', 'submodule', 'update', '--init', 'test'], cwd=root)
 
+    def testGitVersion(self):
+        ver = mooseutils.git_version()
+        self.assertEqual(len(ver), 3)
+        self.assertIsInstance(ver[0], int)
+        self.assertIsInstance(ver[1], int)
+        self.assertIsInstance(ver[2], int)
+
+    @mock.patch('re.search')
+    def testGitVersion2(self, re_func):
+        re_func.return_value = None
+        with self.assertRaises(SystemError):
+            ver = mooseutils.git_version()
+
+    @unittest.skip("Fails on CIVET and I can't reproduce it")
+    def testGitAuthors(self):
+        names = mooseutils.git_authors(mooseutils.__file__)
+        self.assertIn('Andrew E. Slaughter', names)
+
+        with self.assertRaises(OSError) as e:
+            mooseutils.git_authors('wrong')
+
+    def testGitLines(self):
+        with open(__file__, 'r') as fid:
+            lines = fid.readlines()
+
+        n_with_blank = len(lines)
+        n_no_blank = n_with_blank - len([l for l in lines if not l.strip()])
+
+        counts = mooseutils.git_lines(__file__)
+        self.assertIn('Andrew E. Slaughter', counts)
+        self.assertTrue(counts['Andrew E. Slaughter'] > 0)
+        self.assertEqual(n_no_blank, sum(list(counts.values())))
+
+        counts = mooseutils.git_lines(__file__, blank=True)
+        self.assertIn('Andrew E. Slaughter', counts)
+        self.assertTrue(counts['Andrew E. Slaughter'] > 0)
+        self.assertEqual(n_with_blank, sum(list(counts.values())))
+
 if __name__ == '__main__':
     unittest.main(verbosity=2, buffer=True)

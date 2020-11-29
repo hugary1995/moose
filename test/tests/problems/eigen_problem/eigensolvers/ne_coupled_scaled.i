@@ -14,8 +14,6 @@
   [./u]
     order = FIRST
     family = LAGRANGE
-    # Make sure that system knows this is part of the eigenvector to be scaled
-    eigen = true
   [../]
 
   [./T]
@@ -88,12 +86,6 @@
     variable = T
     boundary = '0 1 2 3'
     value = 0
-  [../]
-
-  [./eigenT]
-    type = EigenDirichletBC
-    variable = T
-    boundary = '0 1 2 3'
   [../]
 []
 

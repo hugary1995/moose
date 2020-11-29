@@ -96,12 +96,17 @@ void escape(std::string & str);
 std::string trim(const std::string & str, const std::string & white_space = " \t\n\v\f\r");
 
 /**
- * Python like split function for strings.
+ * Python like split functions for strings.
  *
  * NOTE: This is similar to the tokenize function, but it maintains empty items, which tokenize does
  *       not. For example, "foo;bar;;" becomes {"foo", "bar", "", ""}.
  */
-std::vector<std::string> split(const std::string & str, const std::string & delimiter);
+std::vector<std::string> split(const std::string & str,
+                               const std::string & delimiter,
+                               std::size_t max_count = std::numeric_limits<std::size_t>::max());
+std::vector<std::string> rsplit(const std::string & str,
+                                const std::string & delimiter,
+                                std::size_t max_count = std::numeric_limits<std::size_t>::max());
 
 /**
  * Python like join function for strings.
@@ -187,6 +192,26 @@ std::string stripExtension(const std::string & s);
  * If the supplied filename does not contain a path, it returns "." as the path
  */
 std::pair<std::string, std::string> splitFileName(std::string full_file);
+
+/**
+ * Recursively make directories
+ * @param dir_name A complete path
+ * @param throw_on_failure True to throw instead of error out when creating a directory is failed.
+ *
+ * The path can be relative like 'a/b/c' or absolute like '/a/b/c'.
+ * The path is allowed to contain '.' or '..'.
+ */
+void makedirs(const std::string & dir_name, bool throw_on_failure = false);
+
+/**
+ * Recursively remove directories from inner-most when the directories are empty
+ * @param dir_name A complete path
+ * @param throw_on_failure True to throw instead of error out when deleting a directory is failed.
+ *
+ * The path can be relative like 'a/b/c' or absolute like '/a/b/c'.
+ * The path is allowed to contain '.' or '..'.
+ */
+void removedirs(const std::string & dir_name, bool throw_on_failure = false);
 
 /**
  * Function for converting a camel case name to a name containing underscores.

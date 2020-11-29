@@ -19,7 +19,7 @@ The sub-apps can be solving for completely different physics from the main appli
 other MOOSE applications, or might represent external applications. A sub-app can, itself, have
 `MultiApps`, leading to multi-level solves, as shown below.
 
-!media tutorials/multiapp_hierarchy.png id=multiapps style=width:60%;margin-left:auto;margin-right:auto;
+!media multi_apps/multiapp_hierarchy.png id=multiapps style=width:60%;margin-left:auto;margin-right:auto;
        caption=Example multi-level MultiApp hierarchy.
 
 ## Input File Syntax
@@ -35,7 +35,7 @@ A `MultiApp` can be executed at any point during the master solve by setting the
 [!param](/MultiApps/TransientMultiApp/execute_on) parameter. The
 [!param](/MultiApps/TransientMultiApp/positions) parameters is a list of 3D coordinate pairs
 describing the offset of the sub-application(s) into the physical space of the master application,
-see [#multiapp-positions] for more information. A single fir for all the sub-apps or a file for
+see [#multiapp-positions] for more information. A single fit for all the sub-apps or a file for
 each position may be provided.
 
 !listing multiapps/transient_multiapp/dt_from_master.i block=MultiApps
@@ -72,7 +72,7 @@ multiple sub-apps.  All sub-apps of a given `MultiApp` are run simultaneously in
 
 ## Dynamically Loading Multiapps
 
-If uilding with dynamic libraries (the default) other applications can be loaded without adding them
+If building with dynamic libraries (the default) other applications can be loaded without adding them
 to your Makefile and registering them. Simply set the proper `type` in your input file
 (e.g. `AnimalApp`) and MOOSE will attempt to find the other library dynamically.
 
@@ -83,8 +83,8 @@ to your Makefile and registering them. Simply set the proper `type` in your inpu
 
 
 !alert warning
-Each application must be compiled separately since application the Makefile does not have any
-knowledge of the dependent application.
+Each application must be compiled separately since the main application Makefile does not have
+knowledge of any sub-app application dependencies.
 
 !syntax list /MultiApps subsystems=False actions=False objects=True
 

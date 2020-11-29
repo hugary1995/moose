@@ -41,14 +41,19 @@
     input = test_database.py
     requirement = "MooseDocs shall include a database object for storing information regarding source files."
   []
-  [get_requirement]
-    type = PythonUnitTest
-    input = test_get_requirements.py
-    requirement = "MooseDocs shall include a tool for reading software quality assurance requirement information from test specifications."
-  []
   [get_pages]
     type = PythonUnitTest
     input = test_get_pages.py
     requirement = "MooseDocs shall include the ability to build a file tree from markdown files."
+  []
+  [project_find]
+    type = PythonUnitTest
+    input = test_project_find.py
+    requirement = "MooseDocs shall include a utility for locating filenames using a fuzzy search."
+  []
+  [check_filenames]
+    type = PythonUnitTest
+    input = test_check_filenames.py
+    requirement = "MooseDocs shall include a utility to locate a filename using a fuzzy search and error if none or multiple are located."
   []
 []

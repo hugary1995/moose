@@ -14,6 +14,8 @@
 
 #include "libmesh/libmesh_config.h"
 
+#include <complex>
+
 registerMooseObject("MooseApp", Eigenvalues);
 
 defineLegacyParams(Eigenvalues);
@@ -22,11 +24,14 @@ InputParameters
 Eigenvalues::validParams()
 {
   InputParameters params = GeneralVectorPostprocessor::validParams();
+  params.addClassDescription("Returns the Eigen values from the nonlinear Eigen system.");
+  params.addParam<bool>("inverse_eigenvalue", false, "True to evaluate the inverse of eigenvalues");
   return params;
 }
 
 Eigenvalues::Eigenvalues(const InputParameters & parameters)
   : GeneralVectorPostprocessor(parameters),
+    _inverse(getParam<bool>("inverse_eigenvalue")),
     _eigen_values_real(declareVector("eigen_values_real")),
     _eigen_values_imag(declareVector("eigen_values_imag")),
     _nl_eigen(dynamic_cast<NonlinearEigenSystem *>(&_fe_problem.getNonlinearSystemBase()))
@@ -36,22 +41,19 @@ Eigenvalues::Eigenvalues(const InputParameters & parameters)
 }
 
 void
-Eigenvalues::initialize()
-{
-}
-
-void
 Eigenvalues::execute()
 {
-#if LIBMESH_HAVE_SLEPC
+#ifdef LIBMESH_HAVE_SLEPC
   const std::vector<std::pair<Real, Real>> & eigenvalues = _nl_eigen->getAllConvergedEigenvalues();
   unsigned int n_converged_eigenvalues = eigenvalues.size();
   _eigen_values_real.resize(n_converged_eigenvalues);
   _eigen_values_imag.resize(n_converged_eigenvalues);
   for (unsigned int n = 0; n < n_converged_eigenvalues; n++)
   {
-    _eigen_values_real[n] = eigenvalues[n].first;
-    _eigen_values_imag[n] = eigenvalues[n].second;
+    std::complex<Real> e(eigenvalues[n].first, eigenvalues[n].second);
+    std::complex<Real> inv = _inverse ? 1. / e : e;
+    _eigen_values_real[n] = inv.real();
+    _eigen_values_imag[n] = inv.imag();
   }
 #else
   _eigen_values_real.clear();

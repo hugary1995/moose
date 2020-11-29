@@ -31,6 +31,8 @@ InputParameters
 DisplacedProblem::validParams()
 {
   InputParameters params = SubProblem::validParams();
+  params.addClassDescription("A Problem object for provided access to the displaced finite element "
+                             "mesh and associated variables.");
   params.addPrivateParam<MooseMesh *>("mesh");
   params.addPrivateParam<std::vector<std::string>>("displacements");
   return params;
@@ -69,8 +71,16 @@ DisplacedProblem::DisplacedProblem(const InputParameters & parameters)
   _displaced_nl.addTimeIntegrator(_mproblem.getNonlinearSystemBase().getSharedTimeIntegrator());
   _displaced_aux.addTimeIntegrator(_mproblem.getAuxiliarySystem().getSharedTimeIntegrator());
 
-  if (!_default_ghosting)
-    _mesh.getMesh().remove_ghosting_functor(_mesh.getMesh().default_ghosting());
+  // // Generally speaking, the mesh is prepared for use, and consequently remote elements are deleted
+  // // well before our Problem(s) are constructed. Historically, in MooseMesh we have a bunch of
+  // // needs_prepare type flags that make it so we never call prepare_for_use (and consequently
+  // // delete_remote_elements) again. So the below line, historically, has had no impact. HOWEVER:
+  // // I've added some code in SetupMeshCompleteAction for deleting remote elements post
+  // // EquationSystems::init. If I execute that code without default ghosting, then I get > 40 MOOSE
+  // // test failures, so we clearly have some simulations that are not yet covered properly by
+  // // relationship managers. Until that is resolved, I am going to retain default geometric ghosting
+  // if (!_default_ghosting)
+  //   _mesh.getMesh().remove_ghosting_functor(_mesh.getMesh().default_ghosting());
 
   automaticScaling(_mproblem.automaticScaling());
 }
@@ -82,7 +92,7 @@ DisplacedProblem::isTransient() const
 }
 
 Moose::CoordinateSystemType
-DisplacedProblem::getCoordSystem(SubdomainID sid)
+DisplacedProblem::getCoordSystem(SubdomainID sid) const
 {
   return _mproblem.getCoordSystem(sid);
 }
@@ -392,11 +402,11 @@ DisplacedProblem::hasVariable(const std::string & var_name) const
     return false;
 }
 
-MooseVariableFEBase &
+const MooseVariableFieldBase &
 DisplacedProblem::getVariable(THREAD_ID tid,
                               const std::string & var_name,
                               Moose::VarKindType expected_var_type,
-                              Moose::VarFieldType expected_var_field_type)
+                              Moose::VarFieldType expected_var_field_type) const
 {
   return getVariableHelper(
       tid, var_name, expected_var_type, expected_var_field_type, _displaced_nl, _displaced_aux);
@@ -411,6 +421,17 @@ DisplacedProblem::getStandardVariable(THREAD_ID tid, const std::string & var_nam
     mooseError("No variable with name '" + var_name + "'");
 
   return _displaced_aux.getFieldVariable<Real>(tid, var_name);
+}
+
+MooseVariableFieldBase &
+DisplacedProblem::getActualFieldVariable(THREAD_ID tid, const std::string & var_name)
+{
+  if (_displaced_nl.hasVariable(var_name))
+    return _displaced_nl.getActualFieldVariable<Real>(tid, var_name);
+  else if (!_displaced_aux.hasVariable(var_name))
+    mooseError("No variable with name '" + var_name + "'");
+
+  return _displaced_aux.getActualFieldVariable<Real>(tid, var_name);
 }
 
 VectorMooseVariable &
@@ -842,7 +863,9 @@ DisplacedProblem::addCachedJacobian(THREAD_ID tid)
 void
 DisplacedProblem::addCachedJacobianContributions(THREAD_ID tid)
 {
-  _assembly[tid]->addCachedJacobianContributions();
+  mooseDeprecated("please use addCachedJacobian");
+
+  addCachedJacobian(tid);
 }
 
 void

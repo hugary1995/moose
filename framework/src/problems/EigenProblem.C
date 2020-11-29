@@ -18,6 +18,7 @@
 #include "RandomData.h"
 #include "OutputWarehouse.h"
 #include "Function.h"
+#include "MooseVariableScalar.h"
 
 // libMesh includes
 #include "libmesh/system.h"
@@ -32,6 +33,7 @@ InputParameters
 EigenProblem::validParams()
 {
   InputParameters params = FEProblemBase::validParams();
+  params.addClassDescription("Problem object for solving Eigen value problem.");
   params.addParam<bool>("negative_sign_eigen_kernel",
                         true,
                         "Whether or not to use a negative sign for eigenvalue kernels. "
@@ -54,14 +56,19 @@ EigenProblem::EigenProblem(const InputParameters & parameters)
     _nl_eigen(std::make_shared<NonlinearEigenSystem>(*this, "eigen0")),
     _negative_sign_eigen_kernel(getParam<bool>("negative_sign_eigen_kernel")),
     _active_eigen_index(getParam<unsigned int>("active_eigen_index")),
+    _do_free_power_iteration(false),
+    _output_inverse_eigenvalue(false),
     _compute_jacobian_tag_timer(registerTimedSection("computeJacobianTag", 3)),
     _compute_jacobian_ab_timer(registerTimedSection("computeJacobianAB", 3)),
     _compute_residual_tag_timer(registerTimedSection("computeResidualTag", 3)),
     _compute_residual_ab_timer(registerTimedSection("computeResidualAB", 3)),
     _solve_timer(registerTimedSection("solve", 1)),
-    _compute_jacobian_blocks_timer(registerTimedSection("computeJacobianBlocks", 3))
+    _compute_jacobian_blocks_timer(registerTimedSection("computeJacobianBlocks", 3)),
+    _has_normalization(false),
+    _normal_factor(1.0),
+    _first_solve(declareRestartableData<bool>("first_solve", true))
 {
-#if LIBMESH_HAVE_SLEPC
+#ifdef LIBMESH_HAVE_SLEPC
   _nl = _nl_eigen;
   _aux = std::make_shared<AuxiliarySystem>(*this, "aux0");
 
@@ -74,11 +81,16 @@ EigenProblem::EigenProblem(const InputParameters & parameters)
   mooseError("Need to install SLEPc to solve eigenvalue problems, please reconfigure\n");
 #endif /* LIBMESH_HAVE_SLEPC */
 
+  // SLEPc older than 3.13.0 can not take initial guess from moose
+#if PETSC_RELEASE_LESS_THAN(3, 13, 0)
+  mooseDeprecated(
+      "Please use SLEPc-3.13.0 or higher. Old versions of SLEPc likely produce bad convergence");
+#endif
   // Create extra vectors and matrices if any
   createTagVectors();
 }
 
-#if LIBMESH_HAVE_SLEPC
+#ifdef LIBMESH_HAVE_SLEPC
 void
 EigenProblem::setEigenproblemType(Moose::EigenProblemType eigen_problem_type)
 {
@@ -329,26 +341,122 @@ EigenProblem::computeResidualL2Norm()
 }
 
 void
-EigenProblem::scaleEigenvector(const Real scaling_factor)
+EigenProblem::adjustEigenVector(const Real value, bool scaling)
 {
   std::vector<VariableName> var_names = getVariableNames();
   for (auto & vn : var_names)
   {
-    MooseVariableFEBase & var = getVariable(0, vn);
-    if (var.parameters().get<bool>("eigen"))
-      for (unsigned int vc = 0; vc < var.count(); ++vc)
+    MooseVariableBase * var = nullptr;
+    if (hasScalarVariable(vn))
+      var = &getScalarVariable(0, vn);
+    else
+      var = &getVariable(0, vn);
+    // Do operations for only eigen variable
+    if (var->eigen())
+      for (unsigned int vc = 0; vc < var->count(); ++vc)
       {
         std::set<dof_id_type> var_indices;
-        _nl_eigen->system().local_dof_indices(var.number() + vc, var_indices);
+        _nl_eigen->system().local_dof_indices(var->number() + vc, var_indices);
         for (const auto & dof : var_indices)
-          _nl_eigen->solution().set(dof, _nl_eigen->solution()(dof) * scaling_factor);
+          _nl_eigen->solution().set(dof, scaling ? (_nl_eigen->solution()(dof) * value) : value);
       }
   }
+
   _nl_eigen->solution().close();
   _nl_eigen->update();
 }
 
-#endif
+void
+EigenProblem::scaleEigenvector(const Real scaling_factor)
+{
+  adjustEigenVector(scaling_factor, true);
+}
+
+void
+EigenProblem::initEigenvector(const Real initial_value)
+{
+  // Yaqi's note: the following code will set a flat solution for lagrange and
+  // constant monomial variables. For the first or higher order elemental variables,
+  // the solution is not flat. Fortunately, the initial guess does not affect
+  // the final solution as long as it is not perpendicular to the true solution.
+  // We, in general, do not need to worry about that.
+
+  adjustEigenVector(initial_value, false);
+}
+
+void
+EigenProblem::preScaleEigenVector()
+{
+  // pre-scale the solution to make sure ||Bx||_2 is equal to inverse of eigenvalue
+  computeResidualTag(
+      *_nl_eigen->currentSolution(), _nl_eigen->residualVectorBX(), _nl_eigen->eigenVectorTag());
+
+  // If we do not have eigenvaue yet, we scale 1/|Bx| to unity
+  std::pair<Real, Real> eig(1, 0);
+  // If there is an eigenvaue, we scale 1/|Bx| to eigenvaue
+  if (_active_eigen_index < _nl_eigen->getNumConvergedEigenvalues())
+    eig = _nl_eigen->getConvergedEigenvalue(_active_eigen_index);
+
+  // Eigenvaluve magnitude
+  Real v = std::sqrt(eig.first * eig.first + eig.second * eig.second);
+  // Scaling factor
+  Real factor = 1 / v / _nl_eigen->residualVectorBX().l2_norm();
+  // Scale eigenvector
+  if (!MooseUtils::absoluteFuzzyEqual(factor, 1))
+    scaleEigenvector(factor);
+}
+
+void
+EigenProblem::postScaleEigenVector()
+{
+  if (_has_normalization)
+  {
+    Real v;
+    if (_normal_factor == std::numeric_limits<Real>::max())
+    {
+      if (_active_eigen_index >= _nl_eigen->getNumConvergedEigenvalues())
+        mooseError("Number of converged eigenvalues ",
+                   _nl_eigen->getNumConvergedEigenvalues(),
+                   " but you required eigenvaue ",
+                   _active_eigen_index);
+
+      // when normal factor is not provided, we use the inverse of the norm of
+      // the active eigenvalue for normalization
+      auto eig = _nl_eigen->getAllConvergedEigenvalues()[_active_eigen_index];
+      v = 1 / std::sqrt(eig.first * eig.first + eig.second * eig.second);
+    }
+    else
+      v = _normal_factor;
+
+    Real c = getPostprocessorValueByName(_normalization);
+
+    // We scale SLEPc eigen vector here, so we need to scale it back for optimal
+    // convergence if we call EPS solver again
+    mooseAssert(v != 0., "normal factor can not be zero");
+
+    unsigned int itr = 0;
+
+    while (!MooseUtils::absoluteFuzzyEqual(v, c))
+    {
+      // If postprocessor is not defined on eigen variables, scaling might not work
+      if (itr > 10)
+        mooseError("Can not scale eigenvector to the required factor ",
+                   v,
+                   " please check if postprocessor is defined on only eigen variables");
+
+      mooseAssert(c != 0., "postprocessor value used for scaling can not be zero");
+
+      scaleEigenvector(v / c);
+
+      // update all aux variables and user objects on linear
+      execute(EXEC_LINEAR);
+
+      c = getPostprocessorValueByName(_normalization);
+
+      itr++;
+    }
+  }
+}
 
 void
 EigenProblem::checkProblemIntegrity()
@@ -358,15 +466,29 @@ EigenProblem::checkProblemIntegrity()
 }
 
 void
+EigenProblem::doFreeNonlinearPowerIterations(unsigned int free_power_iterations)
+{
+  doFreePowerIteration(true);
+  // Set free power iterations
+  Moose::SlepcSupport::setFreeNonlinearPowerIterations(free_power_iterations);
+
+  // Call solver
+  _nl->solve();
+  _nl->update();
+
+  // Clear free power iterations
+  auto executioner = getMooseApp().getExecutioner();
+  if (executioner)
+    Moose::SlepcSupport::clearFreeNonlinearPowerIterations(executioner->parameters());
+  else
+    mooseError("There is no executioner for this moose app");
+
+  doFreePowerIteration(false);
+}
+
+void
 EigenProblem::solve()
 {
-#if LIBMESH_HAVE_SLEPC
-  // Set necessary slepc callbacks
-  // We delay this call as much as possible because libmesh
-  // could rebuild matrices due to mesh changes or something else.
-  _nl_eigen->attachSLEPcCallbacks();
-#endif
-
 #if !PETSC_RELEASE_LESS_THAN(3, 12, 0)
   // Master has the default database
   if (!_app.isUltimateMaster())
@@ -376,24 +498,74 @@ EigenProblem::solve()
   if (_solve)
   {
     TIME_SECTION(_solve_timer);
+
+    // Set necessary slepc callbacks
+    // We delay this call as much as possible because libmesh
+    // could rebuild matrices due to mesh changes or something else.
+    _nl_eigen->attachSLEPcCallbacks();
+
+    // Scale eigen vector if necessary
+    preScaleEigenVector();
+
+    if (isNonlinearEigenvalueSolver() &&
+        solverParams()._eigen_solve_type != Moose::EST_NONLINEAR_POWER)
+    {
+      // Let do an initial solve if a nonlinear eigen solver but not power is used.
+      // The initial solver is a Inverse Power, and it is used to compute a good initial
+      // guess for Newton
+      if (solverParams()._free_power_iterations && _first_solve)
+      {
+        _console << " Free power iteration starts" << std::endl;
+        doFreeNonlinearPowerIterations(solverParams()._free_power_iterations);
+        _first_solve = false;
+      }
+
+      // Let us do extra power iterations here if necessary
+      if (solverParams()._extra_power_iterations)
+      {
+        _console << " Extra Free power iteration starts" << std::endl;
+        doFreeNonlinearPowerIterations(solverParams()._extra_power_iterations);
+      }
+    }
+
+    // We print this for only nonlinear solver
+    if (isNonlinearEigenvalueSolver())
+    {
+      if (solverParams()._eigen_solve_type != Moose::EST_NONLINEAR_POWER)
+        _console << " Nonlinear Newton iteration starts" << std::endl;
+      else
+        _console << " Nonlinear power iteration starts" << std::endl;
+    }
+
     _nl->solve();
     _nl->update();
-  }
 
-  // sync solutions in displaced problem
-  if (_displaced_problem)
-    _displaced_problem->syncSolutions();
+    // Scale eigen vector if users ask
+    postScaleEigenVector();
+  }
 
 #if !PETSC_RELEASE_LESS_THAN(3, 12, 0)
   if (!_app.isUltimateMaster())
     PetscOptionsPop();
 #endif
+
+  // sync solutions in displaced problem
+  if (_displaced_problem)
+    _displaced_problem->syncSolutions();
+}
+
+void
+EigenProblem::setNormalization(const PostprocessorName & pp, const Real value)
+{
+  _has_normalization = true;
+  _normalization = pp;
+  _normal_factor = value;
 }
 
 void
 EigenProblem::init()
 {
-#if !PETSC_RELEASE_LESS_THAN(3, 13, 0) && LIBMESH_HAVE_SLEPC
+#if !PETSC_RELEASE_LESS_THAN(3, 13, 0)
   // If matrix_free=true, this tells Libmesh to use shell matrices
   _nl_eigen->sys().use_shell_matrices(solverParams()._eigen_matrix_free);
   // We need to tell libMesh if we are using a shell preconditioning matrix
@@ -410,8 +582,18 @@ EigenProblem::converged()
 }
 
 bool
-EigenProblem::isNonlinearEigenvalueSolver()
+EigenProblem::isNonlinearEigenvalueSolver() const
 {
   return solverParams()._eigen_solve_type == Moose::EST_NONLINEAR_POWER ||
-         solverParams()._eigen_solve_type == Moose::EST_NEWTON;
+         solverParams()._eigen_solve_type == Moose::EST_NEWTON ||
+         solverParams()._eigen_solve_type == Moose::EST_PJFNK ||
+         solverParams()._eigen_solve_type == Moose::EST_JFNK;
 }
+
+void
+EigenProblem::initPetscOutput()
+{
+  _app.getOutputWarehouse().solveSetup();
+}
+
+#endif

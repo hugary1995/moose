@@ -57,6 +57,13 @@ protected:
   virtual void outputPostprocessors() override;
 
   /**
+   * Populates the tables with Reporter values
+   */
+  virtual void outputReporters() override;
+  template <typename T>
+  void outputReporter(const ReporterName & name);
+
+  /**
    * Populates the tables with VectorPostprocessor values
    */
   virtual void outputVectorPostprocessors() override;
@@ -76,7 +83,10 @@ protected:
   /// Table containing scalar aux variables
   FormattedTable & _scalar_table;
 
-  /// Table containing postprocessor values and scalar aux variables
+  /// Table containing Real Reporter values
+  FormattedTable & _reporter_table;
+
+  /// Table containing postprocessor values, scalar aux variables, and Real Reporters
   FormattedTable & _all_data_table;
 
   /// Tolerance used when deciding whether or not to add a new row to the table
@@ -89,3 +99,42 @@ protected:
   const bool _time_column;
 };
 
+template <typename T>
+void
+TableOutput::outputReporter(const ReporterName & name)
+{
+  static_assert(TableValueBase::isSupportedType<T>(), "Unsupported table value type.");
+
+  if (_reporter_data.hasReporterValue<T>(name))
+  {
+    if (_reporter_table.empty() ||
+        !MooseUtils::absoluteFuzzyEqual(_reporter_table.getLastTime(), time(), _new_row_tol))
+      _reporter_table.addRow(time());
+
+    if (_all_data_table.empty() ||
+        !MooseUtils::absoluteFuzzyEqual(_all_data_table.getLastTime(), time(), _new_row_tol))
+      _all_data_table.addRow(time());
+
+    const T & value = _reporter_data.getReporterValue<T>(name);
+    _reporter_table.addData<T>(name.getCombinedName(), value);
+    _all_data_table.addData<T>(name.getCombinedName(), value);
+  }
+  else if (_reporter_data.hasReporterValue<std::vector<T>>(name))
+  {
+    const std::string & obj_name = name.getObjectName();
+    const std::string & val_name = name.getValueName();
+    auto insert_pair = moose_try_emplace(_vector_postprocessor_tables, obj_name, FormattedTable());
+
+    FormattedTable & table = insert_pair.first->second;
+    table.outputTimeColumn(false);
+
+    const std::vector<T> & vector = _reporter_data.getReporterValue<std::vector<T>>(name);
+    table.addData<T>(val_name, vector);
+
+    if (_time_data)
+    {
+      FormattedTable & t_table = _vector_postprocessor_time_tables[obj_name];
+      t_table.addData("timestep", _t_step, _time);
+    }
+  }
+}

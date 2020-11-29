@@ -17,6 +17,8 @@ InputParameters
 OneDEqualValueConstraintBC::validParams()
 {
   InputParameters params = IntegratedBC::validParams();
+  params.addClassDescription("Computes the \\f$ \\int \\lambda dg\\f$ term from the mortar method "
+                             "(for two 1D domains only).");
   params.addRequiredCoupledVar("lambda", "Lagrange multiplier");
   params.addRequiredParam<unsigned int>("component", "Component of the Lagrange multiplier");
   params.addRequiredParam<Real>(
@@ -47,7 +49,7 @@ OneDEqualValueConstraintBC::computeQpJacobian()
 }
 
 Real
-OneDEqualValueConstraintBC::computeQpOffDiagJacobian(unsigned jvar)
+OneDEqualValueConstraintBC::computeQpOffDiagJacobianScalar(unsigned int jvar)
 {
   if (jvar == _lambda_var_number)
   {

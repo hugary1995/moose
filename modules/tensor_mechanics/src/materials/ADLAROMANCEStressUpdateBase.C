@@ -697,11 +697,13 @@ ADLAROMANCEStressUpdateBase::convertOutput(const std::vector<Real> & old_input_v
     return 0.0;
 
   ADReal expout = std::exp(rom_output);
-  if (expout > _rom_strain_output_cutoff)
-    expout -= _rom_strain_output_cutoff;
+  mooseAssert(expout > 0.0, "ROM calculated strain increment is not strictly positive");
+
+  const Real rom_strain_cutoff_value = romStrainCutoff();
+  if (expout > rom_strain_cutoff_value)
+    expout -= rom_strain_cutoff_value;
   else
-    expout =
-        -_rom_strain_output_cutoff * _rom_strain_output_cutoff / expout + _rom_strain_output_cutoff;
+    expout = -rom_strain_cutoff_value * rom_strain_cutoff_value / expout + rom_strain_cutoff_value;
 
   return -expout * old_input_values[out_index] * _dt;
 }
@@ -800,15 +802,17 @@ ADLAROMANCEStressUpdateBase::computeStressFinalize(const ADRankTwoTensor & plast
   _cell_dislocations[_qp] = _old_input_values[_cell_output_index] + _cell_dislocation_increment;
   _wall_dislocations[_qp] = _old_input_values[_wall_output_index] + _wall_dislocation_increment;
 
-  // Prevent the ROM from calculating and proceding with negative dislocations
-  if (_cell_dislocations[_qp] < 0.0 || _wall_dislocations[_qp] < 0.0)
+  // Prevent the ROM from calculating and proceeding with negative dislocations
+  if ((_cell_dislocations[_qp] < 0.0 || _wall_dislocations[_qp] < 0.0) && (_apply_strain))
   {
+    const Real negative_cell_dislocations = MetaPhysicL::raw_value(_cell_dislocations[_qp]);
+    const Real negative_wall_dislocations = MetaPhysicL::raw_value(_wall_dislocations[_qp]);
     _cell_dislocations[_qp] = _old_input_values[_cell_output_index];
     _wall_dislocations[_qp] = _old_input_values[_wall_output_index];
     mooseException("The negative values of the cell dislocation density, ",
-                   MetaPhysicL::raw_value(_cell_dislocations[_qp]),
+                   negative_cell_dislocations,
                    ", and/or wall dislocation density, ",
-                   MetaPhysicL::raw_value(_wall_dislocations[_qp]),
+                   negative_wall_dislocations,
                    ". Cutting timestep.");
   }
 

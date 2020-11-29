@@ -30,6 +30,53 @@ public:
 
   Material(const InputParameters & parameters);
 
+  /**
+   * Gets an element integer for the proper current element with a parameter of
+   * the object derived from this interface
+   * Note: This overrides the function in ElementIDInterface to assure derived materials
+   *       call the functions in ElementIDInterface properly.
+   */
+  virtual const dof_id_type & getElementID(const std::string & id_parameter_name,
+                                           unsigned int comp = 0) const override
+  {
+    return _neighbor ? ElementIDInterface::getElementIDNeighbor(id_parameter_name, comp)
+                     : ElementIDInterface::getElementID(id_parameter_name, comp);
+  }
+  /**
+   * Directly calling this function is not needed for materials because the same material has
+   * three copies for element interior, element side and neighbor side.
+   */
+  virtual const dof_id_type & getElementIDNeighbor(const std::string & id_parameter_name,
+                                                   unsigned int comp = 0) const override
+  {
+    mooseError("Directly calling 'getElementIDNeighbor' is not allowed for materials. Please call "
+               "'getElementID' instead");
+    return ElementIDInterface::getElementIDNeighbor(id_parameter_name, comp);
+  }
+
+  /**
+   * Gets an element integer for the proper current element with the element integer name
+   * Note: This overrides the function in ElementIDInterface to assure derived materials
+   *       call the functions in ElementIDInterface properly.
+   */
+  virtual const dof_id_type &
+  getElementIDByName(const std::string & id_parameter_name) const override
+  {
+    return _neighbor ? ElementIDInterface::getElementIDNeighborByName(id_parameter_name)
+                     : ElementIDInterface::getElementIDByName(id_parameter_name);
+  }
+  /**
+   * Directly calling this function is not needed for materials because the same material has
+   * three copies for element interior, element side and neighbor side.
+   */
+  virtual const dof_id_type &
+  getElementIDNeighborByName(const std::string & id_parameter_name) const override
+  {
+    mooseError("Directly calling 'getElementIDNeighborByName' is not allowed for materials. Please "
+               "call 'getElementIDByName' instead");
+    return ElementIDInterface::getElementIDNeighborByName(id_parameter_name);
+  }
+
   virtual void computeProperties() override;
 
   ///@{
@@ -82,6 +129,7 @@ public:
   ///@}
 
   using MaterialBase::getGenericZeroMaterialProperty;
+  using MaterialBase::getGenericZeroMaterialPropertyByName;
   using MaterialBase::getZeroMaterialProperty;
 
   virtual bool isBoundaryMaterial() const override { return _bnd; }
@@ -98,6 +146,8 @@ public:
     ELEMENT,
     SUBDOMAIN
   };
+
+  bool ghostable() const override final { return _ghostable; }
 
 protected:
   virtual const MaterialData & materialData() const override { return *_material_data; }
@@ -125,13 +175,19 @@ protected:
 
 private:
   ConstantTypeEnum computeConstantOption();
+
+  /// Whether this material can be computed in a ghosted context. If properties are constant or
+  /// depend only on finite volume variables, then this material can be computed in a ghosted
+  /// context. If properties depend on finite element variables, then this material cannot be
+  /// computed in a ghosted context
+  bool _ghostable;
 };
 
 template <typename T>
 const MaterialProperty<T> &
 Material::getMaterialProperty(const std::string & name)
 {
-  // Check if the supplied parameter is a valid imput parameter key
+  // Check if the supplied parameter is a valid input parameter key
   std::string prop_name = deducePropertyName(name);
 
   // Check if it's just a constant.
@@ -146,7 +202,7 @@ template <typename T>
 const ADMaterialProperty<T> &
 Material::getADMaterialProperty(const std::string & name)
 {
-  // Check if the supplied parameter is a valid imput parameter key
+  // Check if the supplied parameter is a valid input parameter key
   std::string prop_name = deducePropertyName(name);
 
   // Check if it's just a constant.
@@ -161,7 +217,7 @@ template <typename T>
 const MaterialProperty<T> &
 Material::getMaterialPropertyOld(const std::string & name)
 {
-  // Check if the supplied parameter is a valid imput parameter key
+  // Check if the supplied parameter is a valid input parameter key
   std::string prop_name = deducePropertyName(name);
 
   // Check if it's just a constant.
@@ -176,7 +232,7 @@ template <typename T>
 const MaterialProperty<T> &
 Material::getMaterialPropertyOlder(const std::string & name)
 {
-  // Check if the supplied parameter is a valid imput parameter key
+  // Check if the supplied parameter is a valid input parameter key
   std::string prop_name = deducePropertyName(name);
 
   // Check if it's just a constant.

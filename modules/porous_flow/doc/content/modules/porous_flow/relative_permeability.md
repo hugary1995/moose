@@ -69,7 +69,7 @@ Here the cubic is chosen so that its value and derivative match the
 van Genuchten expression at $S=S_{c}$, and so that it is unity at
 $S_{\mathrm{eff}}=1$.
 
-For the non-wetting phase, the van-Genuchten expression is
+For the non-wetting phase, the van Genuchten expression is
 \begin{equation}
 k_{\mathrm{r}} = \sqrt{S_{\mathrm{eff}}} \left(1 - (1 -
 S_{\mathrm{eff}})^{1/m} \right)^{2m} \ .
@@ -116,6 +116,10 @@ k_{\mathrm{r}} = (m + 1)S_{\mathrm{eff}}^{m} - m S_{\mathrm{eff}}^{m + 1}.
 \end{equation}
 This has the distinct advantage over the Corey formulation that its
 derivative is continuous at $S_{\mathrm{eff}}=1$.
+
+## Hysteresis
+
+Hysteretic relative permeability functions are available in PorousFlow.  They are documented [here](hysteresis.md).
 
 
 !bibtex bibliography

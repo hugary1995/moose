@@ -20,6 +20,7 @@
 #include "libmesh/fe_type.h"
 #include "libmesh/point.h"
 #include "libmesh/fe_base.h"
+#include "libmesh/numeric_vector.h"
 
 #include "DualRealOps.h"
 
@@ -71,7 +72,11 @@ class NodeFaceConstraint;
 /// at which to compute the factor.  point and factor can be either Point and
 /// Real or ADPoint and ADReal.
 template <typename P, typename C>
-void coordTransformFactor(SubProblem & s, SubdomainID sub_id, const P & point, C & factor);
+void coordTransformFactor(const SubProblem & s,
+                          SubdomainID sub_id,
+                          const P & point,
+                          C & factor,
+                          SubdomainID neighbor_sub_id = libMesh::Elem::invalid_subdomain_id);
 
 /**
  * Keeps track of stuff related to assembling
@@ -198,6 +203,12 @@ public:
   const MooseArray<Point> & qPoints() const { return _current_q_points; }
 
   /**
+   * Returns the reference to the mortar segment element quadrature points
+   * @return A _reference_.  Make sure to store this as a reference!
+   */
+  const std::vector<Point> & qPointsMortar() const { return _fe_msm->get_xyz(); }
+
+  /**
    * The current points in physical space where we have reinited through reinitAtPhysical()
    * @return A _reference_.  Make sure to store this as a reference!
    */
@@ -282,6 +293,12 @@ public:
    * @return A _reference_.  Make sure to store this as a reference!
    */
   const MooseArray<Point> & normals() const { return _current_normals; }
+
+  /**
+   * Returns the array of neighbor normals for quadrature points on a current side
+   * @return A _reference_.  Make sure to store this as a reference!
+   */
+  const MooseArray<Point> & neighborNormals() const { return _current_neighbor_normals; }
 
   /***
    * Returns the array of normals for quadrature points on a current side
@@ -388,6 +405,22 @@ public:
    * @return A _reference_.  Make sure to store this as a reference!
    */
   const Elem * const & lowerDElem() const { return _current_lower_d_elem; }
+
+  /**
+   * Return the neighboring lower dimensional element
+   * @return A _reference_.  Make sure to store this as a reference!
+   */
+  const Elem * const & neighborLowerDElem() const { return _current_neighbor_lower_d_elem; }
+
+  /*
+   * @return The current lower-dimensional element volume
+   */
+  const Real & lowerDElemVolume() const { return _current_lower_d_elem_volume; }
+
+  /*
+   * @return The current neighbor lower-dimensional element volume
+   */
+  const Real & neighborLowerDElemVolume() const { return _current_neighbor_lower_d_elem_volume; }
 
   /**
    * Return the current subdomain ID
@@ -548,6 +581,11 @@ public:
                         const std::vector<Real> * const weights = nullptr);
 
   /**
+   * reinitialize a neighboring lower dimensional element
+   */
+  void reinitNeighborLowerDElem(const Elem * elem);
+
+  /**
    * reinitialize a mortar segment mesh element in order to get a proper JxW
    */
   void reinitMortarElem(const Elem * elem);
@@ -668,15 +706,15 @@ public:
   void prepareOffDiagScalar();
 
   template <typename T>
-  void copyShapes(MooseVariableFE<T> & v);
+  void copyShapes(MooseVariableField<T> & v);
   void copyShapes(unsigned int var);
 
   template <typename T>
-  void copyFaceShapes(MooseVariableFE<T> & v);
+  void copyFaceShapes(MooseVariableField<T> & v);
   void copyFaceShapes(unsigned int var);
 
   template <typename T>
-  void copyNeighborShapes(MooseVariableFE<T> & v);
+  void copyNeighborShapes(MooseVariableField<T> & v);
   void copyNeighborShapes(unsigned int var);
 
   /**
@@ -709,7 +747,7 @@ public:
    * @param value The value of the residual contribution.
    * @param TagID  the contribution should go to the tagged residual
    */
-  void cacheResidualContribution(dof_id_type dof, Real value, TagID tag_id);
+  void cacheResidual(dof_id_type dof, Real value, TagID tag_id);
 
   /**
    * Cache individual residual contributions.  These will ultimately get added to the residual when
@@ -718,6 +756,16 @@ public:
    * @param dof The degree of freedom to add the residual contribution to
    * @param value The value of the residual contribution.
    * @param tags the contribution should go to all tags
+   */
+  void cacheResidual(dof_id_type dof, Real value, const std::set<TagID> & tags);
+
+  /**
+   * Deperecated method. Use \p cacheResidual
+   */
+  void cacheResidualContribution(dof_id_type dof, Real value, TagID tag_id);
+
+  /**
+   * Deperecated method. Use \p cacheResidual
    */
   void cacheResidualContribution(dof_id_type dof, Real value, const std::set<TagID> & tags);
 
@@ -834,11 +882,14 @@ public:
                                 const std::vector<dof_id_type> & jdof_indices);
 
   /**
-   * Add LowerLower, LowerSecondary (LowerElement), LowerPrimary (LowerNeighbor), SecondaryLower
-   * (ElementLower), and PrimaryLower (NeighborLower) portions of the Jacobian for compute objects
-   * like MortarConstraints
+   * Add *all* portions of the Jacobian, e.g. LowerLower, LowerSecondary, LowerPrimary,
+   * SecondaryLower, SecondarySecondary, SecondaryPrimary, PrimaryLower, PrimarySecondary,
+   * PrimaryPrimary for mortar-like objects. Primary indicates the interior parent element on the
+   * primary side of the mortar interface. Secondary indicates the interior parent element on the
+   * secondary side of the interface. Lower denotes the lower-dimensional element living on the
+   * secondary side of the mortar interface; it's the boundary face of the \p Secondary element.
    */
-  void addJacobianLower();
+  void addJacobianMortar();
 
   /**
    * Adds three neighboring element matrices for ivar rows and jvar columns to the global Jacobian
@@ -914,7 +965,7 @@ public:
    */
   DenseMatrix<Number> & jacobianBlock(unsigned int ivar, unsigned int jvar, TagID tag = 0)
   {
-    _jacobian_block_used[tag][ivar][jvar] = 1;
+    jacobianBlockUsed(tag, ivar, jvar, true);
     return _sub_Kee[tag][ivar][_block_diagonal_matrix ? 0 : jvar];
   }
 
@@ -923,7 +974,7 @@ public:
    */
   DenseMatrix<Number> & jacobianBlockNonlocal(unsigned int ivar, unsigned int jvar, TagID tag = 0)
   {
-    _jacobian_block_nonlocal_used[tag][ivar][jvar] = 1;
+    jacobianBlockNonlocalUsed(tag, ivar, jvar, true);
     return _sub_Keg[tag][ivar][_block_diagonal_matrix ? 0 : jvar];
   }
 
@@ -936,12 +987,15 @@ public:
                                               TagID tag = 0);
 
   /**
-   * Returns the jacobian block for the given mortar Jacobian type
+   * Returns the jacobian block for the given mortar Jacobian type. This jacobian block can involve
+   * degrees of freedom from the secondary side interior parent, the primary side
+   * interior parent, or the lower-dimensional element (located on the secondary
+   * side)
    */
-  DenseMatrix<Number> & jacobianBlockLower(Moose::ConstraintJacobianType type,
-                                           unsigned int ivar,
-                                           unsigned int jvar,
-                                           TagID tag = 0);
+  DenseMatrix<Number> & jacobianBlockMortar(Moose::ConstraintJacobianType type,
+                                            unsigned int ivar,
+                                            unsigned int jvar,
+                                            TagID tag = 0);
 
   void cacheJacobianBlock(DenseMatrix<Number> & jac_block,
                           const std::vector<dof_id_type> & idof_indices,
@@ -950,6 +1004,11 @@ public:
                           TagID tag = 0);
 
   std::vector<std::pair<MooseVariableFieldBase *, MooseVariableFieldBase *>> & couplingEntries()
+  {
+    return _cm_ff_entry;
+  }
+  const std::vector<std::pair<MooseVariableFieldBase *, MooseVariableFieldBase *>> &
+  couplingEntries() const
   {
     return _cm_ff_entry;
   }
@@ -966,195 +1025,260 @@ public:
   {
     return _ad_grad_phi_data.at(v.feType());
   }
-  const VariablePhiValue & phi(const MooseVariable &) const { return _phi; }
+  const VariablePhiValue & phi(const MooseVariableField<Real> &) const { return _phi; }
   const VariablePhiGradient & gradPhi() const { return _grad_phi; }
-  const VariablePhiGradient & gradPhi(const MooseVariable &) const { return _grad_phi; }
+  const VariablePhiGradient & gradPhi(const MooseVariableField<Real> &) const { return _grad_phi; }
   const VariablePhiSecond & secondPhi() const { return _second_phi; }
-  const VariablePhiSecond & secondPhi(const MooseVariable &) const { return _second_phi; }
+  const VariablePhiSecond & secondPhi(const MooseVariableField<Real> &) const
+  {
+    return _second_phi;
+  }
 
   const VariablePhiValue & phiFace() const { return _phi_face; }
-  const VariablePhiValue & phiFace(const MooseVariable &) const { return _phi_face; }
+  const VariablePhiValue & phiFace(const MooseVariableField<Real> &) const { return _phi_face; }
   const VariablePhiGradient & gradPhiFace() const { return _grad_phi_face; }
-  const VariablePhiGradient & gradPhiFace(const MooseVariable &) const { return _grad_phi_face; }
-  const VariablePhiSecond & secondPhiFace(const MooseVariable &) const { return _second_phi_face; }
+  const VariablePhiGradient & gradPhiFace(const MooseVariableField<Real> &) const
+  {
+    return _grad_phi_face;
+  }
+  const VariablePhiSecond & secondPhiFace(const MooseVariableField<Real> &) const
+  {
+    return _second_phi_face;
+  }
 
-  const VariablePhiValue & phiNeighbor(const MooseVariable &) const { return _phi_neighbor; }
-  const VariablePhiGradient & gradPhiNeighbor(const MooseVariable &) const
+  const VariablePhiValue & phiNeighbor(const MooseVariableField<Real> &) const
+  {
+    return _phi_neighbor;
+  }
+  const VariablePhiGradient & gradPhiNeighbor(const MooseVariableField<Real> &) const
   {
     return _grad_phi_neighbor;
   }
-  const VariablePhiSecond & secondPhiNeighbor(const MooseVariable &) const
+  const VariablePhiSecond & secondPhiNeighbor(const MooseVariableField<Real> &) const
   {
     return _second_phi_neighbor;
   }
 
-  const VariablePhiValue & phiFaceNeighbor(const MooseVariable &) const
+  const VariablePhiValue & phiFaceNeighbor(const MooseVariableField<Real> &) const
   {
     return _phi_face_neighbor;
   }
-  const VariablePhiGradient & gradPhiFaceNeighbor(const MooseVariable &) const
+  const VariablePhiGradient & gradPhiFaceNeighbor(const MooseVariableField<Real> &) const
   {
     return _grad_phi_face_neighbor;
   }
-  const VariablePhiSecond & secondPhiFaceNeighbor(const MooseVariable &) const
+  const VariablePhiSecond & secondPhiFaceNeighbor(const MooseVariableField<Real> &) const
   {
     return _second_phi_face_neighbor;
   }
 
-  const VectorVariablePhiValue & phi(const VectorMooseVariable &) const { return _vector_phi; }
-  const VectorVariablePhiGradient & gradPhi(const VectorMooseVariable &) const
+  const VectorVariablePhiValue & phi(const MooseVariableField<RealVectorValue> &) const
+  {
+    return _vector_phi;
+  }
+  const VectorVariablePhiGradient & gradPhi(const MooseVariableField<RealVectorValue> &) const
   {
     return _vector_grad_phi;
   }
-  const VectorVariablePhiSecond & secondPhi(const VectorMooseVariable &) const
+  const VectorVariablePhiSecond & secondPhi(const MooseVariableField<RealVectorValue> &) const
   {
     return _vector_second_phi;
   }
-  const VectorVariablePhiCurl & curlPhi(const VectorMooseVariable &) const
+  const VectorVariablePhiCurl & curlPhi(const MooseVariableField<RealVectorValue> &) const
   {
     return _vector_curl_phi;
   }
 
-  const VectorVariablePhiValue & phiFace(const VectorMooseVariable &) const
+  const VectorVariablePhiValue & phiFace(const MooseVariableField<RealVectorValue> &) const
   {
     return _vector_phi_face;
   }
-  const VectorVariablePhiGradient & gradPhiFace(const VectorMooseVariable &) const
+  const VectorVariablePhiGradient & gradPhiFace(const MooseVariableField<RealVectorValue> &) const
   {
     return _vector_grad_phi_face;
   }
-  const VectorVariablePhiSecond & secondPhiFace(const VectorMooseVariable &) const
+  const VectorVariablePhiSecond & secondPhiFace(const MooseVariableField<RealVectorValue> &) const
   {
     return _vector_second_phi_face;
   }
-  const VectorVariablePhiCurl & curlPhiFace(const VectorMooseVariable &) const
+  const VectorVariablePhiCurl & curlPhiFace(const MooseVariableField<RealVectorValue> &) const
   {
     return _vector_curl_phi_face;
   }
 
-  const VectorVariablePhiValue & phiNeighbor(const VectorMooseVariable &) const
+  const VectorVariablePhiValue & phiNeighbor(const MooseVariableField<RealVectorValue> &) const
   {
     return _vector_phi_neighbor;
   }
-  const VectorVariablePhiGradient & gradPhiNeighbor(const VectorMooseVariable &) const
+  const VectorVariablePhiGradient &
+  gradPhiNeighbor(const MooseVariableField<RealVectorValue> &) const
   {
     return _vector_grad_phi_neighbor;
   }
-  const VectorVariablePhiSecond & secondPhiNeighbor(const VectorMooseVariable &) const
+  const VectorVariablePhiSecond &
+  secondPhiNeighbor(const MooseVariableField<RealVectorValue> &) const
   {
     return _vector_second_phi_neighbor;
   }
-  const VectorVariablePhiCurl & curlPhiNeighbor(const VectorMooseVariable &) const
+  const VectorVariablePhiCurl & curlPhiNeighbor(const MooseVariableField<RealVectorValue> &) const
   {
     return _vector_curl_phi_neighbor;
   }
 
-  const VectorVariablePhiValue & phiFaceNeighbor(const VectorMooseVariable &) const
+  const VectorVariablePhiValue & phiFaceNeighbor(const MooseVariableField<RealVectorValue> &) const
   {
     return _vector_phi_face_neighbor;
   }
-  const VectorVariablePhiGradient & gradPhiFaceNeighbor(const VectorMooseVariable &) const
+  const VectorVariablePhiGradient &
+  gradPhiFaceNeighbor(const MooseVariableField<RealVectorValue> &) const
   {
     return _vector_grad_phi_face_neighbor;
   }
-  const VectorVariablePhiSecond & secondPhiFaceNeighbor(const VectorMooseVariable &) const
+  const VectorVariablePhiSecond &
+  secondPhiFaceNeighbor(const MooseVariableField<RealVectorValue> &) const
   {
     return _vector_second_phi_face_neighbor;
   }
-  const VectorVariablePhiCurl & curlPhiFaceNeighbor(const VectorMooseVariable &) const
+  const VectorVariablePhiCurl &
+  curlPhiFaceNeighbor(const MooseVariableField<RealVectorValue> &) const
   {
     return _vector_curl_phi_face_neighbor;
   }
 
   // Writeable references
-  VariablePhiValue & phi(const MooseVariable &) { return _phi; }
-  VariablePhiGradient & gradPhi(const MooseVariable &) { return _grad_phi; }
-  VariablePhiSecond & secondPhi(const MooseVariable &) { return _second_phi; }
+  VariablePhiValue & phi(const MooseVariableField<Real> &) { return _phi; }
+  VariablePhiGradient & gradPhi(const MooseVariableField<Real> &) { return _grad_phi; }
+  VariablePhiSecond & secondPhi(const MooseVariableField<Real> &) { return _second_phi; }
 
-  VariablePhiValue & phiFace(const MooseVariable &) { return _phi_face; }
-  VariablePhiGradient & gradPhiFace(const MooseVariable &) { return _grad_phi_face; }
-  VariablePhiSecond & secondPhiFace(const MooseVariable &) { return _second_phi_face; }
+  VariablePhiValue & phiFace(const MooseVariableField<Real> &) { return _phi_face; }
+  VariablePhiGradient & gradPhiFace(const MooseVariableField<Real> &) { return _grad_phi_face; }
+  VariablePhiSecond & secondPhiFace(const MooseVariableField<Real> &) { return _second_phi_face; }
 
-  VariablePhiValue & phiNeighbor(const MooseVariable &) { return _phi_neighbor; }
-  VariablePhiGradient & gradPhiNeighbor(const MooseVariable &) { return _grad_phi_neighbor; }
-  VariablePhiSecond & secondPhiNeighbor(const MooseVariable &) { return _second_phi_neighbor; }
+  VariablePhiValue & phiNeighbor(const MooseVariableField<Real> &) { return _phi_neighbor; }
+  VariablePhiGradient & gradPhiNeighbor(const MooseVariableField<Real> &)
+  {
+    return _grad_phi_neighbor;
+  }
+  VariablePhiSecond & secondPhiNeighbor(const MooseVariableField<Real> &)
+  {
+    return _second_phi_neighbor;
+  }
 
-  VariablePhiValue & phiFaceNeighbor(const MooseVariable &) { return _phi_face_neighbor; }
-  VariablePhiGradient & gradPhiFaceNeighbor(const MooseVariable &)
+  VariablePhiValue & phiFaceNeighbor(const MooseVariableField<Real> &)
+  {
+    return _phi_face_neighbor;
+  }
+  VariablePhiGradient & gradPhiFaceNeighbor(const MooseVariableField<Real> &)
   {
     return _grad_phi_face_neighbor;
   }
-  VariablePhiSecond & secondPhiFaceNeighbor(const MooseVariable &)
+  VariablePhiSecond & secondPhiFaceNeighbor(const MooseVariableField<Real> &)
   {
     return _second_phi_face_neighbor;
   }
 
   // Writeable references with vector variable
-  VectorVariablePhiValue & phi(const VectorMooseVariable &) { return _vector_phi; }
-  VectorVariablePhiGradient & gradPhi(const VectorMooseVariable &) { return _vector_grad_phi; }
-  VectorVariablePhiSecond & secondPhi(const VectorMooseVariable &) { return _vector_second_phi; }
-  VectorVariablePhiCurl & curlPhi(const VectorMooseVariable &) { return _vector_curl_phi; }
+  VectorVariablePhiValue & phi(const MooseVariableField<RealVectorValue> &) { return _vector_phi; }
+  VectorVariablePhiGradient & gradPhi(const MooseVariableField<RealVectorValue> &)
+  {
+    return _vector_grad_phi;
+  }
+  VectorVariablePhiSecond & secondPhi(const MooseVariableField<RealVectorValue> &)
+  {
+    return _vector_second_phi;
+  }
+  VectorVariablePhiCurl & curlPhi(const MooseVariableField<RealVectorValue> &)
+  {
+    return _vector_curl_phi;
+  }
 
-  VectorVariablePhiValue & phiFace(const VectorMooseVariable &) { return _vector_phi_face; }
-  VectorVariablePhiGradient & gradPhiFace(const VectorMooseVariable &)
+  VectorVariablePhiValue & phiFace(const MooseVariableField<RealVectorValue> &)
+  {
+    return _vector_phi_face;
+  }
+  VectorVariablePhiGradient & gradPhiFace(const MooseVariableField<RealVectorValue> &)
   {
     return _vector_grad_phi_face;
   }
-  VectorVariablePhiSecond & secondPhiFace(const VectorMooseVariable &)
+  VectorVariablePhiSecond & secondPhiFace(const MooseVariableField<RealVectorValue> &)
   {
     return _vector_second_phi_face;
   }
-  VectorVariablePhiCurl & curlPhiFace(const VectorMooseVariable &) { return _vector_curl_phi_face; }
+  VectorVariablePhiCurl & curlPhiFace(const MooseVariableField<RealVectorValue> &)
+  {
+    return _vector_curl_phi_face;
+  }
 
-  VectorVariablePhiValue & phiNeighbor(const VectorMooseVariable &) { return _vector_phi_neighbor; }
-  VectorVariablePhiGradient & gradPhiNeighbor(const VectorMooseVariable &)
+  VectorVariablePhiValue & phiNeighbor(const MooseVariableField<RealVectorValue> &)
+  {
+    return _vector_phi_neighbor;
+  }
+  VectorVariablePhiGradient & gradPhiNeighbor(const MooseVariableField<RealVectorValue> &)
   {
     return _vector_grad_phi_neighbor;
   }
-  VectorVariablePhiSecond & secondPhiNeighbor(const VectorMooseVariable &)
+  VectorVariablePhiSecond & secondPhiNeighbor(const MooseVariableField<RealVectorValue> &)
   {
     return _vector_second_phi_neighbor;
   }
-  VectorVariablePhiCurl & curlPhiNeighbor(const VectorMooseVariable &)
+  VectorVariablePhiCurl & curlPhiNeighbor(const MooseVariableField<RealVectorValue> &)
   {
     return _vector_curl_phi_neighbor;
   }
-  VectorVariablePhiValue & phiFaceNeighbor(const VectorMooseVariable &)
+  VectorVariablePhiValue & phiFaceNeighbor(const MooseVariableField<RealVectorValue> &)
   {
     return _vector_phi_face_neighbor;
   }
-  VectorVariablePhiGradient & gradPhiFaceNeighbor(const VectorMooseVariable &)
+  VectorVariablePhiGradient & gradPhiFaceNeighbor(const MooseVariableField<RealVectorValue> &)
   {
     return _vector_grad_phi_face_neighbor;
   }
-  VectorVariablePhiSecond & secondPhiFaceNeighbor(const VectorMooseVariable &)
+  VectorVariablePhiSecond & secondPhiFaceNeighbor(const MooseVariableField<RealVectorValue> &)
   {
     return _vector_second_phi_face_neighbor;
   }
-  VectorVariablePhiCurl & curlPhiFaceNeighbor(const VectorMooseVariable &)
+  VectorVariablePhiCurl & curlPhiFaceNeighbor(const MooseVariableField<RealVectorValue> &)
   {
     return _vector_curl_phi_face_neighbor;
   }
 
   // Writeable references with array variable
-  VariablePhiValue & phi(const ArrayMooseVariable &) { return _phi; }
-  VariablePhiGradient & gradPhi(const ArrayMooseVariable &) { return _grad_phi; }
-  VariablePhiSecond & secondPhi(const ArrayMooseVariable &) { return _second_phi; }
+  VariablePhiValue & phi(const MooseVariableField<RealEigenVector> &) { return _phi; }
+  VariablePhiGradient & gradPhi(const MooseVariableField<RealEigenVector> &) { return _grad_phi; }
+  VariablePhiSecond & secondPhi(const MooseVariableField<RealEigenVector> &) { return _second_phi; }
 
-  VariablePhiValue & phiFace(const ArrayMooseVariable &) { return _phi_face; }
-  VariablePhiGradient & gradPhiFace(const ArrayMooseVariable &) { return _grad_phi_face; }
-  VariablePhiSecond & secondPhiFace(const ArrayMooseVariable &) { return _second_phi_face; }
+  VariablePhiValue & phiFace(const MooseVariableField<RealEigenVector> &) { return _phi_face; }
+  VariablePhiGradient & gradPhiFace(const MooseVariableField<RealEigenVector> &)
+  {
+    return _grad_phi_face;
+  }
+  VariablePhiSecond & secondPhiFace(const MooseVariableField<RealEigenVector> &)
+  {
+    return _second_phi_face;
+  }
 
-  VariablePhiValue & phiNeighbor(const ArrayMooseVariable &) { return _phi_neighbor; }
-  VariablePhiGradient & gradPhiNeighbor(const ArrayMooseVariable &) { return _grad_phi_neighbor; }
-  VariablePhiSecond & secondPhiNeighbor(const ArrayMooseVariable &) { return _second_phi_neighbor; }
+  VariablePhiValue & phiNeighbor(const MooseVariableField<RealEigenVector> &)
+  {
+    return _phi_neighbor;
+  }
+  VariablePhiGradient & gradPhiNeighbor(const MooseVariableField<RealEigenVector> &)
+  {
+    return _grad_phi_neighbor;
+  }
+  VariablePhiSecond & secondPhiNeighbor(const MooseVariableField<RealEigenVector> &)
+  {
+    return _second_phi_neighbor;
+  }
 
-  VariablePhiValue & phiFaceNeighbor(const ArrayMooseVariable &) { return _phi_face_neighbor; }
-  VariablePhiGradient & gradPhiFaceNeighbor(const ArrayMooseVariable &)
+  VariablePhiValue & phiFaceNeighbor(const MooseVariableField<RealEigenVector> &)
+  {
+    return _phi_face_neighbor;
+  }
+  VariablePhiGradient & gradPhiFaceNeighbor(const MooseVariableField<RealEigenVector> &)
   {
     return _grad_phi_face_neighbor;
   }
-  VariablePhiSecond & secondPhiFaceNeighbor(const ArrayMooseVariable &)
+  VariablePhiSecond & secondPhiFaceNeighbor(const MooseVariableField<RealEigenVector> &)
   {
     return _second_phi_face_neighbor;
   }
@@ -1314,9 +1438,30 @@ public:
    * dof_id_type) since that is what the SparseMatrix interface uses,
    * but at the time of this writing, those two types are equivalent.
    */
+  void cacheJacobian(numeric_index_type i, numeric_index_type j, Real value, TagID tag = 0);
+
+  /**
+   * Caches the Jacobian entry 'value', to eventually be
+   * added/set in the (i,j) location of the matrices in corresponding to \p tags.
+   *
+   * We use numeric_index_type for the index arrays (rather than
+   * dof_id_type) since that is what the SparseMatrix interface uses,
+   * but at the time of this writing, those two types are equivalent.
+   */
+  void cacheJacobian(numeric_index_type i,
+                     numeric_index_type j,
+                     Real value,
+                     const std::set<TagID> & tags);
+
+  /**
+   * Deprecated method. Use cacheJacobian instead
+   */
   void
   cacheJacobianContribution(numeric_index_type i, numeric_index_type j, Real value, TagID tag = 0);
 
+  /**
+   * Deprecated method. Use cacheJacobian instead
+   */
   void cacheJacobianContribution(numeric_index_type i,
                                  numeric_index_type j,
                                  Real value,
@@ -1325,15 +1470,25 @@ public:
   /**
    * Sets previously-cached Jacobian values via SparseMatrix::set() calls.
    */
+  void setCachedJacobian();
+
+  /**
+   * Deprecated. Use \p setCachedJacobian instead
+   */
   void setCachedJacobianContributions();
 
   /**
    * Zero out previously-cached Jacobian rows.
    */
+  void zeroCachedJacobian();
+
+  /**
+   * Deprecated. Use \p zeroCachedJacobian instead
+   */
   void zeroCachedJacobianContributions();
 
   /**
-   * Adds previously-cached Jacobian values via SparseMatrix::add() calls.
+   * Deprecated. Call \p addCachedJacobian
    */
   void addCachedJacobianContributions();
 
@@ -1455,17 +1610,40 @@ public:
 
   /**
    * Process the \p derivatives() data of an \p ADReal. When using global indexing, this method
-   * simply caches the derivative values for the corresponding column indices for the provided \p
-   * matrix_tags. If not using global indexing, then the user must provide a functor which takes
-   * three arguments: the <tt>ADReal residual</tt> that contains the derivatives to be processed,
-   * the \p row_index corresponding to the row index of the matrices that values should be added to,
-   * and the \p matrix_tags specifying the matrices that will  be added into
+   * simply caches the derivative values for the corresponding column indices for the provided
+   * \p matrix_tags. If not using global indexing, then the user must provide a functor which
+   * takes three arguments: the <tt>ADReal residual</tt> that contains the derivatives to be
+   * processed, the \p row_index corresponding to the row index of the matrices that values
+   * should be added to, and the \p matrix_tags specifying the matrices that will  be added into
    */
   template <typename LocalFunctor>
   void processDerivatives(const ADReal & residual,
                           dof_id_type dof_index,
                           const std::set<TagID> & matrix_tags,
                           LocalFunctor & local_functor);
+
+  /**
+   * Process the \p derivatives() data of a vector of \p ADReals. When using global indexing, this
+   * method simply caches the derivative values for the corresponding column indices for the
+   * provided \p matrix_tags. If not using global indexing, then the user must provide a functor
+   * which takes three arguments: the <tt>std::vector<ADReal> residuals</tt> that contains the
+   * derivatives to be processed, the <tt>std::vector<dof_id_type>row_indices</tt> corresponding to
+   * the row indices of the matrices that values should be added to, and the \p matrix_tags
+   * specifying the matrices that will  be added into
+   */
+  template <typename LocalFunctor>
+  void processDerivatives(const std::vector<ADReal> & residuals,
+                          const std::vector<dof_id_type> & row_indices,
+                          const std::set<TagID> & matrix_tags,
+                          LocalFunctor & local_functor);
+
+#ifdef MOOSE_GLOBAL_AD_INDEXING
+  /**
+   * signals this object that a vector containing variable scaling factors should be used when doing
+   * residual and matrix assembly
+   */
+  void hasScalingVector();
+#endif
 
 protected:
   /**
@@ -1572,10 +1750,14 @@ protected:
   void addJacobianCoupledVarPair(const MooseVariableBase & ivar, const MooseVariableBase & jvar);
 
   /**
-   * Clear any currently cached jacobian contributions
+   * Clear any currently cached jacobians
    *
-   * This is automatically called by setCachedJacobianContributions and
-   * addCachedJacobianContributions
+   * This is automatically called by setCachedJacobian
+   */
+  void clearCachedJacobian();
+
+  /**
+   * Deprecated. Call \p clearCachedJacobian
    */
   void clearCachedJacobianContributions();
 
@@ -1688,6 +1870,78 @@ private:
    */
   void buildVectorLowerDFE(FEType type) const;
   void buildVectorDualLowerDFE(FEType type) const;
+
+  /**
+   * Sets whether or not Jacobian coupling between \p ivar and \p jvar is used
+   * to the value \p used
+   */
+  void jacobianBlockUsed(TagID tag, unsigned int ivar, unsigned int jvar, bool used)
+  {
+    _jacobian_block_used[tag][ivar][_block_diagonal_matrix ? 0 : jvar] = used;
+  }
+
+  /**
+   * Return a flag to indicate if a particular coupling Jacobian block
+   * between \p ivar and \p jvar is used
+   */
+  char jacobianBlockUsed(TagID tag, unsigned int ivar, unsigned int jvar) const
+  {
+    return _jacobian_block_used[tag][ivar][_block_diagonal_matrix ? 0 : jvar];
+  }
+
+  /**
+   * Sets whether or not neighbor Jacobian coupling between \p ivar and \p jvar is used
+   * to the value \p used
+   */
+  void jacobianBlockNeighborUsed(TagID tag, unsigned int ivar, unsigned int jvar, bool used)
+  {
+    _jacobian_block_neighbor_used[tag][ivar][_block_diagonal_matrix ? 0 : jvar] = used;
+  }
+
+  /**
+   * Return a flag to indicate if a particular coupling neighbor Jacobian block
+   * between \p ivar and \p jvar is used
+   */
+  char jacobianBlockNeighborUsed(TagID tag, unsigned int ivar, unsigned int jvar) const
+  {
+    return _jacobian_block_neighbor_used[tag][ivar][_block_diagonal_matrix ? 0 : jvar];
+  }
+
+  /**
+   * Sets whether or not lower Jacobian coupling between \p ivar and \p jvar is used
+   * to the value \p used
+   */
+  void jacobianBlockLowerUsed(TagID tag, unsigned int ivar, unsigned int jvar, bool used)
+  {
+    _jacobian_block_lower_used[tag][ivar][_block_diagonal_matrix ? 0 : jvar] = used;
+  }
+
+  /**
+   * Return a flag to indicate if a particular coupling lower Jacobian block
+   * between \p ivar and \p jvar is used
+   */
+  char jacobianBlockLowerUsed(TagID tag, unsigned int ivar, unsigned int jvar) const
+  {
+    return _jacobian_block_lower_used[tag][ivar][_block_diagonal_matrix ? 0 : jvar];
+  }
+
+  /**
+   * Sets whether or not nonlocal Jacobian coupling between \p ivar and \p jvar is used
+   * to the value \p used
+   */
+  void jacobianBlockNonlocalUsed(TagID tag, unsigned int ivar, unsigned int jvar, bool used)
+  {
+    _jacobian_block_nonlocal_used[tag][ivar][_block_diagonal_matrix ? 0 : jvar] = used;
+  }
+
+  /**
+   * Return a flag to indicate if a particular coupling nonlocal Jacobian block
+   * between \p ivar and \p jvar is used
+   */
+  char jacobianBlockNonlocalUsed(TagID tag, unsigned int ivar, unsigned int jvar) const
+  {
+    return _jacobian_block_nonlocal_used[tag][ivar][_block_diagonal_matrix ? 0 : jvar];
+  }
 
   SystemBase & _sys;
   SubProblem & _subproblem;
@@ -1866,6 +2120,8 @@ private:
   MooseArray<Real> _current_JxW_face;
   /// The current Normal vectors at the quadrature points.
   MooseArray<Point> _current_normals;
+  /// The current neighbor Normal vectors at the quadrature points.
+  MooseArray<Point> _current_neighbor_normals;
   /// Mapped normals
   std::vector<Eigen::Map<RealDIMValue>> _mapped_normals;
   /// The current tangent vectors at the quadrature points
@@ -1982,6 +2238,12 @@ protected:
 
   /// The current lower dimensional element
   const Elem * _current_lower_d_elem;
+  /// The current neighboring lower dimensional element
+  const Elem * _current_neighbor_lower_d_elem;
+  /// The current lower dimensional element volume
+  Real _current_lower_d_elem_volume;
+  /// The current neighboring lower dimensional element volume
+  Real _current_neighbor_lower_d_elem_volume;
 
   /// This will be filled up with the physical points passed into reinitAtPhysical() if it is called.  Invalid at all other times.
   MooseArray<Point> _current_physical_points;
@@ -2158,13 +2420,6 @@ protected:
   /// Temporary work data for reinitAtPhysical()
   std::vector<Point> _temp_reference_points;
 
-  /**
-   * Storage for cached Jacobian entries
-   */
-  std::vector<std::vector<Real>> _cached_jacobian_contribution_vals;
-  std::vector<std::vector<numeric_index_type>> _cached_jacobian_contribution_rows;
-  std::vector<std::vector<numeric_index_type>> _cached_jacobian_contribution_cols;
-
   /// AD quantities
   std::vector<VectorValue<DualReal>> _ad_dxyzdxi_map;
   std::vector<VectorValue<DualReal>> _ad_dxyzdeta_map;
@@ -2204,6 +2459,11 @@ protected:
   mutable std::map<FEType, bool> _need_second_derivative;
   mutable std::map<FEType, bool> _need_second_derivative_neighbor;
   mutable std::map<FEType, bool> _need_curl;
+
+#ifdef MOOSE_GLOBAL_AD_INDEXING
+  /// The map from global index to variable scaling factor
+  const NumericVector<Real> * _scaling_vector = nullptr;
+#endif
 };
 
 template <typename OutputType>
@@ -2342,7 +2602,7 @@ Assembly::adGradPhi<RealVectorValue>(const MooseVariableFE<RealVectorValue> & v)
 template <typename LocalFunctor>
 void
 Assembly::processDerivatives(const ADReal & residual,
-                             dof_id_type row_index,
+                             const dof_id_type row_index,
                              const std::set<TagID> & matrix_tags,
                              LocalFunctor &
 #ifndef MOOSE_GLOBAL_AD_INDEXING
@@ -2358,9 +2618,68 @@ Assembly::processDerivatives(const ADReal & residual,
 
   mooseAssert(column_indices.size() == values.size(), "Indices and values size must be the same");
 
+  const Real scalar = _scaling_vector ? (*_scaling_vector)(row_index) : 1.;
+
   for (std::size_t i = 0; i < column_indices.size(); ++i)
-    cacheJacobianContribution(row_index, column_indices[i], values[i], matrix_tags);
+    cacheJacobian(row_index, column_indices[i], values[i] * scalar, matrix_tags);
+
 #else
   local_functor(residual, row_index, matrix_tags);
+#endif
+}
+
+template <typename LocalFunctor>
+void
+Assembly::processDerivatives(const std::vector<ADReal> & residuals,
+                             const std::vector<dof_id_type> & input_row_indices,
+                             const std::set<TagID> & matrix_tags,
+                             LocalFunctor &
+#ifndef MOOSE_GLOBAL_AD_INDEXING
+                                 local_functor
+#endif
+)
+{
+#ifdef MOOSE_GLOBAL_AD_INDEXING
+  // Need to make a copy because we might modify this in constrain_element_matrix
+  std::vector<dof_id_type> row_indices = input_row_indices;
+
+  mooseAssert(residuals.size() == row_indices.size(),
+              "The number of residuals should match the number of dof indices");
+  mooseAssert(residuals.size() >= 1, "Why you calling me with no residuals?");
+
+  const auto & compare_dofs = residuals[0].derivatives().nude_indices();
+#ifndef NDEBUG
+  auto compare_dofs_set = std::set<dof_id_type>(compare_dofs.begin(), compare_dofs.end());
+
+  for (auto resid_it = residuals.begin() + 1; resid_it != residuals.end(); ++resid_it)
+  {
+    auto current_dofs_set = std::set<dof_id_type>(resid_it->derivatives().nude_indices().begin(),
+                                                  resid_it->derivatives().nude_indices().end());
+    mooseAssert(compare_dofs_set == current_dofs_set,
+                "We're going to see whether the dof sets are the same");
+  }
+#endif
+  auto column_indices = std::vector<dof_id_type>(compare_dofs.begin(), compare_dofs.end());
+
+  DenseMatrix<Number> element_matrix(row_indices.size(), column_indices.size());
+  for (const auto i : index_range(row_indices))
+  {
+    const auto row_index = row_indices[i];
+    const Real scalar = _scaling_vector ? (*_scaling_vector)(row_index) : 1.;
+
+    const auto & sparse_derivatives = residuals[i].derivatives();
+
+    for (const auto j : index_range(column_indices))
+      element_matrix(i, j) = sparse_derivatives[column_indices[j]] * scalar;
+  }
+
+  _dof_map.constrain_element_matrix(element_matrix, row_indices, column_indices);
+
+  for (const auto i : index_range(row_indices))
+    for (const auto j : index_range(column_indices))
+      cacheJacobian(row_indices[i], column_indices[j], element_matrix(i, j), matrix_tags);
+
+#else
+  local_functor(residuals, input_row_indices, matrix_tags);
 #endif
 }

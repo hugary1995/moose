@@ -19,7 +19,7 @@ t_N g = 0.
 \end{equation*}
 
 
-That is, the penetration distance (typically referred to as the gap $g$ in the contact literature) of one of the body into another must not be positive; the contact force $t_N$ opposing penetration must be positive in the normal direction; and either the penetration distance or the contact force must be zero at all times.  In the MOOSE Contact Module, these contact constraints are enforced through the use of either node/face constraints or by using a mortar method. 
+That is, the penetration distance (typically referred to as the gap $g$ in the contact literature) of one of the body into another must not be positive; the contact force $t_N$ opposing penetration must be positive in the normal direction; and either the penetration distance or the contact force must be zero at all times.  In the MOOSE Contact Module, these contact constraints are enforced through the use of either node/face constraints or by using a mortar method.
 
 [](---)
 
@@ -31,12 +31,31 @@ Contact constraints can be enforced through the use of node/face constraints in 
 
 ## Mortar-Based Mechanical Contact
 
-Models specific for mechanical contact enforcement have been developed based on the MOOSE 
+Models specific for mechanical contact enforcement have been developed based on the MOOSE
 [mortar constraint system](Constraints/index.md), and provide an alternative
 discretization technique for solving mechanical contact. Results of performance studies
-using this approach are summarized in [MortarPerformance](modules/contact/MortarPerformance.md). 
+using this approach are summarized in [MortarPerformance](modules/contact/MortarPerformance.md).
 
 [](---)
+
+!row!
+!col! small=8 medium=4 large=5 icon=device_hub
+
+### Tutorial and examples class=center style=font-weight:200;
+
+!include modules/contact/contact_examples.md
+
+!col-end!
+
+!col! small=8 medium=4 large=5 icon=storage
+
+### Implementation details and analysis class=center style=font-weight:200;
+
+- [Mortar performance](contact/MortarPerformance.md)
+
+
+!col-end!
+!row-end!
 
 ## `Contact` Syntax Block
 

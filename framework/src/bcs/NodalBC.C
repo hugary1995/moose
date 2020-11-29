@@ -112,7 +112,7 @@ NodalBC::computeJacobian()
     // Cache the user's computeQpJacobian() value for later use.
     for (auto tag : _matrix_tags)
       if (_sys.hasMatrix(tag))
-        _fe_problem.assembly(0).cacheJacobianContribution(cached_row, cached_row, cached_val, tag);
+        _fe_problem.assembly(0).cacheJacobian(cached_row, cached_row, cached_val, tag);
 
     if (_has_diag_save_in)
     {
@@ -124,23 +124,28 @@ NodalBC::computeJacobian()
 }
 
 void
-NodalBC::computeOffDiagJacobian(unsigned int jvar)
+NodalBC::computeOffDiagJacobian(const unsigned int jvar_num)
 {
-  if (jvar == _var.number())
+  if (jvar_num == _var.number())
     computeJacobian();
   else
   {
     Real cached_val = 0.0;
-    cached_val = computeQpOffDiagJacobian(jvar);
+    cached_val = computeQpOffDiagJacobian(jvar_num);
+
+    if (cached_val == 0.)
+      // there's no reason to cache this if it's zero, and it can even lead to new nonzero
+      // allocations
+      return;
 
     dof_id_type cached_row = _var.nodalDofIndex();
     // Note: this only works for Lagrange variables...
-    dof_id_type cached_col = _current_node->dof_number(_sys.number(), jvar, 0);
+    dof_id_type cached_col = _current_node->dof_number(_sys.number(), jvar_num, 0);
 
     // Cache the user's computeQpJacobian() value for later use.
     for (auto tag : _matrix_tags)
       if (_sys.hasMatrix(tag))
-        _fe_problem.assembly(0).cacheJacobianContribution(cached_row, cached_col, cached_val, tag);
+        _fe_problem.assembly(0).cacheJacobian(cached_row, cached_col, cached_val, tag);
   }
 }
 

@@ -25,6 +25,18 @@ MOOSE_OPTIONS = {
                     }
                   },
 
+    'ad_indexing_type' : { 're_option' : r'#define\s+MOOSE_GLOBAL_AD_INDEXING\s+(\d+)',
+                           'default'   : 'LOCAL',
+                           'options'   :
+                           { 'GLOBAL'  : '1',
+                             'LOCAL'   : '0'
+                           }
+    },
+
+    'ad_size' : { 're_option' : r'#define\s+MOOSE_AD_MAX_DOFS_PER_ELEM\s+(\d+)',
+                           'default'   : '50'
+    },
+
     'libpng' :    { 're_option' : r'#define\s+MOOSE_HAVE_LIBPNG\s+(\d+)',
                     'default'   : 'FALSE',
                     'options'   :

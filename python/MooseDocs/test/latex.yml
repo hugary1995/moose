@@ -4,7 +4,7 @@ Content:
         content:
             - media/framework/under-construction.png
             - large_media/testing/*
-            - large_media/level_set/vortex_out.gif
+            - large_media/level_set/vortex_out.mp4
             - bib/*
             - contrib/**
             - css/*
@@ -86,7 +86,6 @@ Extensions:
             libMesh: https://libmesh.github.io/
     MooseDocs.extensions.appsyntax:
         executable: ${MOOSE_DIR}/test
-        hide: !include framework/doc/hidden.yml
         remove: !include framework/doc/remove.yml
         includes:
             - framework/include

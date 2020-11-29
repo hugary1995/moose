@@ -1,5 +1,5 @@
 [Tests]
-  issues = '#1695 #1696'
+  issues = '#1695 #1696 #16033'
   design = 'syntax/DiracKernels/index.md'
 
   [dim]
@@ -7,25 +7,33 @@
     [1D]
       type = 'Exodiff'
       input = '1d_point_source.i'
-      exodiff = '1d_point_source_out.e'
+      exodiff = '1d_out.e'
 
       detail = 'in 1D,'
     []
 
     [2D]
       type = 'Exodiff'
-      input = 'constant_point_source_test.i'
-      exodiff = 'out.e'
+      input = '2d_point_source.i'
+      exodiff = '2d_out.e'
 
-      detail = 'in 2D, and'
+      detail = 'in 2D,'
     []
 
     [3D]
       type = 'Exodiff'
       input = '3d_point_source.i'
-      exodiff = '3d_point_source_out.e'
+      exodiff = '3d_out.e'
 
-      detail = 'in 3D.'
+      detail = 'in 3D,'
+    []
+
+    [1Dfv]
+      type = 'Exodiff'
+      input = '1d_point_source_fv.i'
+      exodiff = '1d_fv_out.e'
+
+      detail = 'and with finite volume variables.'
     []
   []
 []

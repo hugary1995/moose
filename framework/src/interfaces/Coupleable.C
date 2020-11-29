@@ -220,14 +220,6 @@ Coupleable::checkVar(const std::string & var_name, unsigned int comp, unsigned i
   // that inherit from the TaggingInterface
   if (_c_parameters.have_parameter<MultiMooseEnum>("vector_tags"))
   {
-    // Are we attempting to couple to an FV var in a non-FV object?
-    if (var->isFV() && !_is_fv)
-      mooseError("Attempting to couple FV variable ",
-                 var->name(),
-                 " into a non-FV object ",
-                 _c_name,
-                 ". This is not currently supported");
-
     // Are we attempting to couple to a non-FV var in an FV object?
     if (!var->isFV() && _is_fv)
       mooseError("Attempting to couple non-FV variable ",
@@ -268,13 +260,13 @@ Coupleable::getVar(const std::string & var_name, unsigned int comp)
 VectorMooseVariable *
 Coupleable::getVectorVar(const std::string & var_name, unsigned int comp)
 {
-  if (_c_nodal)
-    mooseError("Nodal object '",
-               _c_name,
-               "' uses vector variables which are not required to be continuous. Don't use vector "
-               "variables"
-               "with nodal compute objects.");
-  return const_cast<VectorMooseVariable *>(getVarHelper<VectorMooseVariable>(var_name, comp));
+  auto * const var =
+      const_cast<VectorMooseVariable *>(getVarHelper<VectorMooseVariable>(var_name, comp));
+
+  if (_c_nodal && var && var->feType().family != LAGRANGE_VEC)
+    mooseError("Only LAGRANGE_VEC vector variables are defined at nodes");
+
+  return var;
 }
 
 ArrayMooseVariable *
@@ -292,13 +284,12 @@ Coupleable::getVar(const std::string & var_name, unsigned int comp) const
 const VectorMooseVariable *
 Coupleable::getVectorVar(const std::string & var_name, unsigned int comp) const
 {
-  if (_c_nodal)
-    mooseError("Nodal object '",
-               _c_name,
-               "' uses vector variables which are not required to be continuous. Don't use vector "
-               "variables"
-               "with nodal compute objects.");
-  return getVarHelper<VectorMooseVariable>(var_name, comp);
+  const auto * const var = getVarHelper<VectorMooseVariable>(var_name, comp);
+
+  if (_c_nodal && var && var->feType().family != LAGRANGE_VEC)
+    mooseError("Only LAGRANGE_VEC vector variables are defined at nodes");
+
+  return var;
 }
 
 const ArrayMooseVariable *
@@ -449,7 +440,7 @@ Coupleable::coupledGenericValue<true>(const std::string & var_name, unsigned int
 const VariableValue &
 Coupleable::coupledValue(const std::string & var_name, unsigned int comp) const
 {
-  const auto * var = getVar(var_name, comp);
+  const auto * const var = getVarHelper<MooseVariableField<Real>>(var_name, comp);
   if (!var)
     return *getDefaultValue(var_name, comp);
   checkFuncType(var_name, VarType::Ignore, FuncAge::Curr);
@@ -549,8 +540,20 @@ Coupleable::coupledVectorValue(const std::string & var_name, unsigned int comp) 
   checkFuncType(var_name, VarType::Ignore, FuncAge::Curr);
 
   if (!_coupleable_neighbor)
-    return (_c_is_implicit) ? var->sln() : var->slnOld();
-  return (_c_is_implicit) ? var->slnNeighbor() : var->slnOldNeighbor();
+  {
+    if (_c_nodal)
+      return _c_is_implicit ? var->nodalValueArray() : var->nodalValueOldArray();
+    else
+      return _c_is_implicit ? var->sln() : var->slnOld();
+  }
+  else
+  {
+    if (_c_nodal)
+      // Since this is at a node, I don't feel like there should be any "neighbor" logic
+      return _c_is_implicit ? var->nodalValueArray() : var->nodalValueOldArray();
+    else
+      return _c_is_implicit ? var->slnNeighbor() : var->slnOldNeighbor();
+  }
 }
 
 const ArrayVariableValue &
@@ -1019,7 +1022,7 @@ Coupleable::coupledDotDotDu(const std::string & var_name, unsigned int comp) con
 const VariableGradient &
 Coupleable::coupledGradient(const std::string & var_name, unsigned int comp) const
 {
-  const auto * var = getVar(var_name, comp);
+  const auto * const var = getVarHelper<MooseVariableField<Real>>(var_name, comp);
   if (!var)
     return _default_gradient;
   checkFuncType(var_name, VarType::Gradient, FuncAge::Curr);

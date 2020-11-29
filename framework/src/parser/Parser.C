@@ -1056,6 +1056,14 @@ void Parser::setScalarParameter<RealTensorValue, RealTensorValue>(
     bool in_global,
     GlobalParamsAction * global_block);
 
+template <>
+void Parser::setScalarParameter<ReporterName, std::string>(
+    const std::string & full_name,
+    const std::string & short_name,
+    InputParameters::Parameter<ReporterName> * param,
+    bool in_global,
+    GlobalParamsAction * global_block);
+
 // Vectors
 template <>
 void Parser::setVectorParameter<RealVectorValue, RealVectorValue>(
@@ -1094,6 +1102,14 @@ void Parser::setVectorParameter<VariableName, VariableName>(
     const std::string & full_name,
     const std::string & short_name,
     InputParameters::Parameter<std::vector<VariableName>> * param,
+    bool in_global,
+    GlobalParamsAction * global_block);
+
+template <>
+void Parser::setVectorParameter<ReporterName, std::string>(
+    const std::string & full_name,
+    const std::string & short_name,
+    InputParameters::Parameter<std::vector<ReporterName>> * param,
     bool in_global,
     GlobalParamsAction * global_block);
 
@@ -1283,7 +1299,6 @@ Parser::extractParams(const std::string & prefix, InputParameters & p)
       setscalar(TagName, string);
       setscalar(MeshGeneratorName, string);
       setscalar(ExtraElementIDName, string);
-
       setscalar(PostprocessorName, PostprocessorName);
 
       // Moose Compound Scalars
@@ -1295,6 +1310,8 @@ Parser::extractParams(const std::string & prefix, InputParameters & p)
       setscalar(MultiMooseEnum, MultiMooseEnum);
       setscalar(RealTensorValue, RealTensorValue);
       setscalar(ExecFlagEnum, ExecFlagEnum);
+      setscalar(ReporterName, string);
+      setscalar(ReporterValueName, string);
 
       // vector types
       setvector(Real, double);
@@ -1343,6 +1360,8 @@ Parser::extractParams(const std::string & prefix, InputParameters & p)
       setvector(VariableName, VariableName);
       setvector(MeshGeneratorName, string);
       setvector(ExtraElementIDName, string);
+      setvector(ReporterName, string);
+      setvector(ReporterValueName, string);
 
       // Double indexed types
       setvectorvector(Real);
@@ -1998,6 +2017,26 @@ Parser::setScalarParameter<PostprocessorName, PostprocessorName>(
 
 template <>
 void
+Parser::setScalarParameter<ReporterName, std::string>(
+    const std::string & full_name,
+    const std::string & /*short_name*/,
+    InputParameters::Parameter<ReporterName> * param,
+    bool /*in_global*/,
+    GlobalParamsAction * /*global_block*/)
+{
+  std::vector<std::string> names = MooseUtils::rsplit(_root->param<std::string>(full_name), "/", 2);
+  if (names.size() != 2)
+    _errmsg += hit::errormsg(_input_filename,
+                             _root->find(full_name),
+                             "The supplied name ReporterName '",
+                             full_name,
+                             "' must contain the '/' delimiter.");
+  else
+    param->set() = ReporterName(names[0], names[1]);
+}
+
+template <>
+void
 Parser::setVectorParameter<RealVectorValue, RealVectorValue>(
     const std::string & full_name,
     const std::string & short_name,
@@ -2146,5 +2185,31 @@ Parser::setVectorParameter<VariableName, VariableName>(
       }
       else
         param->set()[i] = var_names[i];
+  }
+}
+
+template <>
+void
+Parser::setVectorParameter<ReporterName, std::string>(
+    const std::string & full_name,
+    const std::string & /*short_name*/,
+    InputParameters::Parameter<std::vector<ReporterName>> * param,
+    bool /*in_global*/,
+    GlobalParamsAction * /*global_block*/)
+{
+  auto rnames = _root->param<std::vector<std::string>>(full_name);
+  param->set().resize(rnames.size());
+
+  for (unsigned int i = 0; i < rnames.size(); ++i)
+  {
+    std::vector<std::string> names = MooseUtils::rsplit(rnames[i], "/", 2);
+    if (names.size() != 2)
+      _errmsg += hit::errormsg(_input_filename,
+                               _root->find(full_name),
+                               "The supplied name ReporterName '",
+                               rnames[i],
+                               "' must contain the '/' delimiter.");
+    else
+      param->set()[i] = ReporterName(names[0], names[1]);
   }
 }

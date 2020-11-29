@@ -14,14 +14,14 @@ import copy
 import re
 import time
 import moosetree
-
+import moosesyntax
 import mooseutils
 
 import MooseDocs
 from .. import common
 from ..common import exceptions
 from ..base import components, LatexRenderer, MarkdownReader
-from ..tree import html, tokens, syntax, latex, app_syntax
+from ..tree import html, tokens, latex
 from . import command, core, floats, table, autolink, materialicon
 
 LOG = logging.getLogger(__name__)
@@ -91,12 +91,14 @@ class AppSyntaxExtension(command.CommandExtension):
                               "List of include directories to investigate for class information.")
         config['inputs'] = ([],
                             "List of directories to interrogate for input files using an object.")
-        config['hide'] = (None, "Dictionary of syntax to hide.")
+        config['allow-test-objects'] = (False, "Enable documentation for test objects.");
+        config['hide'] = (None, "DEPRECATED")
         config['remove'] = (None, "List or Dictionary of lists of syntax to remove.")
         config['visible'] = (['required', 'optional'],
                              "Parameter groups to show as un-collapsed.")
-        config['alias'] = (None, "List of Dictionary of lists of syntax aliases.")
-        config['allow-test-objects'] = (False, "Enable the test objects.")
+        config['alias'] = (None, "Dictionary of syntax aliases.")
+        config['unregister'] = ({"Postprocessor":"UserObject/*", "AuxKernel":"Bounds/*"},
+                                "Dictionary of syntax to unregister (key='moose_base', value='parent_syntax')")
         return config
 
     def __init__(self, *args, **kwargs):
@@ -104,10 +106,14 @@ class AppSyntaxExtension(command.CommandExtension):
 
         self._app_type = None
         self._app_syntax = None
+        self._app_exe = None
         self._database = None
         self._cache = dict()
         self._object_cache = dict()
         self._syntax_cache = dict()
+
+        if self['hide'] is not None:
+            LOG.warning("The 'hide' option is no longer being used.")
 
     def preExecute(self):
         """Populate the application syntax tree."""
@@ -132,16 +138,16 @@ class AppSyntaxExtension(command.CommandExtension):
         LOG.info("Reading MOOSE application syntax...")
         exe = mooseutils.eval_path(self['executable'])
         exe = mooseutils.find_moose_executable(exe, name=self['app_name'], show_error=False)
+        self._app_exe = exe
 
         if exe is None:
             LOG.error("Failed to locate a valid executable in %s.", self['executable'])
         else:
             try:
-                self._app_syntax = app_syntax(exe,
-                                              alias=self['alias'],
-                                              remove=self['remove'],
-                                              hide=self['hide'],
-                                              allow_test_objects=self['allow-test-objects'])
+                self._app_syntax = moosesyntax.get_moose_syntax_tree(exe,
+                                                                     remove=self['remove'],
+                                                                     alias=self['alias'],
+                                                                     unregister=self['unregister'])
 
                 out = mooseutils.runExe(exe, ['--type'])
                 match = re.search(r'^MooseApp Type:\s+(?P<type>.*?)$', out, flags=re.MULTILINE)
@@ -157,6 +163,12 @@ class AppSyntaxExtension(command.CommandExtension):
                       "application syntax is being disabled:\n%s"
                 self.setActive(False)
                 LOG.error(msg, exe, e)
+
+        # Enable test objects by removing the test flag (i.e., don't consider them test objects)
+        if self['allow-test-objects']:
+            for node in moosetree.iterate(self._app_syntax):
+                node.test = False
+
         LOG.info("MOOSE application syntax complete [%s sec.]", time.time() - start)
 
     def __initClassDatabase(self):
@@ -175,18 +187,19 @@ class AppSyntaxExtension(command.CommandExtension):
         self._object_cache = dict()
         self._syntax_cache = dict()
         for node in moosetree.iterate(self._app_syntax):
-            if not node.removed:
-                self._cache[node.fullpath] = node
+            if not (node.removed or node.test):
+                self._cache[node.fullpath()] = node
                 if node.alias:
                     self._cache[node.alias] = node
-                if isinstance(node, syntax.ObjectNode):
-                    self._object_cache[node.fullpath] = node
-                    if node.alias:
-                        self._object_cache[node.alias] = node
-                elif isinstance(node, syntax.SyntaxNode):
-                    self._syntax_cache[node.fullpath] = node
+                if isinstance(node, moosesyntax.SyntaxNode):
+                    self._syntax_cache[node.fullpath()] = node
                     if node.alias:
                         self._syntax_cache[node.alias] = node
+                else:
+                    self._object_cache[node.fullpath()] = node
+                    if node.alias:
+                        self._object_cache[node.alias] = node
+
         LOG.info("MOOSE class database complete [%s sec]", time.time() - start)
 
     @property
@@ -201,6 +214,10 @@ class AppSyntaxExtension(command.CommandExtension):
     def apptype(self):
         return self._app_type
 
+    @property
+    def executable(self):
+        return self._app_exe
+
     def find(self, name, node_type=None):
 
         if name.endswith('<RESIDUAL>'):
@@ -210,9 +227,9 @@ class AppSyntaxExtension(command.CommandExtension):
             name = name[0:-10]
 
         node = None
-        if node_type == syntax.ObjectNode:
+        if node_type == moosesyntax.ObjectNodeBase:
             node = self._object_cache.get(name, None)
-        elif node_type == syntax.SyntaxNode:
+        elif node_type == moosesyntax.SyntaxNode:
             node = self._syntax_cache.get(name, None)
         else:
             node = self._cache.get(name, None)
@@ -292,15 +309,14 @@ class SyntaxCommandHeadingBase(SyntaxCommandBase):
 
 class SyntaxDescriptionCommand(SyntaxCommandBase):
     SUBCOMMAND = 'description'
-    NODE_TYPE = syntax.ObjectNode
+    NODE_TYPE = moosesyntax.ObjectNodeBase
 
     def createTokenFromSyntax(self, parent, info, page, obj):
 
         if obj.description is None:
             msg = "The class description is missing for %s, it can be added using the " \
                   "'addClassDescription' method from within the objects validParams function."
-            if not obj.hidden:
-                LOG.warning(msg, obj.fullpath)
+            LOG.warning(msg, obj.fullpath())
             core.Paragraph(parent, string=str(info[0]), class_='moose-error')
             return parent
 
@@ -328,7 +344,7 @@ class SyntaxParametersCommand(SyntaxCommandHeadingBase):
     def createTokenFromSyntax(self, parent, info, page, obj):
 
         parameters = dict()
-        if isinstance(obj, syntax.SyntaxNode):
+        if isinstance(obj, moosesyntax.SyntaxNode):
             for action in obj.actions():
                 parameters.update(action.parameters)
         elif obj.parameters:
@@ -369,7 +385,7 @@ class SyntaxParameterCommand(command.CommandComponent):
 
         obj = self.extension.find(obj_syntax)
         parameters = dict()
-        if isinstance(obj, syntax.SyntaxNode):
+        if isinstance(obj, moosesyntax.SyntaxNode):
             for action in obj.actions():
                 parameters.update(action.parameters)
         elif obj.parameters:
@@ -389,7 +405,7 @@ class SyntaxParameterCommand(command.CommandComponent):
 
 class SyntaxChildrenCommand(SyntaxCommandHeadingBase):
     SUBCOMMAND = 'children'
-    NODE_TYPE = syntax.ObjectNode
+    NODE_TYPE = moosesyntax.ObjectNodeBase
 
     @staticmethod
     def defaultSettings():
@@ -422,7 +438,7 @@ class SyntaxChildrenCommand(SyntaxCommandHeadingBase):
 
 class SyntaxInputsCommand(SyntaxChildrenCommand):
     SUBCOMMAND = 'inputs'
-    NODE_TYPE = syntax.ObjectNode
+    NODE_TYPE = moosesyntax.ObjectNodeBase
 
     @staticmethod
     def defaultSettings():
@@ -433,7 +449,7 @@ class SyntaxInputsCommand(SyntaxChildrenCommand):
 
 class SyntaxListCommand(SyntaxCommandHeadingBase):
     SUBCOMMAND = 'list'
-    NODE_TYPE = syntax.SyntaxNode
+    NODE_TYPE = moosesyntax.SyntaxNode
 
     @staticmethod
     def defaultSettings():
@@ -452,8 +468,11 @@ class SyntaxListCommand(SyntaxCommandHeadingBase):
     def createTokenFromSyntax(self, parent, info, page, obj):
 
         primary = SyntaxList(None, **self.attributes)
+        if self.settings['groups']:
+            groups = self.settings['groups'].split()
+        else:
+            groups = list(set([child.group for child in obj if child.group is not None]))
 
-        groups = self.settings['groups'].split() if self.settings['groups'] else list(obj.groups)
         if 'MooseApp' in groups:
             groups.remove('MooseApp')
             groups.insert(0, 'MooseApp')
@@ -501,26 +520,27 @@ class SyntaxListCommand(SyntaxCommandHeadingBase):
 
         count = 0
         for obj in objects:
-            if (group in obj.groups) and (not obj.removed):
+            if (group in obj.groups()) and not (obj.removed or obj.test):
                 count += 1
                 item = SyntaxListItem(parent, group=group, syntax=obj.name)
                 if base:
                     item['base'] = base
-                nodes = self.translator.findPages(obj.markdown())
+                nodes = self.translator.findPages(obj.markdown)
                 if len(nodes) == 0:
                     tokens.String(item, content=str(obj.name))
                 else:
                     SyntaxLink(item, string=str(obj.name),
                                url=str(nodes[0].relativeDestination(page)))
 
-                if obj.description:
+                desc = getattr(obj, 'description', None)
+                if desc:
                     self.reader.tokenize(item, str(obj.description), page, MarkdownReader.INLINE, info.line)
 
         return count
 
 class SyntaxCompleteCommand(SyntaxListCommand):
     SUBCOMMAND = 'complete'
-    NODE_TYPE = syntax.SyntaxNode
+    NODE_TYPE = moosesyntax.SyntaxNode
 
     @staticmethod
     def defaultSettings():
@@ -536,16 +556,16 @@ class SyntaxCompleteCommand(SyntaxListCommand):
     def _addList(self, parent, info, page, obj, level):
 
         gs = self.settings['groups']
-        groups = set(gs.split()) if gs else set(obj.groups)
+        groups = set(gs.split()) if gs else None
 
         for child in obj.syntax():
-            if child.removed:
+            if child.removed or child.test:
                 continue
 
-            if child.groups.intersection(groups):
-                url = os.path.join('syntax', child.markdown())
+            if (groups is None) or (child.groups(actions=True, syntax=True, objects=True).intersection(groups)):
+                url = os.path.join('syntax', child.markdown)
                 h = core.Heading(parent, level=level, id_=self.settings['id'])
-                autolink.AutoLink(h, page=url, string=str(child.fullpath.strip('/')))
+                autolink.AutoLink(h, page=url, string=str(child.fullpath().strip('/')))
 
             SyntaxListCommand.createTokenFromSyntax(self, parent, info, page, child)
             self._addList(parent, info, page, child, level + 1)

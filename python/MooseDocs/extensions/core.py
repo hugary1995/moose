@@ -283,10 +283,9 @@ class LinkInline(components.ReaderComponent):
     Without the negative lookahead after the first "[" the match would capture the beginning at
     the shortcut link.
 
-    https://regex101.com/r/LXjbHt/2
+    https://regex101.com/r/LXjbHt/6
     """
-
-    RE = re.compile(r'\[(?!\S+?\] )'                # start of link, see note above
+    RE = re.compile(r'\[(?!\S+?\][ .,])'            # start of link, see note above
                     r'(?P<inline>.*?)\]'            # link text
                     r'\((?P<url>.*?)'               # link url
                     r'(?:\s+(?P<settings>.*?))?\)', # settings
@@ -351,9 +350,9 @@ class FormatInline(components.ReaderComponent):
 
         # Sub/super script must have word before the rest cannot
         if (tok == '^') or (tok == '@'):
-            if not parent.children or (not parent.children[-1].name == 'Word'):
+            if not parent.children or (parent.children[-1].name not in ('Word', 'Number')):
                 return None
-        elif parent.children and (parent.children[-1].name == 'Word'):
+        elif parent.children and (parent.children[-1].name in ('Word', 'Number')):
             return None
 
         if tok == '@':

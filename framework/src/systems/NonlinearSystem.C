@@ -179,6 +179,11 @@ NonlinearSystem::solve()
     else
       computeScaling();
   }
+#ifdef MOOSE_GLOBAL_AD_INDEXING
+  // We do not know a priori what variable a global degree of freedom corresponds to, so we need a
+  // map from global dof to scaling factor. We just use a ghosted NumericVector for that mapping
+  assembleScalingVector();
+#endif
 
   if (_use_finite_differenced_preconditioner)
   {
@@ -423,4 +428,16 @@ void
 NonlinearSystem::computeScalingResidual()
 {
   _fe_problem.computeResidualSys(_transient_sys, *_current_solution, RHS());
+}
+
+SNES
+NonlinearSystem::getSNES()
+{
+  PetscNonlinearSolver<Number> * petsc_solver =
+      dynamic_cast<PetscNonlinearSolver<Number> *>(nonlinearSolver());
+
+  if (petsc_solver)
+    return petsc_solver->snes();
+  else
+    mooseError("It is not a petsc nonlinear solver");
 }

@@ -24,8 +24,13 @@
   [./diff_gold]
     type = PythonUnitTest
     input = test_DiffGold.py
-    requirement = "TestHarness shall report a failure when encountering differential result"
+    requirement = "TestHarness shall report a failure when encountering differential result with a custom gold directory."
     issues = '#10647'
+  [../]
+  [./min_ad_size]
+    type = PythonUnitTest
+    input = test_MinADSize.py
+    requirement = "TestHarness shall restrict tests based on the available dual number derivative vector size"
   [../]
   [./cyclic]
     type = PythonUnitTest

@@ -79,12 +79,6 @@
     boundary = '0 1 2 3'
     value = 0
   [../]
-
-  [./eigenT]
-    type = EigenDirichletBC
-    variable = T
-    boundary = '0 1 2 3'
-  [../]
 []
 
 [Materials]
@@ -103,8 +97,8 @@
   solve_type = NEWTON
   eigen_problem_type = GEN_NON_HERMITIAN
   automatic_scaling = true
-  petsc_options = '-eps_power_pc_svd_monitor'
-  petsc_options_iname = '-eps_power_pc_type'
+  petsc_options = '-pc_svd_monitor'
+  petsc_options_iname = '-pc_type'
   petsc_options_value = 'svd'
   verbose = true
 []

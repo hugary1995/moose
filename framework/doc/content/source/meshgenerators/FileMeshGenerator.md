@@ -1,6 +1,6 @@
 # FileMeshGenerator
 
-!syntax description /MeshGenerators/FileMeshGenerator
+!syntax description /Mesh/FileMeshGenerator
 
 ## Supported File Formats
 
@@ -24,14 +24,15 @@ supports reading and writing a large number of formats and could be extended to 
 | .unv        | I-deas Universal format |
 | .xda, .xdr  | libMesh formats |
 | .vtk, .pvtu | Visualization Toolkit |
+| .cpr        | Checkpoint file |
 
 When reading a mesh file in Sandia's ExodusII format, users can use parameter `exodus_extra_element_integers` to load elemental variables for setting extra element integers of the mesh.
 The names of the extra element integers will be the same as the names of the element variables in the mesh file.
 
 ## Further FileMeshGenerator Documentation
 
-!syntax parameters /MeshGenerators/FileMeshGenerator
+!syntax parameters /Mesh/FileMeshGenerator
 
-!syntax inputs /MeshGenerators/FileMeshGenerator
+!syntax inputs /Mesh/FileMeshGenerator
 
-!syntax children /MeshGenerators/FileMeshGenerator
+!syntax children /Mesh/FileMeshGenerator

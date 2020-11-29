@@ -83,10 +83,12 @@ MooseVariableBase::MooseVariableBase(const InputParameters & parameters)
   : MooseObject(parameters),
     BlockRestrictable(this),
     OutputInterface(parameters),
+    SetupInterface(this),
     _sys(*getParam<SystemBase *>("_system_base")), // TODO: get from _fe_problem_base
     _fe_type(Utility::string_to_enum<Order>(getParam<MooseEnum>("order")),
              Utility::string_to_enum<FEFamily>(getParam<MooseEnum>("family"))),
     _var_num(getParam<unsigned int>("_var_num")),
+    _is_eigen(getParam<bool>("eigen")),
     _var_kind(getParam<Moose::VarKindType>("_var_kind")),
     _subproblem(_sys.subproblem()),
     _variable(_sys.system().variable(_var_num)),
@@ -95,10 +97,11 @@ MooseVariableBase::MooseVariableBase(const InputParameters & parameters)
     _mesh(_subproblem.mesh()),
     _tid(getParam<THREAD_ID>("tid")),
     _count(getParam<unsigned int>("components")),
-    _scaling_factor(isParamValid("scaling") ? getParam<std::vector<Real>>("scaling")
-                                            : std::vector<Real>(_count, 1.)),
     _use_dual(getParam<bool>("use_dual"))
 {
+  scalingFactor(isParamValid("scaling") ? getParam<std::vector<Real>>("scaling")
+                                        : std::vector<Real>(_count, 1.));
+
   if (getParam<bool>("fv") && getParam<bool>("eigen"))
     paramError("eigen", "finite volume (fv=true) variables do not have eigen support");
   if (getParam<bool>("fv") && _fe_type.family != MONOMIAL)
@@ -154,4 +157,29 @@ MooseVariableBase::componentDofIndices(const std::vector<dof_id_type> & dof_indi
     }
   }
   return new_dof_indices;
+}
+
+void
+MooseVariableBase::scalingFactor(Real factor)
+{
+  _scaling_factor.assign(_count, factor);
+
+#ifdef MOOSE_GLOBAL_AD_INDEXING
+  if (!MooseUtils::absoluteFuzzyEqual(factor, 1.) && !_sys.hasVector("scaling_factors"))
+    _sys.addScalingVector();
+#endif
+}
+
+void
+MooseVariableBase::scalingFactor(const std::vector<Real> & factor)
+{
+  _scaling_factor = factor;
+
+#ifdef MOOSE_GLOBAL_AD_INDEXING
+  if (!_sys.hasVector("scaling_factors") &&
+      std::find_if(factor.begin(), factor.end(), [](const Real element) {
+        return !MooseUtils::absoluteFuzzyEqual(element, 1.);
+      }) != factor.end())
+    _sys.addScalingVector();
+#endif
 }

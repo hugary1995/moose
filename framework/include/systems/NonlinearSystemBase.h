@@ -44,6 +44,7 @@ class NodalKernel;
 class Split;
 class KernelBase;
 class BoundaryCondition;
+class ResidualObject;
 
 // libMesh forward declarations
 namespace libMesh
@@ -84,6 +85,8 @@ public:
   virtual void stopSolve() = 0;
 
   virtual NonlinearSolver<Number> * nonlinearSolver() = 0;
+
+  virtual SNES getSNES() = 0;
 
   virtual unsigned int getCurrentNonlinearIterationNumber() = 0;
 
@@ -729,6 +732,20 @@ protected:
    * Compute a "residual" for automatic scaling purposes
    */
   virtual void computeScalingResidual() = 0;
+
+#ifdef MOOSE_GLOBAL_AD_INDEXING
+  /**
+   * Assemble the numeric vector of scaling factors such that it can be used during assembly of the
+   * system matrix
+   */
+  void assembleScalingVector();
+#endif
+
+  /**
+   * Called after any ResidualObject-derived objects are added
+   * to the system.
+   */
+  virtual void postAddResidualObject(ResidualObject &) {}
 
 protected:
   NumericVector<Number> & solutionInternal() const override { return *_sys.solution; }

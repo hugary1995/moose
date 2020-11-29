@@ -6,7 +6,7 @@ Content:
             - media/framework/under-construction.gif
             - media/framework/github-logo.png
             - media/framework/github-mark.png
-            - large_media/level_set/vortex_out.gif
+            - large_media/level_set/vortex_out.mp4
             - bib/*
             - contrib/**
             - css/*
@@ -87,6 +87,7 @@ Extensions:
         acronyms:
             INL: Idaho National Laboratory
             MTU: Michigan Technological University
+            UNH: University of New Hampshire
     MooseDocs.extensions.common:
         active: True
         shortcuts:
@@ -96,7 +97,6 @@ Extensions:
         active: True
 
         executable: ${MOOSE_DIR}/test
-        hide: !include framework/doc/hidden.yml
         remove: !include framework/doc/remove.yml
         includes:
             - framework/include

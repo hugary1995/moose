@@ -63,28 +63,26 @@ VectorNodalBC::computeJacobian()
   for (auto tag : _matrix_tags)
     if (_sys.hasMatrix(tag))
       for (std::size_t i = 0; i < cached_rows.size(); ++i)
-        _fe_problem.assembly(0).cacheJacobianContribution(
-            cached_rows[i], cached_rows[i], cached_val(i), tag);
+        _fe_problem.assembly(0).cacheJacobian(cached_rows[i], cached_rows[i], cached_val(i), tag);
 }
 
 void
-VectorNodalBC::computeOffDiagJacobian(unsigned int jvar)
+VectorNodalBC::computeOffDiagJacobian(const unsigned int jvar_num)
 {
-  if (jvar == _var.number())
+  if (jvar_num == _var.number())
     computeJacobian();
   else
   {
-    Real cached_val = computeQpOffDiagJacobian(jvar);
+    Real cached_val = computeQpOffDiagJacobian(jvar_num);
     const std::vector<dof_id_type> & cached_rows = _var.dofIndices();
     // Note: this only works for Lagrange variables...
-    dof_id_type cached_col = _current_node->dof_number(_sys.number(), jvar, 0);
+    dof_id_type cached_col = _current_node->dof_number(_sys.number(), jvar_num, 0);
 
     // Cache the user's computeQpJacobian() value for later use.
     for (auto tag : _matrix_tags)
       if (_sys.hasMatrix(tag))
         for (std::size_t i = 0; i < cached_rows.size(); ++i)
-          _fe_problem.assembly(0).cacheJacobianContribution(
-              cached_rows[i], cached_col, cached_val, tag);
+          _fe_problem.assembly(0).cacheJacobian(cached_rows[i], cached_col, cached_val, tag);
   }
 }
 

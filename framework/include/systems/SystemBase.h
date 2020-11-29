@@ -389,6 +389,12 @@ public:
   void closeTaggedMatrices(const std::set<TagID> & tags);
 
   /**
+   * flushes all matrices associated to tags. Flush assembles the matrix but doesn't shrink memory
+   * allocation
+   */
+  void flushTaggedMatrices(const std::set<TagID> & tags);
+
+  /**
    * Associate a matrix to a tag
    */
   virtual void associateMatrixToTag(SparseMatrix<Number> & matrix, TagID tag);
@@ -469,7 +475,7 @@ public:
    * @param var_name variable name
    * @return reference the variable (class)
    */
-  MooseVariableFEBase & getVariable(THREAD_ID tid, const std::string & var_name);
+  MooseVariableFieldBase & getVariable(THREAD_ID tid, const std::string & var_name) const;
 
   /**
    * Gets a reference to a variable with specified number
@@ -478,7 +484,7 @@ public:
    * @param var_number libMesh variable number
    * @return reference the variable (class)
    */
-  MooseVariableFEBase & getVariable(THREAD_ID tid, unsigned int var_number);
+  MooseVariableFieldBase & getVariable(THREAD_ID tid, unsigned int var_number) const;
 
   /**
    * Gets a reference to a variable of with specified name
@@ -523,7 +529,8 @@ public:
    * @param var_name A string which is the name of the variable to get.
    * @return reference the variable (class)
    */
-  virtual MooseVariableScalar & getScalarVariable(THREAD_ID tid, const std::string & var_name);
+  virtual MooseVariableScalar & getScalarVariable(THREAD_ID tid,
+                                                  const std::string & var_name) const;
 
   /**
    * Gets a reference to a variable with specified number
@@ -532,7 +539,7 @@ public:
    * @param var_number libMesh variable number
    * @return reference the variable (class)
    */
-  virtual MooseVariableScalar & getScalarVariable(THREAD_ID tid, unsigned int var_number);
+  virtual MooseVariableScalar & getScalarVariable(THREAD_ID tid, unsigned int var_number) const;
 
   /**
    * Get the block where a variable of this system is defined
@@ -722,7 +729,7 @@ public:
                                  const std::string & source_name,
                                  const std::string & timestep);
 
-  const std::vector<MooseVariableFEBase *> & getVariables(THREAD_ID tid)
+  const std::vector<MooseVariableFieldBase *> & getVariables(THREAD_ID tid)
   {
     return _vars[tid].fieldVariables();
   }
@@ -851,6 +858,13 @@ public:
   /// Whether or not there are variables to be restarted from an Exodus mesh file
   bool hasVarCopy() const { return _var_to_copy.size() > 0; }
 
+#ifdef MOOSE_GLOBAL_AD_INDEXING
+  /**
+   * Add the scaling factor vector to the system
+   */
+  void addScalingVector();
+#endif
+
 protected:
   /**
    * Internal getters for the states of the solution as owned by libMesh.
@@ -918,7 +932,7 @@ protected:
   std::shared_ptr<TimeIntegrator> _time_integrator;
 
   /// Map variable number to its pointer
-  std::vector<std::vector<MooseVariableFEBase *>> _numbered_vars;
+  std::vector<std::vector<MooseVariableFieldBase *>> _numbered_vars;
 
   /// Storage for MooseVariable objects
   MooseObjectWarehouseBase<MooseVariableBase> _variable_warehouse;

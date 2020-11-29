@@ -302,6 +302,30 @@ TEST(MooseUtils, split)
 
   out = MooseUtils::split("foo;bar;;", ";");
   EXPECT_EQ(out, std::vector<std::string>({"foo", "bar", "", ""}));
+
+  out = MooseUtils::split("a/b/c/d", "/", 2);
+  EXPECT_EQ(out, std::vector<std::string>({"a", "b", "c/d"}));
+}
+
+TEST(MooseUtils, rsplit)
+{
+  std::vector<std::string> out = MooseUtils::rsplit("foo;bar;foobar", ";");
+  EXPECT_EQ(out, std::vector<std::string>({"foo", "bar", "foobar"}));
+
+  out = MooseUtils::rsplit(";foo;bar", ";");
+  EXPECT_EQ(out, std::vector<std::string>({"", "foo", "bar"}));
+
+  out = MooseUtils::rsplit("foo;;bar", ";");
+  EXPECT_EQ(out, std::vector<std::string>({"foo", "", "bar"}));
+
+  out = MooseUtils::rsplit("foo;bar;", ";");
+  EXPECT_EQ(out, std::vector<std::string>({"foo", "bar", ""}));
+
+  out = MooseUtils::rsplit("foo;bar;;", ";");
+  EXPECT_EQ(out, std::vector<std::string>({"foo", "bar", "", ""}));
+
+  out = MooseUtils::rsplit("a/b/c/d", "/", 2);
+  EXPECT_EQ(out, std::vector<std::string>({"a/b", "c", "d"}));
 }
 
 TEST(MooseUtils, join)
@@ -338,4 +362,52 @@ TEST(MooseUtils, realpath)
 {
   // ok as long mooseError is not triggered
   MooseUtils::realpath("data/example_file");
+}
+
+TEST(MooseUtils, directory)
+{
+  std::string path;
+
+  path = "a/b/c";
+  MooseUtils::makedirs(path);
+  EXPECT_TRUE(MooseUtils::pathExists(path));
+  MooseUtils::removedirs(path);
+  EXPECT_FALSE(MooseUtils::pathExists(path));
+
+  // mkdir for an existing directory
+  path = "a/b/c";
+  MooseUtils::makedirs(path);
+  MooseUtils::makedirs(path);
+  EXPECT_TRUE(MooseUtils::pathExists(path));
+  MooseUtils::removedirs(path);
+  EXPECT_FALSE(MooseUtils::pathExists(path));
+  MooseUtils::removedirs(path);
+  EXPECT_FALSE(MooseUtils::pathExists(path));
+
+  // test ..
+  path = "no_dir_name_like_this/../../b/c";
+  MooseUtils::makedirs(path);
+  EXPECT_TRUE(MooseUtils::pathExists("../b/c"));
+  MooseUtils::removedirs(path);
+  EXPECT_FALSE(MooseUtils::pathExists("../b/c"));
+  EXPECT_FALSE(MooseUtils::pathExists(path));
+
+  // test .
+  path = "./b/c";
+  MooseUtils::makedirs(path);
+  EXPECT_TRUE(MooseUtils::pathExists("b/c"));
+  MooseUtils::removedirs(path);
+  EXPECT_FALSE(MooseUtils::pathExists("b/c"));
+  EXPECT_FALSE(MooseUtils::pathExists(path));
+
+  // test absolute path
+  path = "a/b/c";
+  MooseUtils::makedirs(path);
+  std::string rpath = MooseUtils::realpath(path);
+  MooseUtils::removedirs(path);
+  MooseUtils::makedirs(rpath);
+  EXPECT_TRUE(MooseUtils::pathExists(path));
+  MooseUtils::removedirs(rpath);
+  EXPECT_FALSE(MooseUtils::pathExists(path));
+  EXPECT_THROW(MooseUtils::makedirs("/should_not_access", true), std::invalid_argument);
 }
