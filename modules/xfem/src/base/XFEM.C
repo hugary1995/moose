@@ -33,7 +33,10 @@
 #include "libmesh/partitioner.h"
 
 XFEM::XFEM(const InputParameters & params)
-  : XFEMInterface(params), _efa_mesh(Moose::out), _debug_output_level(1), _min_weight_multiplier(0.0)
+  : XFEMInterface(params),
+    _efa_mesh(Moose::out),
+    _debug_output_level(1),
+    _min_weight_multiplier(0.0)
 {
 #ifndef LIBMESH_ENABLE_UNIQUE_ID
   mooseError("MOOSE requires unique ids to be enabled in libmesh (configure with "
@@ -1282,6 +1285,79 @@ XFEM::cutMeshWithEFA(NonlinearSystemBase & nl, AuxiliarySystem & aux)
     libmesh_elem->subdomain_id() = parent_elem->subdomain_id();
     libmesh_elem->processor_id() = parent_elem->processor_id();
 
+    // TODO: The 0 here is the thread ID.  Need to sort out how to do this correctly
+    // TODO: Also need to copy neighbor material data
+    if (parent_elem->processor_id() == _mesh->processor_id())
+    {
+      // Store solution for all elements affected by XFEM
+      storeSolutionForElement(libmesh_elem,
+                              parent_elem,
+                              nl,
+                              _cached_solution,
+                              current_solution,
+                              old_solution,
+                              older_solution);
+      storeSolutionForElement(libmesh_elem,
+                              parent_elem,
+                              aux,
+                              _cached_aux_solution,
+                              current_aux_solution,
+                              old_aux_solution,
+                              older_aux_solution);
+      // If the parent element was previously healed, copy the stored material properties into the
+      // new element. If the parent element wasn't previously healed, copy the parent's material
+      // properties into the new element.
+      auto hmpit = _healed_material_properties.find(parent_elem);
+      auto hmpit_old = _healed_material_properties_old.find(parent_elem);
+      auto hmpit_older = _healed_material_properties_older.find(parent_elem);
+      if (hmpit != _healed_material_properties.end() &&
+          hmpit_old != _healed_material_properties_old.end() &&
+          hmpit_older != _healed_material_properties_older.end())
+      {
+        const GeometricCutUserObject * gcuo = getGeometricCutForElem(parent_elem);
+        const LevelSetCutUserObject * lscuo = dynamic_cast<const LevelSetCutUserObject *>(gcuo);
+        if (lscuo)
+        {
+          if (isElemOnLevelSetPositiveSide(parent_elem, libmesh_elem, lscuo))
+          {
+            mooseAssert(!_healed_material_properties_used[parent_elem].first,
+                        "revisting a healed material properties");
+            setMaterialPropertiesForElement(parent_elem,
+                                            libmesh_elem,
+                                            hmpit->second.first,
+                                            hmpit_old->second.first,
+                                            hmpit_older->second.first);
+            _healed_material_properties_used[parent_elem].first = true;
+          }
+          else
+          {
+            mooseAssert(!_healed_material_properties_used[parent_elem].second,
+                        "revisting a healed material properties");
+            setMaterialPropertiesForElement(parent_elem,
+                                            libmesh_elem,
+                                            hmpit->second.second,
+                                            hmpit_old->second.second,
+                                            hmpit_older->second.second);
+            _healed_material_properties_used[parent_elem].second = true;
+          }
+        }
+      }
+      else
+      {
+        (*_material_data)[0]->copy(*libmesh_elem, *parent_elem, 0);
+        for (unsigned int side = 0; side < parent_elem->n_sides(); ++side)
+        {
+          _mesh->boundary_info->boundary_ids(parent_elem, side, parent_boundary_ids);
+          std::vector<boundary_id_type>::iterator it_bd = parent_boundary_ids.begin();
+          for (; it_bd != parent_boundary_ids.end(); ++it_bd)
+          {
+            if (_fe_problem->needBoundaryMaterialOnSide(*it_bd, 0))
+              (*_bnd_material_data)[0]->copy(*libmesh_elem, *parent_elem, side);
+          }
+        }
+      }
+    }
+
     // The crack tip origin map is stored before cut, thus the elem should be updated with new
     // element.
     std::map<const Elem *, std::vector<Point>>::iterator mit =
@@ -1360,80 +1436,6 @@ XFEM::cutMeshWithEFA(NonlinearSystemBase & nl, AuxiliarySystem & aux)
         _displaced_mesh->boundary_info->edge_boundary_ids(parent_elem2, edge, parent_boundary_ids);
         _displaced_mesh->boundary_info->add_edge(libmesh_elem2, edge, parent_boundary_ids);
       }
-    }
-
-    // TODO: The 0 here is the thread ID.  Need to sort out how to do this correctly
-    // TODO: Also need to copy neighbor material data
-    if (parent_elem->processor_id() == _mesh->processor_id())
-    {
-      // If the parent element was previously healed, copy the stored material properties into the
-      // new element. If the parent element wasn't previously healed, copy the parent's material
-      // properties into the new element.
-      auto hmpit = _healed_material_properties.find(parent_elem);
-      auto hmpit_old = _healed_material_properties_old.find(parent_elem);
-      auto hmpit_older = _healed_material_properties_older.find(parent_elem);
-      if (hmpit != _healed_material_properties.end() &&
-          hmpit_old != _healed_material_properties_old.end() &&
-          hmpit_older != _healed_material_properties_older.end())
-      {
-        const GeometricCutUserObject * gcuo = getGeometricCutForElem(parent_elem);
-        const LevelSetCutUserObject * lscuo = dynamic_cast<const LevelSetCutUserObject *>(gcuo);
-        if (lscuo)
-        {
-          if (isElemOnLevelSetPositiveSide(parent_elem, libmesh_elem, lscuo))
-          {
-            mooseAssert(!_healed_material_properties_used[parent_elem].first,
-                        "revisting a healed material properties");
-            setMaterialPropertiesForElement(parent_elem,
-                                            libmesh_elem,
-                                            hmpit->second.first,
-                                            hmpit_old->second.first,
-                                            hmpit_older->second.first);
-            _healed_material_properties_used[parent_elem].first = true;
-          }
-          else
-          {
-            mooseAssert(!_healed_material_properties_used[parent_elem].second,
-                        "revisting a healed material properties");
-            setMaterialPropertiesForElement(parent_elem,
-                                            libmesh_elem,
-                                            hmpit->second.second,
-                                            hmpit_old->second.second,
-                                            hmpit_older->second.second);
-            _healed_material_properties_used[parent_elem].second = true;
-          }
-        }
-      }
-      else
-      {
-        (*_material_data)[0]->copy(*libmesh_elem, *parent_elem, 0);
-        for (unsigned int side = 0; side < parent_elem->n_sides(); ++side)
-        {
-          _mesh->boundary_info->boundary_ids(parent_elem, side, parent_boundary_ids);
-          std::vector<boundary_id_type>::iterator it_bd = parent_boundary_ids.begin();
-          for (; it_bd != parent_boundary_ids.end(); ++it_bd)
-          {
-            if (_fe_problem->needBoundaryMaterialOnSide(*it_bd, 0))
-              (*_bnd_material_data)[0]->copy(*libmesh_elem, *parent_elem, side);
-          }
-        }
-      }
-
-      // Store solution for all elements affected by XFEM
-      storeSolutionForElement(libmesh_elem,
-                              parent_elem,
-                              nl,
-                              _cached_solution,
-                              current_solution,
-                              old_solution,
-                              older_solution);
-      storeSolutionForElement(libmesh_elem,
-                              parent_elem,
-                              aux,
-                              _cached_aux_solution,
-                              current_aux_solution,
-                              old_aux_solution,
-                              older_aux_solution);
     }
   }
 

@@ -1,14 +1,16 @@
-E_oxide = 190000
-E_metal = 190000
+a = 13.8
+b = 14
+c = 25
+ymax = 0.24
+E_oxide = 1.9e5
+E_metal = 1.9e5
 nu_oxide = 0.3
 nu_metal = 0.3
-CTE_oxide = 2.1e-2
-CTE_metal = 1.4e-3
+CTE_oxide = 2.1e-5
+CTE_metal = 1.4e-5
 T_ref = '${fparse 580+273}'
-T_fin = '${fparse 80+273}'
-end_time = 50
-dist = 0.05
-xc = '${fparse 2-dist}'
+T_fin = '${fparse 480+273}'
+end_time = 10
 
 [GlobalParams]
   displacements = 'disp_r disp_z'
@@ -20,16 +22,32 @@ xc = '${fparse 2-dist}'
 []
 
 [Mesh]
-  [oxide]
+  [refined]
     type = GeneratedMeshGenerator
     dim = 2
     elem_type = QUAD4
-    nx = 20
-    ny = 2
-    xmin = 1
-    xmax = 3
+    nx = 40
+    ny = 10
+    xmin = ${a}
+    xmax = 14.03
     ymin = 0
-    ymax = 1
+    ymax = ${ymax}
+  []
+  [coarse]
+    type = GeneratedMeshGenerator
+    dim = 2
+    elem_type = QUAD4
+    nx = 80
+    ny = 10
+    xmin = 14.03
+    xmax = ${c}
+    ymin = 0
+    ymax = ${ymax}
+  []
+  [stitch]
+    type = StitchedMeshGenerator
+    inputs = 'refined coarse'
+    stitch_boundaries_pairs = 'right left'
   []
 []
 
@@ -49,18 +67,31 @@ xc = '${fparse 2-dist}'
       value = ${T_ref}
     []
   []
+  [stress_rr]
+    order = CONSTANT
+    family = MONOMIAL
+  []
+  [stress_zz]
+    order = CONSTANT
+    family = MONOMIAL
+  []
+  [stress_tt]
+    order = CONSTANT
+    family = MONOMIAL
+  []
 []
 
 [XFEM]
   qrule = volfrac
   output_cut_plane = true
+  minimum_weight_multiplier = 0.00
 []
 
 [UserObjects]
   [cut]
     type = LevelSetCutUserObject
     level_set_var = interface
-    heal_always = true
+    heal_always = false
   []
 []
 
@@ -68,12 +99,33 @@ xc = '${fparse 2-dist}'
   [interface]
     type = FunctionAux
     variable = interface
-    function = 'x-${xc}'
+    function = 'x-${b}'
   []
   [temperature]
     type = FunctionAux
     variable = temperature
     function = '${T_ref}+t*(${T_fin}-${T_ref})/${end_time}'
+  []
+  [stress_rr]
+    type = ADRankTwoAux
+    variable = 'stress_rr'
+    rank_two_tensor = 'stress'
+    index_i = 0
+    index_j = 0
+  []
+  [stress_zz]
+    type = ADRankTwoAux
+    variable = 'stress_zz'
+    rank_two_tensor = 'stress'
+    index_i = 1
+    index_j = 1
+  []
+  [stress_tt]
+    type = ADRankTwoAux
+    variable = 'stress_tt'
+    rank_two_tensor = 'stress'
+    index_i = 2
+    index_j = 2
   []
 []
 
@@ -92,32 +144,30 @@ xc = '${fparse 2-dist}'
   []
 []
 
-[DGKernels]
-  # [ghost_penalty]
-  #   type = ADGhostPenalty
-  #   variable = 'disp_z'
-  #   eta = 1e5
-  #   alpha = 10
-  #   use_displaced_mesh = true
-  # []
-[]
-
 [Constraints]
   [disp_r_constraint]
     type = XFEMSingleVariableConstraint
     variable = 'disp_r'
     geometric_cut_userobject = 'cut'
-    alpha = 1e8
-    use_penalty = true
+    alpha = 1e10
     use_displaced_mesh = true
+    use_penalty = true
   []
   [disp_z_constraint]
     type = XFEMSingleVariableConstraint
     variable = 'disp_z'
     geometric_cut_userobject = 'cut'
-    alpha = 1e8
-    use_penalty = true
+    alpha = 1e10
     use_displaced_mesh = true
+    use_penalty = true
+  []
+  [disp_z_fixed]
+    type = EqualValueBoundaryConstraint
+    variable = 'disp_z'
+    secondary = top
+    formulation = penalty
+    penalty = 1e11
+    # primary = 6836
   []
 []
 
@@ -132,17 +182,6 @@ xc = '${fparse 2-dist}'
 
 [Materials]
   # oxide
-  [ramp_E]
-    type = ADGenericFunctionMaterial
-    prop_names = 'E'
-    prop_values = '${E_oxide}*(2-x)'
-  []
-  [elasticity_tensor_oxide]
-    type = ADComputeVariableIsotropicElasticityTensor
-    base_name = oxide
-    youngs_modulus = 'E'
-    poissons_ratio = ${nu_oxide}
-  []
   [eigenstrain_oxide]
     type = ADComputeThermalExpansionEigenstrain
     base_name = oxide
@@ -151,13 +190,19 @@ xc = '${fparse 2-dist}'
     thermal_expansion_coeff = ${CTE_oxide}
     eigenstrain_name = 'thermal_eigenstrain'
   []
+  [elasticity_tensor_oxide]
+    type = ADComputeIsotropicElasticityTensor
+    base_name = oxide
+    youngs_modulus = ${E_oxide}
+    poissons_ratio = ${nu_oxide}
+  []
   [strain_oxide]
-    type = ADComputeAxisymmetricRZSmallStrain
+    type = ADComputeAxisymmetricRZFiniteStrain
     base_name = oxide
     eigenstrain_names = 'thermal_eigenstrain'
   []
   [stress_oxide]
-    type = ADComputeLinearElasticStress
+    type = ADComputeFiniteStrainElasticStress
     base_name = oxide
   []
   # metal
@@ -176,12 +221,12 @@ xc = '${fparse 2-dist}'
     eigenstrain_name = 'thermal_eigenstrain'
   []
   [strain_metal]
-    type = ADComputeAxisymmetricRZSmallStrain
+    type = ADComputeAxisymmetricRZFiniteStrain
     base_name = metal
     eigenstrain_names = 'thermal_eigenstrain'
   []
   [stress_metal]
-    type = ADComputeLinearElasticStress
+    type = ADComputeFiniteStrainElasticStress
     base_name = metal
   []
   # bimaterial
@@ -197,21 +242,19 @@ xc = '${fparse 2-dist}'
 [Executioner]
   type = Transient
   solve_type = 'NEWTON'
-  petsc_options = '-pc_svd_monitor'
-  petsc_options_iname = '-pc_type'
-  petsc_options_value = 'svd'
-  # automatic_scaling = true
+  petsc_options_iname = '-pc_type -pc_factor_mat_solver_package'
+  petsc_options_value = 'lu       superlu_dist                 '
+  automatic_scaling = true
+
+  # line_search = none
 
   nl_rel_tol = 1e-06
   nl_abs_tol = 1e-08
 
-  dt = 1
-  num_steps = 1
-  # end_time = ${end_time}
+  dt = 0.5
+  end_time = ${end_time}
 
   max_xfem_update = 1
-
-  abort_on_solve_fail = true
 []
 
 [Outputs]
@@ -220,6 +263,6 @@ xc = '${fparse 2-dist}'
   print_linear_residuals = false
   [exodus]
     type = Exodus
-    file_base = 'output/patch'
+    file_base = 'output/elastic'
   []
 []
