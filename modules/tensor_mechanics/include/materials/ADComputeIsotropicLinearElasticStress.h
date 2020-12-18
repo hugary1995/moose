@@ -10,6 +10,7 @@
 #pragma once
 
 #include "ADComputeStressBase.h"
+#include "SymmetricIsotropicRankFourTensor.h"
 
 /**
  * ADComputeIsotropicLinearElasticStress computes the stress following linear elasticity theory
@@ -25,6 +26,5 @@ public:
 protected:
   virtual void computeQpStress() override;
 
-  const ADMaterialProperty<Real> & _K;
-  const ADMaterialProperty<Real> & _G;
+  const ADMaterialProperty<SymmetricIsotropicRankFourTensor> & _C;
 };

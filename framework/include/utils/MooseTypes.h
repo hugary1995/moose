@@ -444,6 +444,9 @@ using GenericRankThreeTensor = typename Moose::GenericType<RankThreeTensor, is_a
 template <bool is_ad>
 using GenericRankFourTensor = typename Moose::GenericType<RankFourTensor, is_ad>;
 template <bool is_ad>
+using GenericSymmetricIsotropicRankFourTensor =
+    typename Moose::GenericType<SymmetricIsotropicRankFourTensor, is_ad>;
+template <bool is_ad>
 using GenericVariableValue = typename Moose::GenericType<VariableValue, is_ad>;
 template <bool is_ad>
 using GenericVariableGradient = typename Moose::GenericType<VariableGradient, is_ad>;

@@ -9,8 +9,10 @@
 
 #include "gtest/gtest.h"
 
+#include "RankTwoTensor.h"
 #include "RankFourTensor.h"
 #include "RotationTensor.h"
+#include "SymmetricIsotropicRankFourTensor.h"
 #include "MooseTypes.h"
 #include "ADReal.h"
 
@@ -298,4 +300,83 @@ TEST(RankFourTensor, rotation)
   axy2.rotate(yxrot);
 
   EXPECT_NEAR(0, (axy1 - axy2).L2norm(), 1E-8);
+}
+
+TEST(SymmetricIsotropicRankFourTensor, indexing)
+{
+  Real lambda = 1.532;
+  Real G = 3.132;
+  Real K = lambda + 2. / 3. * G;
+  std::vector<Real> input(2);
+
+  // general rank four tensor
+  input[0] = lambda;
+  input[1] = G;
+  RankFourTensor a(input, RankFourTensor::symmetric_isotropic);
+
+  // symmetric isotropic rank four tensor
+  input[0] = K;
+  input[1] = G;
+  SymmetricIsotropicRankFourTensor b(input, SymmetricIsotropicRankFourTensor::symmetric_isotropic);
+
+  for (unsigned int i = 0; i < 3; i++)
+    for (unsigned int j = 0; j < 3; j++)
+      for (unsigned int k = 0; k < 3; k++)
+        for (unsigned int l = 0; l < 3; l++)
+          EXPECT_NEAR(a(i, j, k, l), b(i, j, k, l), 1E-6);
+}
+
+TEST(SymmetricIsotropicRankFourTensor, multiply)
+{
+  Real lambda = 1.532;
+  Real G = 3.132;
+  Real K = lambda + 2. / 3. * G;
+  std::vector<Real> input(2);
+
+  // general rank four tensor
+  input[0] = lambda;
+  input[1] = G;
+  RankFourTensor a(input, RankFourTensor::symmetric_isotropic);
+
+  // symmetric isotropic rank four tensor
+  input[0] = K;
+  input[1] = G;
+  SymmetricIsotropicRankFourTensor b(input, SymmetricIsotropicRankFourTensor::symmetric_isotropic);
+
+  // a non symmetric rank two tensor
+  RankTwoTensor c(1.235, 3.231, 6.452, 7.567, 3.231, 4.323, 6.432, 8.654, 9.241);
+  RankTwoTensor ac = a * c;
+  RankTwoTensor bc = b * c;
+
+  for (unsigned int i = 0; i < 3; i++)
+    for (unsigned int j = 0; j < 3; j++)
+      EXPECT_NEAR(ac(i, j), bc(i, j), 1E-6);
+}
+
+TEST(SymmetricIsotropicRankFourTensor, inverse)
+{
+  Real lambda = 1.532;
+  Real G = 3.132;
+  Real K = lambda + 2. / 3. * G;
+  std::vector<Real> input(2);
+
+  // general rank four tensor
+  input[0] = lambda;
+  input[1] = G;
+  RankFourTensor a(input, RankFourTensor::symmetric_isotropic);
+
+  // symmetric isotropic rank four tensor
+  input[0] = K;
+  input[1] = G;
+  SymmetricIsotropicRankFourTensor b(input, SymmetricIsotropicRankFourTensor::symmetric_isotropic);
+
+  // a non symmetric rank two tensor
+  RankFourTensor ainv = a.invSymm();
+  SymmetricIsotropicRankFourTensor binv = b.invSymm();
+
+  for (unsigned int i = 0; i < 3; i++)
+    for (unsigned int j = 0; j < 3; j++)
+      for (unsigned int k = 0; k < 3; k++)
+        for (unsigned int l = 0; l < 3; l++)
+          EXPECT_NEAR(ainv(i, j, k, l), binv(i, j, k, l), 1E-6);
 }

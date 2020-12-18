@@ -21,7 +21,7 @@ nu = 0.3
 [Modules/TensorMechanics/Master]
   [all]
     strain = SMALL
-    incremental = false
+    incremental = true
     add_variables = true
     eigenstrain_names = 'thermal'
     use_automatic_differentiation = true
@@ -78,7 +78,15 @@ nu = 0.3
     shear_modulus = '${fparse E/2/(1+nu)}'
   []
   [stress]
-    type = ADComputeIsotropicLinearElasticStress
+    type = ADComputeIsotropicMultipleInelasticStress
+    inelastic_models = 'creep'
+  []
+  [creep]
+    type = ADPowerLawCreepStressIsotropicUpdate
+    coefficient = 1.0e-15
+    n_exponent = 4
+    activation_energy = 3.0e5
+    temperature = temp
   []
 []
 

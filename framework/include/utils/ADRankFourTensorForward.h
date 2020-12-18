@@ -13,6 +13,7 @@
 #include "RankFourTensorForward.h"
 
 typedef RankFourTensorTempl<ADReal> ADRankFourTensor;
+typedef SymmetricIsotropicRankFourTensorTempl<ADReal> ADSymmetricIsotropicRankFourTensor;
 
 // for backward compatibility
 typedef RankFourTensorTempl<DualReal> DualRankFourTensor;

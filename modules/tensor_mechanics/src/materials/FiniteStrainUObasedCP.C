@@ -559,8 +559,9 @@ FiniteStrainUObasedCP::calcJacobian()
     for (unsigned int j = 0; j < nss; j++)
       dfpinvdpk2 += (dfpinvdslip[j] * dslipdtau[j] * _dt).outerProduct(dtaudpk2[j]);
   }
-  _jac =
-      RankFourTensor::IdentityFour() - (_elasticity_tensor[_qp] * deedfe * dfedfpinv * dfpinvdpk2);
+
+  RankFourTensor I4(RankFourTensor::initIdentityFour);
+  _jac = I4 - (_elasticity_tensor[_qp] * deedfe * dfedfpinv * dfpinvdpk2);
 }
 
 void

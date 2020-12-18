@@ -13,3 +13,8 @@ template <typename>
 class RankFourTensorTempl;
 
 typedef RankFourTensorTempl<Real> RankFourTensor;
+
+template <typename>
+class SymmetricIsotropicRankFourTensorTempl;
+
+typedef SymmetricIsotropicRankFourTensorTempl<Real> SymmetricIsotropicRankFourTensor;

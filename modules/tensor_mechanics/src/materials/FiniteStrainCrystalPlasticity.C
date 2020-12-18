@@ -949,8 +949,8 @@ FiniteStrainCrystalPlasticity::calcJacobian(RankFourTensor & jac)
   for (unsigned int i = 0; i < _nss; ++i)
     dfpinvdpk2 += (dfpinvdslip[i] * _dslipdtau(i)).outerProduct(dtaudpk2[i]);
 
-  jac =
-      RankFourTensor::IdentityFour() - (_elasticity_tensor[_qp] * deedfe * dfedfpinv * dfpinvdpk2);
+  RankFourTensor I4(RankFourTensor::initIdentityFour);
+  jac = I4 - (_elasticity_tensor[_qp] * deedfe * dfedfpinv * dfpinvdpk2);
 }
 
 // Calculate slip increment,dslipdtau. Override to modify.

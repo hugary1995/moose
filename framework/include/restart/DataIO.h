@@ -18,6 +18,7 @@
 #include "RankTwoTensor.h"
 #include "RankThreeTensor.h"
 #include "RankFourTensor.h"
+#include "SymmetricIsotropicRankFourTensor.h"
 #include "ColumnMajorMatrix.h"
 
 #include "libmesh/auto_ptr.h" // libmesh_make_unique
@@ -435,6 +436,13 @@ dataStore(std::ostream & stream, RankFourTensorTempl<T> & rft, void * context)
 
 template <typename T>
 void
+dataStore(std::ostream & stream, SymmetricIsotropicRankFourTensorTempl<T> & rft, void * context)
+{
+  dataStore(stream, rft._vals, context);
+}
+
+template <typename T>
+void
 dataStore(std::ostream & stream, ColumnMajorMatrixTempl<T> & cmm, void * context)
 {
   dataStore(stream, cmm._values, context);
@@ -696,6 +704,13 @@ dataLoad(std::istream & stream, RankThreeTensorTempl<T> & rtt, void * context)
 template <typename T>
 void
 dataLoad(std::istream & stream, RankFourTensorTempl<T> & rft, void * context)
+{
+  dataLoad(stream, rft._vals, context);
+}
+
+template <typename T>
+void
+dataLoad(std::istream & stream, SymmetricIsotropicRankFourTensorTempl<T> & rft, void * context)
 {
   dataLoad(stream, rft._vals, context);
 }
