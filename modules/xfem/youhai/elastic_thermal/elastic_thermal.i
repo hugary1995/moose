@@ -22,6 +22,8 @@ h_steam = 2.8
 T_ref = '${fparse 580+273}'
 T_gas = '${fparse 1100+273}'
 T_steam = '${fparse 530+273}'
+p_gas = 0.2
+p_steam = 17
 
 [GlobalParams]
   displacements = 'disp_r disp_z'
@@ -184,6 +186,18 @@ T_steam = '${fparse 530+273}'
     boundary = 'bottom'
     value = 0.0
   []
+  [Pressure]
+    [left]
+      boundary = 'left'
+      factor = ${p_steam}
+      use_automatic_differentiation = true
+    []
+    [right]
+      boundary = 'right'
+      factor = ${p_gas}
+      use_automatic_differentiation = true
+    []
+  []
 []
 
 [Materials]
@@ -192,7 +206,7 @@ T_steam = '${fparse 530+273}'
     type = ADComputeThermalExpansionEigenstrain
     base_name = oxide
     stress_free_temperature = ${T_ref}
-    temperature = temperature
+    temperature = temp
     thermal_expansion_coeff = ${CTE_oxide}
     eigenstrain_name = 'thermal_eigenstrain'
   []
@@ -222,7 +236,7 @@ T_steam = '${fparse 530+273}'
     type = ADComputeThermalExpansionEigenstrain
     base_name = metal
     stress_free_temperature = ${T_ref}
-    temperature = temperature
+    temperature = temp
     thermal_expansion_coeff = ${CTE_metal}
     eigenstrain_name = 'thermal_eigenstrain'
   []

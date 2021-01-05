@@ -28,6 +28,8 @@ PowerLawCreepStressUpdate::validParams()
   params.addRequiredParam<Real>("activation_energy", "Activation energy");
   params.addParam<Real>("gas_constant", 8.3143, "Universal gas constant");
   params.addParam<Real>("start_time", 0.0, "Start time (if not zero)");
+  params.addParam<bool>(
+      "temperature_in_celsius", false, "whether the temperature is given in Celsius or Kelvin.");
 
   return params;
 }
@@ -41,7 +43,8 @@ PowerLawCreepStressUpdate::PowerLawCreepStressUpdate(const InputParameters & par
     _m_exponent(getParam<Real>("m_exponent")),
     _activation_energy(getParam<Real>("activation_energy")),
     _gas_constant(getParam<Real>("gas_constant")),
-    _start_time(getParam<Real>("start_time"))
+    _start_time(getParam<Real>("start_time")),
+    _celsius(getParam<bool>("temperature_in_celsius"))
 {
   if (_start_time < _app.getStartTime() && (std::trunc(_m_exponent) != _m_exponent))
     paramError("start_time",
@@ -54,7 +57,10 @@ PowerLawCreepStressUpdate::computeStressInitialize(const Real /*effective_trial_
                                                    const RankFourTensor & /*elasticity_tensor*/)
 {
   if (_has_temp)
-    _exponential = std::exp(-_activation_energy / (_gas_constant * _temperature[_qp]));
+  {
+    Real T = _celsius ? _temperature[_qp] + 273.15 : _temperature[_qp];
+    _exponential = std::exp(-_activation_energy / (_gas_constant * T));
+  }
   else
     _exponential = 1.0;
 

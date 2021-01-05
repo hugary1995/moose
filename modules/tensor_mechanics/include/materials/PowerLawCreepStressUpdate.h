@@ -69,4 +69,6 @@ protected:
 
   /// Exponential calculated from current time
   Real _exp_time;
+
+  bool _celsius;
 };
