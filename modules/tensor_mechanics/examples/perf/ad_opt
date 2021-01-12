@@ -1,0 +1,106 @@
+File: GLRendererFloat
+Type: cpu
+Showing nodes accounting for 108.05s, 86.59% of 124.78s total
+Dropped 430 nodes (cum <= 0.62s)
+      flat  flat%   sum%        cum   cum%
+    33.81s 27.10% 27.10%     41.97s 33.64%  [libsystem_platform.dylib]
+    10.95s  8.78% 35.87%     11.21s  8.98%  libMesh::TypeTensor::operator*
+     9.40s  7.53% 43.40%      9.40s  7.53%  MatLUFactorNumeric_SeqAIJ_Inode
+     7.30s  5.85% 49.25%      7.30s  5.85%  [libsystem_m.dylib]
+     7.21s  5.78% 55.03%     20.77s 16.65%  ADSingleVariableReturnMappingSolution::internalSolve
+     6.11s  4.90% 59.93%      8.42s  6.75%  ADPowerLawCreepStressIsotropicUpdate::computeDerivative
+     5.49s  4.40% 64.33%      6.18s  4.95%  ADPowerLawCreepStressIsotropicUpdate::computeResidual
+     2.77s  2.22% 66.55%      2.83s  2.27%  libMesh::TypeTensor::operator+
+     2.58s  2.07% 68.62%      2.67s  2.14%  Assembly::computeSinglePointMapAD
+     2.31s  1.85% 70.47%      2.31s  1.85%  MooseVariableData::computeAD
+     2.06s  1.65% 72.12%      2.06s  1.65%  non-virtual thunk to ADRadialReturnStressIsotropicUpdate::computeReferenceResidual(MetaPhysicL::DualNumber const&, MetaPhysicL::DualNumber const&)
+     1.79s  1.43% 73.55%      1.79s  1.43%  libMesh::TypeVector::add_scaled
+     1.72s  1.38% 74.93%      1.72s  1.38%  ADStressDivergenceRZTensors::computeQpResidual
+     1.41s  1.13% 76.06%      1.41s  1.13%  Assembly::computeGradPhiAD
+     1.13s  0.91% 76.97%      1.13s  0.91%  MatSetValues_SeqAIJ
+     1.05s  0.84% 77.81%      1.12s   0.9%  std::__1::__tree::find
+     0.96s  0.77% 78.58%      0.96s  0.77%  RankTwoTensorTempl::operator-=
+     0.93s  0.75% 79.32%      0.97s  0.78%  RankTwoTensorTempl::operator=
+     0.89s  0.71% 80.04%      0.94s  0.75%  std::__1::__hash_table::__emplace_unique_key_args
+     0.82s  0.66% 80.69%      1.14s  0.91%  MooseVariableData::computeValues
+     0.76s  0.61% 81.30%      0.76s  0.61%  ADSingleVariableReturnMappingSolution::updateBounds
+     0.73s  0.59% 81.89%      0.73s  0.59%  RankTwoTensorTempl::addIa
+     0.61s  0.49% 82.38%     16.55s 13.26%  ADComputeIsotropicMultipleInelasticStress::computeQpStressIntermediateConfiguration
+     0.59s  0.47% 82.85%     15.68s 12.57%  ADRadialReturnStressIsotropicUpdate::updateState
+     0.56s  0.45% 83.30%      0.63s   0.5%  RankTwoTensorTempl::operator+
+     0.43s  0.34% 83.64%      0.79s  0.63%  ADComputeIsotropicMultipleInelasticStress::finiteStrainRotation
+     0.41s  0.33% 83.97%      1.10s  0.88%  SystemBase::prepare
+     0.38s   0.3% 84.28%      1.29s  1.03%  Assembly::reinitFE
+     0.37s   0.3% 84.57%      0.87s   0.7%  RankTwoTensorTempl::RankTwoTensorTempl
+     0.32s  0.26% 84.83%      0.63s   0.5%  [libtcmalloc_and_profiler.4.dylib]
+     0.30s  0.24% 85.07%      1.09s  0.87%  [libsystem_malloc.dylib]
+     0.28s  0.22% 85.29%      0.87s   0.7%  ADComputeIncrementalSmallStrain::computeProperties
+     0.28s  0.22% 85.52%     17.06s 13.67%  Material::computeProperties
+     0.19s  0.15% 85.67%      9.60s  7.69%  PCSetUp_LU
+     0.15s  0.12% 85.79%     15.98s 12.81%  ADComputeIsotropicMultipleInelasticStress::updateQpStateSingleModel
+     0.13s   0.1% 85.90%     15.90s 12.74%  ADComputeIsotropicMultipleInelasticStress::computeAdmissibleState
+     0.11s 0.088% 85.98%     17.73s 14.21%  MaterialData::reinit
+     0.10s  0.08% 86.06%     11.77s  9.43%  non-virtual thunk to ADPowerLawCreepStressIsotropicUpdate::computeDerivative(MetaPhysicL::DualNumber const&, MetaPhysicL::DualNumber const&)
+     0.10s  0.08% 86.14%      1.58s  1.27%  non-virtual thunk to ADPowerLawCreepStressIsotropicUpdate::computeResidual(MetaPhysicL::DualNumber const&, MetaPhysicL::DualNumber const&)
+     0.09s 0.072% 86.22%      1.45s  1.16%  Assembly::reinit
+     0.08s 0.064% 86.28%     16.51s 13.23%  ADComputeStressBase::computeQpProperties
+     0.05s  0.04% 86.32%     14.88s 11.92%  ADSingleVariableReturnMappingSolution::returnMappingSolve
+     0.05s  0.04% 86.36%      9.11s  7.30%  ComputeResidualThread::onElement
+     0.05s  0.04% 86.40%     23.66s 18.96%  ThreadedElementLoopBase::operator()
+     0.04s 0.032% 86.43%      0.65s  0.52%  ADPowerLawCreepStressIsotropicUpdate::substeppingCapabilityEnabled
+     0.04s 0.032% 86.46%      0.72s  0.58%  FEProblemBase::reinitMaterials
+     0.04s 0.032% 86.50%      0.84s  0.67%  operator new
+     0.03s 0.024% 86.52%     16.07s 12.88%  ADComputeIsotropicMultipleInelasticStress::computeQpStress
+     0.02s 0.016% 86.54%      0.75s   0.6%  FEProblemBase::reinitElem
+     0.02s 0.016% 86.55%      0.66s  0.53%  MaterialData::swap
+     0.01s 0.008% 86.56%     12.55s 10.06%  ComputeJacobianThread::onElement
+     0.01s 0.008% 86.57%      1.14s  0.91%  DisplacedProblem::prepare
+     0.01s 0.008% 86.58%      2.35s  1.88%  FEProblemBase::prepare
+     0.01s 0.008% 86.58%      0.83s  0.67%  MaterialPropertyStorage::initStatefulProps
+     0.01s 0.008% 86.59%      9.92s  7.95%  NonlinearSystemBase::computeResidualTags
+         0     0% 86.59%     34.66s 27.78%  <unknown>
+         0     0% 86.59%      0.65s  0.52%  ADMaterialProperty::init
+         0     0% 86.59%      0.77s  0.62%  ComputeMaterialsObjectThread::onElement
+         0     0% 86.59%      8.92s  7.15%  ComputeResidualFunctor::residual
+         0     0% 86.59%     13.07s 10.47%  FEProblemBase::computeJacobianInternal
+         0     0% 86.59%     13.07s 10.47%  FEProblemBase::computeJacobianTags
+         0     0% 86.59%     10.10s  8.09%  FEProblemBase::computeResidualInternal
+         0     0% 86.59%     10.10s  8.09%  FEProblemBase::computeResidualSys
+         0     0% 86.59%     10.10s  8.09%  FEProblemBase::computeResidualTags
+         0     0% 86.59%      0.92s  0.74%  FEProblemBase::initialSetup
+         0     0% 86.59%     33.20s 26.61%  FEProblemBase::solve
+         0     0% 86.59%     33.20s 26.61%  FEProblemSolve::solve
+         0     0% 86.59%      9.60s  7.69%  KSPSetUp
+         0     0% 86.59%      9.70s  7.77%  KSPSolve
+         0     0% 86.59%      9.70s  7.77%  KSPSolve_Private
+         0     0% 86.59%      9.22s  7.39%  MatLUFactorNumeric
+         0     0% 86.59%      0.76s  0.61%  MaterialPropertyStorage::initProps
+         0     0% 86.59%     13.06s 10.47%  Moose::compute_jacobian
+         0     0% 86.59%     34.51s 27.66%  MooseApp::executeExecutioner
+         0     0% 86.59%     34.66s 27.78%  MooseApp::run
+         0     0% 86.59%     33.20s 26.61%  NonlinearSystem::solve
+         0     0% 86.59%     12.94s 10.37%  NonlinearSystemBase::computeJacobianInternal
+         0     0% 86.59%     12.94s 10.37%  NonlinearSystemBase::computeJacobianTags
+         0     0% 86.59%      9.90s  7.93%  NonlinearSystemBase::computeResidualInternal
+         0     0% 86.59%      9.60s  7.69%  PCSetUp
+         0     0% 86.59%      0.92s  0.74%  PetscFreeAlign
+         0     0% 86.59%     33.22s 26.62%  PicardSolve::solve
+         0     0% 86.59%     33.22s 26.62%  PicardSolve::solveStep
+         0     0% 86.59%      8.93s  7.16%  SNESComputeFunction
+         0     0% 86.59%     13.23s 10.60%  SNESComputeJacobian
+         0     0% 86.59%      8.07s  6.47%  SNESLineSearchApply
+         0     0% 86.59%      8.07s  6.47%  SNESLineSearchApply_Basic
+         0     0% 86.59%     31.99s 25.64%  SNESSolve
+         0     0% 86.59%     31.99s 25.64%  SNESSolve_NEWTONLS
+         0     0% 86.59%     31.99s 25.64%  TimeIntegrator::solve
+         0     0% 86.59%     33.22s 26.62%  TimeStepper::step
+         0     0% 86.59%     33.59s 26.92%  Transient::execute
+         0     0% 86.59%      0.92s  0.74%  Transient::init
+         0     0% 86.59%     33.22s 26.62%  Transient::takeStep
+         0     0% 86.59%     34.66s 27.78%  [libdyld.dylib]
+         0     0% 86.59%     31.99s 25.64%  libMesh::NonlinearImplicitSystem::solve
+         0     0% 86.59%     31.99s 25.64%  libMesh::PetscNonlinearSolver::solve
+         0     0% 86.59%     23.14s 18.54%  libMesh::Threads::parallel_reduce
+         0     0% 86.59%     13.23s 10.60%  libmesh_petsc_snes_jacobian
+         0     0% 86.59%      8.92s  7.15%  libmesh_petsc_snes_residual
+         0     0% 86.59%     34.66s 27.78%  main

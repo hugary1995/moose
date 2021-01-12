@@ -11,8 +11,8 @@
   dim = 2
   xmin = 1
   xmax = 2
-  nx = 50
-  ny = 50
+  nx = 100
+  ny = 100
 []
 
 [Modules/TensorMechanics/Master]
