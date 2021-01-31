@@ -39,7 +39,7 @@ LAROMANCEStressUpdateBaseTempl<is_ad>::validParams()
       error_limit_behavior,
       "What to do if old strain is outside the global window of applicability.");
 
-  MooseEnum extrapolated_limit_behavior("ERROR WARN IGNORE EXTRAPOLATE", "EXTRAPOLATE");
+  MooseEnum extrapolated_limit_behavior("ERROR WARN IGNORE EXTRAPOLATE PROJECT", "EXTRAPOLATE");
   params.addParam<MooseEnum>("stress_input_window_failure",
                              extrapolated_limit_behavior,
                              "What to do if stress is outside the global window of applicability.");
@@ -456,7 +456,7 @@ LAROMANCEStressUpdateBaseTempl<is_ad>::computeTileWeight(std::vector<GenericReal
 
 template <bool is_ad>
 void
-LAROMANCEStressUpdateBaseTempl<is_ad>::checkInputWindow(const GenericReal<is_ad> & input,
+LAROMANCEStressUpdateBaseTempl<is_ad>::checkInputWindow(GenericReal<is_ad> & input,
                                                         const WindowFailure behavior,
                                                         const std::vector<Real> & global_limits)
 {
@@ -473,6 +473,10 @@ LAROMANCEStressUpdateBaseTempl<is_ad>::checkInputWindow(const GenericReal<is_ad>
       mooseWarning(msg.str());
     else if (behavior == WindowFailure::ERROR)
       mooseError(msg.str());
+    else if (behavior == WindowFailure::PROJECT)
+      input = input < global_limits[0] ? global_limits[0] : global_limits[1];
+    else
+      mooseError("checkInputWindow internal failure");
   }
 }
 
@@ -482,14 +486,14 @@ LAROMANCEStressUpdateBaseTempl<is_ad>::computeResidual(
     const GenericReal<is_ad> & effective_trial_stress, const GenericReal<is_ad> & scalar)
 {
   // Update new stress
-  auto trial_stress_mpa = effective_trial_stress * 1.0e-6;
+  auto trial_stress_mpa = effective_trial_stress;
   GenericReal<is_ad> dtrial_stress_dscalar = 0.0;
 
   // Update stress if strain is being applied, i.e. non-testing simulation
   if (this->_apply_strain)
   {
-    trial_stress_mpa -= this->_three_shear_modulus * scalar * 1.0e-6;
-    dtrial_stress_dscalar -= this->_three_shear_modulus * 1.0e-6;
+    trial_stress_mpa -= this->_three_shear_modulus * scalar;
+    dtrial_stress_dscalar -= this->_three_shear_modulus;
   }
   _input_values[_stress_input_index] = trial_stress_mpa;
 
@@ -534,8 +538,8 @@ LAROMANCEStressUpdateBaseTempl<is_ad>::computeResidual(
     Moose::err << "  dt: " << _dt << "\n";
     Moose::err << "  old cell disl: " << _old_input_values[_cell_output_index] << "\n";
     Moose::err << "  old wall disl: " << _old_input_values[_wall_output_index] << "\n";
-    Moose::err << "  initial stress (MPa): "
-               << MetaPhysicL::raw_value(effective_trial_stress) * 1.0e-6 << "\n";
+    Moose::err << "  initial stress (MPa): " << MetaPhysicL::raw_value(effective_trial_stress)
+               << "\n";
     Moose::err << "  temperature: " << MetaPhysicL::raw_value(_temperature[_qp]) << "\n";
     Moose::err << "  environmental factor: " << MetaPhysicL::raw_value(environmental) << "\n";
     Moose::err << "  calculated scalar strain value: " << MetaPhysicL::raw_value(scalar) << "\n";

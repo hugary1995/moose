@@ -63,7 +63,8 @@ protected:
     ERROR,
     WARN,
     IGNORE,
-    EXTRAPOLATE
+    EXTRAPOLATE,
+    PROJECT
   };
 
   /**
@@ -90,7 +91,7 @@ protected:
    * @param behavior WindowFailure enum indicating what to do if input is outside of limits
    * @param global_limits Vector of lower and upper global limits of the input
    */
-  void checkInputWindow(const GenericReal<is_ad> & input,
+  void checkInputWindow(GenericReal<is_ad> & input,
                         const WindowFailure behavior,
                         const std::vector<Real> & global_limits);
 
