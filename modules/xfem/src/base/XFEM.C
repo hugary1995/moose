@@ -106,6 +106,16 @@ XFEM::getCrackTipOrigin(std::map<unsigned int, const Elem *> & elem_id_crack_tip
   }
 }
 
+const Node *
+XFEM::pickOnePhysicalNode(const Elem * e) const
+{
+  for (auto i : e->node_index_range())
+    if (isPointInsidePhysicalDomain(e, e->node_ref(i)))
+      return e->node_ptr(i);
+  mooseError("cannot find a physical node in the current element");
+  return nullptr;
+}
+
 void
 XFEM::addStateMarkedElem(unsigned int elem_id, RealVectorValue & normal)
 {
@@ -2106,7 +2116,7 @@ XFEM::storeMaterialPropertiesForElements(const Elem * parent_elem,
 {
   for (auto e : elems)
   {
-    const GeometricCutSubdomainID gcsid = getGeometricCutSubdomainID(e, e, gcuo);
+    const GeometricCutSubdomainID gcsid = getGeometricCutSubdomainID(e, gcuo);
     _healed_elems[parent_elem].emplace(gcsid, e);
     _healed_material_properties_used[parent_elem].emplace(gcsid, false);
   }
@@ -2118,7 +2128,7 @@ XFEM::setMaterialPropertiesForElement(const Elem * parent_elem,
                                       const GeometricCutUserObject * gcuo)
 {
   // find the element to copy data from.
-  const GeometricCutSubdomainID gcsid = getGeometricCutSubdomainID(parent_elem, cut_elem, gcuo);
+  const GeometricCutSubdomainID gcsid = getGeometricCutSubdomainID(cut_elem, gcuo);
   mooseAssert(!_healed_material_properties_used[parent_elem][gcsid],
               "Revisiting a healed material property.");
   const Elem * elem_from = _healed_elems[parent_elem][gcsid];
@@ -2141,19 +2151,10 @@ XFEM::setMaterialPropertiesForElement(const Elem * parent_elem,
 }
 
 GeometricCutSubdomainID
-XFEM::getGeometricCutSubdomainID(const Elem * parent_elem,
-                                 const Elem * cut_elem,
-                                 const GeometricCutUserObject * gcuo) const
+XFEM::getGeometricCutSubdomainID(const Elem * cut_elem, const GeometricCutUserObject * gcuo) const
 {
   // Pick any node from the parent element that is inside the physical domain and return its
   // GeometricCutSubdomainID.
-  for (unsigned int i = 0; i < parent_elem->n_nodes(); i++)
-  {
-    const Node * node = parent_elem->node_ptr(i);
-    if (isPointInsidePhysicalDomain(cut_elem, *node))
-      return gcuo->getCutSubdomainID(node);
-  }
-
-  mooseError("XFEM internal error, none of parent element's nodes are inside the physical domain.");
-  return 0;
+  const Node * node = pickOnePhysicalNode(cut_elem);
+  return gcuo->getCutSubdomainID(node);
 }
