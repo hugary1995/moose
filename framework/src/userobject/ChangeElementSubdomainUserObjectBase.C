@@ -1,0 +1,406 @@
+//* This file is part of the MOOSE framework
+//* https://www.mooseframework.org
+//*
+//* All rights reserved, see COPYRIGHT for full restrictions
+//* https://github.com/idaholab/moose/blob/master/COPYRIGHT
+//*
+//* Licensed under LGPL 2.1, please see LICENSE for details
+//* https://www.gnu.org/licenses/lgpl-2.1.html
+
+#include "ChangeElementSubdomainUserObjectBase.h"
+#include "DisplacedProblem.h"
+
+#include "libmesh/quadrature.h"
+#include "libmesh/parallel_algebra.h"
+#include "libmesh/parallel.h"
+#include "libmesh/point.h"
+#include "libmesh/dof_map.h"
+
+#include "libmesh/parallel_ghost_sync.h"
+#include "libmesh/mesh_communication.h"
+
+InputParameters
+ChangeElementSubdomainUserObjectBase::validParams()
+{
+  InputParameters params = ElementUserObject::validParams();
+  params.addClassDescription(
+      "Move elements from one subdomain to another. This userobject only runs on the "
+      "undisplaced mesh, and it will modify both the undisplaced and the displaced mesh.");
+  params.addRequiredParam<subdomain_id_type>("origin_subdomain_id", "The original subdomain ID");
+  params.addRequiredParam<subdomain_id_type>("target_subdomain_id", "The new subdomain ID");
+  params.addRequiredParam<BoundaryName>("moving_boundary_name",
+                                        "Boundary to modify when an element is moved");
+  params.addParam<bool>("include_domain_boundary",
+                        true,
+                        "Whether to include the domain boundary when forming the moving boundary");
+  params.addParam<bool>(
+      "reversible",
+      false,
+      "Whether an element can move from the target subdomain back to the original subdomain");
+  params.addParam<bool>("initialize_solution_on_move",
+                        true,
+                        "Whether to apply initial conditions on the moved nodes");
+  params.set<bool>("use_displaced_mesh") = false;
+  params.suppressParameter<bool>("use_displaced_mesh");
+  return params;
+}
+
+ChangeElementSubdomainUserObjectBase::ChangeElementSubdomainUserObjectBase(
+    const InputParameters & parameters)
+  : ElementUserObject(parameters),
+    _displaced_problem(_fe_problem.getDisplacedProblem()),
+    _target_subdomain_id(declareRestartableData<subdomain_id_type>(
+        "target_subdomain_id", getParam<subdomain_id_type>("target_subdomain_id"))),
+    _origin_subdomain_id(declareRestartableData<subdomain_id_type>(
+        "origin_subdomain_id", getParam<subdomain_id_type>("origin_subdomain_id"))),
+    _moving_boundary_name(getParam<BoundaryName>("moving_boundary_name")),
+    _include_domain_boundary(getParam<bool>("include_domain_boundary")),
+    _reversible(getParam<bool>("reversible")),
+    _init_solution_on_move(getParam<bool>("initialize_solution_on_move"))
+{
+  mooseAssert(_target_subdomain_id != _origin_subdomain_id,
+              "You cannot move an element within the same subdomain.");
+  setMovingBoundaryName(_mesh);
+  if (_displaced_problem)
+    setMovingBoundaryName(_displaced_problem->mesh());
+}
+
+void
+ChangeElementSubdomainUserObjectBase::setMovingBoundaryName(MooseMesh & mesh)
+{
+  // We only need one boundary to modify. Create a dummy vector just to use the API.
+  const std::vector<BoundaryID> boundary_ids = mesh.getBoundaryIDs({{_moving_boundary_name}}, true);
+  _moving_boundary_id = boundary_ids[0];
+  mesh.setBoundaryName(_moving_boundary_id, _moving_boundary_name);
+  mesh.getMesh().get_boundary_info().sideset_name(_moving_boundary_id) = _moving_boundary_name;
+  mesh.getMesh().get_boundary_info().nodeset_name(_moving_boundary_id) = _moving_boundary_name;
+}
+
+void
+ChangeElementSubdomainUserObjectBase::execute()
+{
+  bool origin_to_target = shouldChangeSubdomainFromOriginToTarget();
+  bool target_to_origin = shouldChangeSubdomainFromTargetToOrigin();
+  bool should_move = origin_to_target || target_to_origin;
+  mooseAssert(!origin_to_target || !target_to_origin,
+              "You told me to change the element subdomain from origin to target as well as from "
+              "target to origin. I am confused.");
+
+  if (should_move)
+  {
+    // current element ID, used to index both the element on the displaced and undisplaced meshes.
+    dof_id_type elem_id = _current_elem->id();
+
+    // change the element's subdomain
+    Elem * elem = _mesh.elemPtr(elem_id);
+    Elem * displaced_elem =
+        _displaced_problem ? _displaced_problem->mesh().elemPtr(elem_id) : nullptr;
+    if (displaced_elem)
+
+      // Save the affected nodes so that we can later update/initialize the solution
+      for (unsigned int i = 0; i < elem->n_nodes(); ++i)
+        _moved_nodes.insert(elem->node_id(i));
+
+    if (origin_to_target && _current_elem->subdomain_id() != _target_subdomain_id &&
+        _current_elem->subdomain_id() == _origin_subdomain_id)
+    {
+      elem->subdomain_id() = _target_subdomain_id;
+      _moved_elems.push_back(elem);
+      if (displaced_elem)
+      {
+        displaced_elem->subdomain_id() = _target_subdomain_id;
+        _moved_displaced_elems.push_back(displaced_elem);
+      }
+      _elem_to_direction_map.emplace(elem, Direction::forward);
+    }
+    else if (_reversible && target_to_origin &&
+             _current_elem->subdomain_id() == _target_subdomain_id &&
+             _current_elem->subdomain_id() != _origin_subdomain_id)
+    {
+      elem->subdomain_id() = _origin_subdomain_id;
+      _moved_elems.push_back(elem);
+      if (displaced_elem)
+      {
+        displaced_elem->subdomain_id() = _origin_subdomain_id;
+        _moved_displaced_elems.push_back(displaced_elem);
+      }
+      _elem_to_direction_map.emplace(elem, Direction::backward);
+    }
+  }
+}
+
+void
+ChangeElementSubdomainUserObjectBase::finalize()
+{
+  /*
+    Synchronize ghost element subdomain ID
+    Note: this needs to be done before updating boundary info because
+    updating boundary requires the updated element subdomain ids
+  */
+  SyncSubdomainIds sync(_mesh.getMesh());
+  Parallel::sync_dofobject_data_by_id(_mesh.getMesh().comm(),
+                                      _mesh.getMesh().elements_begin(),
+                                      _mesh.getMesh().elements_end(),
+                                      sync);
+  // Update boundary info
+  updateBoundaryInfo(_mesh, _moved_elems);
+
+  // Similarly for the displaced mesh
+  if (_displaced_problem)
+  {
+    SyncSubdomainIds sync_displaced(_displaced_problem->mesh().getMesh());
+    Parallel::sync_dofobject_data_by_id(_displaced_problem->mesh().getMesh().comm(),
+                                        _displaced_problem->mesh().getMesh().elements_begin(),
+                                        _displaced_problem->mesh().getMesh().elements_end(),
+                                        sync_displaced);
+    updateBoundaryInfo(_displaced_problem->mesh(), _moved_displaced_elems);
+  }
+
+  // Reinit equation systems
+  _fe_problem.meshChanged();
+
+  // Build ranges for solution and (stateful) material property initialization
+  buildMovedElemsRange();
+  buildMovedBndNodesRange();
+
+  if (_init_solution_on_move)
+  {
+    // Apply initial condition for the newly activated elements
+    _fe_problem.projectInitialConditionOnCustomRange(movedElemsRange(), movedBndNodesRange());
+
+    // Set old and older solution on the initialized dofs
+    setSolutionForMovedNodes(_fe_problem.getNonlinearSystemBase());
+    setSolutionForMovedNodes(_fe_problem.getAuxiliarySystem());
+    _fe_problem.restoreSolutions();
+  }
+
+  // Initialize stateful material properties for the newly activated elements
+  _fe_problem.initElementStatefulProps(movedElemsRange());
+
+  // Clear the list
+  _moved_elems.clear();
+  _moved_nodes.clear();
+  _elem_to_direction_map.clear();
+}
+
+void
+ChangeElementSubdomainUserObjectBase::updateBoundaryInfo(MooseMesh & mesh,
+                                                         const std::vector<Elem *> & moved_elems)
+{
+  BoundaryInfo & bnd_info = mesh.getMesh().get_boundary_info();
+
+  // save the removed ghost sides and associated nodes to sync across processors
+  std::unordered_map<processor_id_type, std::vector<std::pair<dof_id_type, unsigned int>>>
+      ghost_sides_to_remove;
+  std::unordered_map<processor_id_type, std::vector<dof_id_type>> ghost_nodes_to_remove;
+
+  // save nodes are added and removed
+  std::set<dof_id_type> added_nodes, removed_nodes;
+
+  // Let us loop over all the sides of all the moved elements. The logic below updates the node set
+  // associated with the moving boundary.
+  for (auto elem : moved_elems)
+  {
+    Direction dir = _elem_to_direction_map[elem];
+    for (auto side : elem->side_index_range())
+    {
+      Elem * neighbor = elem->neighbor_ptr(side);
+      // If the moved element is not connected to any neighbor through this side, then this side
+      // should change its boundary id
+      if (!neighbor)
+      {
+        if (_include_domain_boundary)
+        {
+          std::vector<BoundaryID> bnd_ids = mesh.getBoundaryIDs(elem, side);
+          if (std::find(bnd_ids.begin(), bnd_ids.end(), _moving_boundary_id) != bnd_ids.end())
+          {
+            bnd_info.remove_side(elem, side, _moving_boundary_id);
+            recordNodeIdsOnElemSide(elem, side, removed_nodes);
+          }
+          else
+          {
+            bnd_info.add_side(elem, side, _moving_boundary_id);
+            recordNodeIdsOnElemSide(elem, side, added_nodes);
+          }
+        }
+      }
+      else
+      {
+        if (neighbor->processor_id() != this->processor_id())
+          for (unsigned int i = 0; i < neighbor->side_ptr(side)->n_nodes(); ++i)
+            ghost_nodes_to_remove[neighbor->processor_id()].push_back(
+                neighbor->side_ptr(side)->node_id(i));
+        // If the neighbor is not in the target subdomain, then this side should also be added to
+        // the moving boundary
+        if (dir == Direction::forward && neighbor->subdomain_id() != _target_subdomain_id &&
+            neighbor->subdomain_id() == _origin_subdomain_id)
+        {
+          bnd_info.add_side(elem, side, _moving_boundary_id);
+          recordNodeIdsOnElemSide(elem, side, added_nodes);
+        }
+        else if (dir == Direction::backward && neighbor->subdomain_id() == _target_subdomain_id &&
+                 neighbor->subdomain_id() != _origin_subdomain_id)
+        {
+          bnd_info.add_side(elem, side, _moving_boundary_id);
+          recordNodeIdsOnElemSide(elem, side, added_nodes);
+        }
+        // Otherwise remove this side and the neighbor side from the boundary.
+        else
+        {
+          bnd_info.remove_side(elem, side);
+          recordNodeIdsOnElemSide(elem, side, removed_nodes);
+
+          unsigned int neighbor_side = neighbor->which_neighbor_am_i(elem);
+          bnd_info.remove_side(neighbor, neighbor_side);
+          recordNodeIdsOnElemSide(neighbor, neighbor_side, removed_nodes);
+
+          if (neighbor->processor_id() != this->processor_id())
+            ghost_sides_to_remove[neighbor->processor_id()].emplace_back(neighbor->id(),
+                                                                         neighbor_side);
+        }
+      }
+    }
+  }
+
+  // make sure to remove nodes that are not in the add set
+  std::set<dof_id_type> nodes_to_remove;
+  std::set_difference(removed_nodes.begin(),
+                      removed_nodes.end(),
+                      added_nodes.begin(),
+                      added_nodes.end(),
+                      std::inserter(nodes_to_remove, nodes_to_remove.end()));
+  for (auto node_id : nodes_to_remove)
+    mesh.getMesh().get_boundary_info().remove_node(mesh.nodePtr(node_id), _moving_boundary_id);
+
+  // synchronize boundary information across processors
+  pushBoundarySideInfo(mesh, ghost_sides_to_remove);
+  pushBoundaryNodeInfo(mesh, ghost_nodes_to_remove);
+  mesh.getMesh().get_boundary_info().parallel_sync_side_ids();
+  mesh.getMesh().get_boundary_info().parallel_sync_node_ids();
+  mesh.update();
+}
+
+void
+ChangeElementSubdomainUserObjectBase::recordNodeIdsOnElemSide(const Elem * elem,
+                                                              const unsigned short int side,
+                                                              std::set<dof_id_type> & node_ids)
+{
+  for (unsigned int i = 0; i < elem->side_ptr(side)->n_nodes(); ++i)
+    node_ids.insert(elem->side_ptr(side)->node_id(i));
+}
+
+void
+ChangeElementSubdomainUserObjectBase::pushBoundarySideInfo(
+    MooseMesh & mesh,
+    std::unordered_map<processor_id_type, std::vector<std::pair<dof_id_type, unsigned int>>> &
+        elems_to_push)
+{
+  auto elem_action_functor =
+      [&mesh, this](processor_id_type,
+                    const std::vector<std::pair<dof_id_type, unsigned int>> & received_elem) {
+        // remove the side
+        for (const auto & pr : received_elem)
+          mesh.getMesh().get_boundary_info().remove_side(
+              mesh.getMesh().elem_ptr(pr.first), pr.second, _moving_boundary_id);
+      };
+
+  Parallel::push_parallel_vector_data(
+      mesh.getMesh().get_boundary_info().comm(), elems_to_push, elem_action_functor);
+}
+
+void
+ChangeElementSubdomainUserObjectBase::pushBoundaryNodeInfo(
+    MooseMesh & mesh,
+    std::unordered_map<processor_id_type, std::vector<dof_id_type>> & nodes_to_push)
+{
+  auto node_action_functor = [&mesh, this](processor_id_type,
+                                           const std::vector<dof_id_type> & received_nodes) {
+    for (const auto & pr : received_nodes)
+      mesh.getMesh().get_boundary_info().remove_node(mesh.getMesh().node_ptr(pr),
+                                                     _moving_boundary_id);
+  };
+
+  Parallel::push_parallel_vector_data(
+      mesh.getMesh().get_boundary_info().comm(), nodes_to_push, node_action_functor);
+}
+
+void
+ChangeElementSubdomainUserObjectBase::buildMovedElemsRange()
+{
+  // deletes the object first
+  _moved_elems_range.reset();
+
+  // Make some fake element iterators defining this vector of elements
+  Elem * const * elem_itr_begin = const_cast<Elem * const *>(_moved_elems.data());
+  Elem * const * elem_itr_end = elem_itr_begin + _moved_elems.size();
+
+  const auto elems_begin = MeshBase::const_element_iterator(
+      elem_itr_begin, elem_itr_end, Predicates::NotNull<Elem * const *>());
+  const auto elems_end = MeshBase::const_element_iterator(
+      elem_itr_end, elem_itr_end, Predicates::NotNull<Elem * const *>());
+
+  _moved_elems_range = libmesh_make_unique<ConstElemRange>(elems_begin, elems_end);
+}
+
+void
+ChangeElementSubdomainUserObjectBase::buildMovedBndNodesRange()
+{
+  // deletes the object first
+  _moved_bnd_nodes_range.reset();
+
+  // create a vector of the newly activated nodes
+  std::set<const BndNode *> bnd_nodes_set;
+  ConstBndNodeRange & bnd_nodes_range = *_mesh.getBoundaryNodeRange();
+  for (auto & bnd_node : bnd_nodes_range)
+  {
+    dof_id_type bnd_node_id = bnd_node->_node->id();
+    if (_moved_nodes.find(bnd_node_id) != _moved_nodes.end())
+      bnd_nodes_set.insert(bnd_node);
+  }
+  std::vector<const BndNode *> bnd_nodes;
+  bnd_nodes.assign(bnd_nodes_set.begin(), bnd_nodes_set.end());
+
+  // Make some fake element iterators defining this vector of nodes
+  BndNode * const * bnd_node_itr_begin = const_cast<BndNode * const *>(bnd_nodes.data());
+  BndNode * const * bnd_node_itr_end = bnd_node_itr_begin + bnd_nodes.size();
+
+  const auto bnd_nodes_begin = MooseMesh::const_bnd_node_iterator(
+      bnd_node_itr_begin, bnd_node_itr_end, Predicates::NotNull<BndNode * const *>());
+
+  const auto bnd_nodes_end = MooseMesh::const_bnd_node_iterator(
+      bnd_node_itr_end, bnd_node_itr_end, Predicates::NotNull<BndNode * const *>());
+
+  _moved_bnd_nodes_range = libmesh_make_unique<ConstBndNodeRange>(bnd_nodes_begin, bnd_nodes_end);
+}
+
+void
+ChangeElementSubdomainUserObjectBase::setSolutionForMovedNodes(SystemBase & sys)
+{
+  ConstBndNodeRange & bnd_node_range = movedBndNodesRange();
+
+  NumericVector<Number> & current_solution = *sys.system().current_local_solution;
+  NumericVector<Number> & old_solution = sys.solutionOld();
+  NumericVector<Number> & older_solution = sys.solutionOlder();
+
+  DofMap & dof_map = sys.dofMap();
+
+  // get dofs for the newly added elements
+  std::vector<dof_id_type> dofs;
+  for (auto & bnd_node : bnd_node_range)
+  {
+    std::vector<dof_id_type> bnd_node_dofs;
+    dof_map.dof_indices(bnd_node->_node, bnd_node_dofs);
+    dofs.insert(dofs.end(), bnd_node_dofs.begin(), bnd_node_dofs.end());
+  }
+
+  // update solutions
+  for (auto dof : dofs)
+  {
+    old_solution.set(dof, current_solution(dof));
+    older_solution.set(dof, current_solution(dof));
+  }
+
+  current_solution.close();
+  old_solution.close();
+  older_solution.close();
+}
