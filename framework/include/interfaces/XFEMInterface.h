@@ -102,6 +102,11 @@ public:
   virtual void initSolution(NonlinearSystemBase & nl, AuxiliarySystem & aux) = 0;
 
   /**
+   * Initialize the material properties on newly created elements
+   */
+  virtual void initMaterialProperties() = 0;
+
+  /**
    * Get the factors for the QP weighs for XFEM partial elements
    * @param weights The new weights at element quadrature points
    * @param elem The element for which the weights are adjusted

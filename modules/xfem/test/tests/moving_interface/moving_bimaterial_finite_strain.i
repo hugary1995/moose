@@ -285,10 +285,11 @@
   solve_type = NEWTON
   petsc_options_iname = '-pc_type'
   petsc_options_value = 'lu'
+  automatic_scaling = true
 
   # controls for nonlinear iterations
   nl_max_its = 15
-  nl_rel_tol = 1e-12
+  nl_rel_tol = 1e-13
   nl_abs_tol = 1e-50
 
   # time control
