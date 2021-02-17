@@ -163,6 +163,26 @@ public:
             unsigned int n_qpoints);
 
   /**
+   * Copy material properties to elem_to. Thread safe.
+   *
+   * @param material_data MaterialData object to work with
+   * @param elem_to Element to copy data to
+   * @param props_from material property data to copy
+   * @param props_from_old old material property data to copy
+   * @param props_from_older older material property data to copy, can be empty if the target
+   * element has no older properties
+   * @param side Side number (elemental material properties have this equal to zero)
+   * @param n_qpoints number of quadrature points to work with
+   */
+  void copy(MaterialData & material_data,
+            const Elem * elem_to,
+            const HashMap<unsigned int, MaterialProperties> & props_from,
+            const HashMap<unsigned int, MaterialProperties> & props_from_old,
+            const HashMap<unsigned int, MaterialProperties> & props_from_older,
+            unsigned int side,
+            unsigned int n_qpoints);
+
+  /**
    * Swap (shallow copy) material properties in MaterialData and MaterialPropertyStorage
    * Thread safe
    * @param material_data MaterialData object to work with

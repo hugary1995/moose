@@ -30,7 +30,6 @@ GeometricCutUserObject::validParams()
   exec.addAvailableFlags(EXEC_XFEM_MARK);
   params.setDocString("execute_on", exec.getDocString());
   params.set<ExecFlagEnum>("execute_on") = EXEC_XFEM_MARK;
-  params.suppressParameter<ExecFlagEnum>("execute_on");
 
   return params;
 }
