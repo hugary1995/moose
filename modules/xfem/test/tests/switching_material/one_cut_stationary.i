@@ -20,8 +20,8 @@
   [square]
     type = GeneratedMeshGenerator
     dim = 2
-    nx = 5
-    ny = 5
+    nx = 2
+    ny = 2
   []
 []
 

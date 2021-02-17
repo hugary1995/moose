@@ -1924,6 +1924,13 @@ XFEM::storeSolutionForNode(const Node * node_to_store_to,
                            const NumericVector<Number> & old_solution,
                            const NumericVector<Number> & older_solution)
 {
+  AuxiliarySystem * aux = dynamic_cast<AuxiliarySystem *>(&sys);
+  if (aux)
+  {
+    std::cout << "========================================\n";
+    std::cout << "Storing solution from node " << node_to_store_from->id() << " to node "
+              << node_to_store_to->id() << std::endl;
+  }
   std::vector<dof_id_type> stored_solution_dofs = getNodeSolutionDofs(node_to_store_from, sys);
   std::vector<Real> stored_solution_scratch;
   // Size for current solution, as well as for old, and older solution only for transient case
@@ -1934,7 +1941,10 @@ XFEM::storeSolutionForNode(const Node * node_to_store_to,
   // Store in the order defined in stored_solution_dofs first for the current, then for old and
   // older if applicable
   for (auto dof : stored_solution_dofs)
+  {
+    std::cout << "Storing dof " << dof << " solution = " << current_solution(dof) << std::endl;
     stored_solution_scratch.push_back(current_solution(dof));
+  }
 
   if (_fe_problem->isTransient())
   {
@@ -2035,6 +2045,8 @@ XFEM::setSolutionForDOFs(const std::vector<Real> & stored_solution,
 
   for (std::size_t i = 0; i < stored_solution_dofs.size(); ++i)
   {
+    std::cout << "Set solution for dof " << stored_solution_dofs[i] << " as " << stored_solution[i]
+              << std::endl;
     current_solution.set(stored_solution_dofs[i], stored_solution[i]);
     if (_fe_problem->isTransient())
     {
