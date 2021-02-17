@@ -2,21 +2,21 @@
   [gen]
     type = GeneratedMeshGenerator
     dim = 2
-    nx = 100
-    ny = 100
+    nx = 40
+    ny = 40
   []
   [left]
     type = SubdomainBoundingBoxGenerator
     input = 'gen'
     block_id = 1
     bottom_left = '0 0 0'
-    top_right = '0.5 1 1'
+    top_right = '0.9 1 1'
   []
   [right]
     type = SubdomainBoundingBoxGenerator
     input = 'left'
     block_id = 2
-    bottom_left = '0.5 0 0'
+    bottom_left = '0.9 0 0'
     top_right = '1 1 1'
   []
   [sidesets]
@@ -98,19 +98,19 @@
 []
 
 [Materials]
-  [stateful1]
-    type = StatefulMaterial
-    outputs = exodus
-    initial_diffusivity = 1
-    multiplier = 1.01
+  [diffusivity1]
+    type = GenericConstantMaterial
+    prop_names = 'diffusivity'
+    prop_values = '4'
     block = 1
-  []
-  [stateful2]
-    type = StatefulMaterial
     outputs = exodus
-    initial_diffusivity = 1
-    multiplier = 1.01
+  []
+  [diffusivity2]
+    type = GenericConstantMaterial
+    prop_names = 'diffusivity'
+    prop_values = '1'
     block = 2
+    outputs = exodus
   []
 []
 
@@ -125,8 +125,6 @@
   dt = 0.01
   start_time = 0.8
   end_time = 1.6
-
-  # num_steps = 5
 []
 
 [Outputs]

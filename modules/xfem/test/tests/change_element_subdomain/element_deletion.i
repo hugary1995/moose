@@ -1,3 +1,7 @@
+[XFEM]
+  output_cut_plane = true
+[]
+
 [Mesh]
   [gen]
     type = GeneratedMeshGenerator
@@ -10,13 +14,13 @@
     input = 'gen'
     block_id = 1
     bottom_left = '0 0 0'
-    top_right = '0.1 1 1'
+    top_right = '0.9 1 1'
   []
   [right]
     type = SubdomainBoundingBoxGenerator
     input = 'left'
     block_id = 2
-    bottom_left = '0.1 0 0'
+    bottom_left = '0.9 0 0'
     top_right = '1 1 1'
   []
   [sidesets]
@@ -29,36 +33,36 @@
 []
 
 [UserObjects]
+  [cut]
+    type = LevelSetCutUserObject
+    level_set_var = phi
+    negative_id = 1
+    positive_id = 2
+    heal_always = true
+  []
   [moving_interface]
-    type = ChangeElementSubdomainByCoupledVariable
-    coupled_var = 'phi'
-    activate_value = 0
-    activate_type = below
-    origin_subdomain_id = 2
-    target_subdomain_id = 1
+    type = ChangeElementSubdomainByGeometricCut
+    cut = cut
+    origin_subdomain_id = 1
+    target_subdomain_id = 2
     moving_boundary_name = 'moving_interface'
     include_domain_boundary = false
-    reversible = false
-    initialize_solution_on_move = true
+    reversible = true
+    initialize_solution_on_move = false
     execute_on = 'INITIAL TIMESTEP_BEGIN'
-  []
-[]
-
-[Problem]
-  kernel_coverage_check = false
-[]
-
-[Variables]
-  [u]
-    block = 1
   []
 []
 
 [Functions]
   [wavy_interface]
     type = ParsedFunction
-    value = 'if(t<0.8, x-0.1-t+0.05*sin(5*pi*(y+t))+0.025*cos(8*pi*(y+2*t)), '
-            'x-0.1+t-1.6+0.05*sin(5*pi*(y+t))+0.025*cos(8*pi*(y+2*t)))'
+    value = 'if(t<0.8, x-0.113-t+0.05*sin(5*pi*(y+t))+0.025*cos(8*pi*(y+2*t)), '
+            'x-0.113+t-1.6+0.05*sin(5*pi*(y+t))+0.025*cos(8*pi*(y+2*t)))'
+  []
+[]
+
+[Variables]
+  [u]
   []
 []
 
@@ -85,7 +89,6 @@
     type = MatDiffusion
     diffusivity = 'diffusivity'
     variable = 'u'
-    block = 1
   []
 []
 
@@ -96,10 +99,14 @@
     boundary = 'left'
     value = 0
   []
-  [interface]
-    type = DirichletBC
+[]
+
+[Constraints]
+  [u_continuity]
+    type = XFEMEqualValueAtInterface
     variable = u
-    boundary = 'moving_interface'
+    geometric_cut_userobject = cut
+    alpha = 1e6
     value = 1
   []
 []
@@ -128,9 +135,12 @@
   petsc_options_value = 'lu'
   nl_rel_tol = 1e-06
   nl_abs_tol = 1e-08
+  automatic_scaling = true
 
   dt = 0.01
-  end_time = 0.8
+  start_time = 0.8
+  end_time = 1.6
+  max_xfem_update = 1
 []
 
 [Outputs]

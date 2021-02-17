@@ -82,7 +82,7 @@ ChangeElementSubdomainUserObjectBase::execute()
   bool origin_to_target = shouldChangeSubdomainFromOriginToTarget();
   bool target_to_origin = shouldChangeSubdomainFromTargetToOrigin();
   bool should_move = origin_to_target || target_to_origin;
-  mooseAssert(!origin_to_target || !target_to_origin,
+  mooseAssert(origin_to_target && target_to_origin,
               "You told me to change the element subdomain from origin to target as well as from "
               "target to origin. I am confused.");
 

@@ -1,3 +1,7 @@
+[XFEM]
+  output_cut_plane = true
+[]
+
 [Mesh]
   [gen]
     type = GeneratedMeshGenerator
@@ -10,13 +14,13 @@
     input = 'gen'
     block_id = 1
     bottom_left = '0 0 0'
-    top_right = '0.1 1 1'
+    top_right = '0.5 1 1'
   []
   [right]
     type = SubdomainBoundingBoxGenerator
     input = 'left'
     block_id = 2
-    bottom_left = '0.1 0 0'
+    bottom_left = '0.5 0 0'
     top_right = '1 1 1'
   []
   [sidesets]
@@ -29,36 +33,36 @@
 []
 
 [UserObjects]
+  [cut]
+    type = LevelSetCutUserObject
+    level_set_var = phi
+    negative_id = 1
+    positive_id = 2
+    heal_always = true
+  []
   [moving_interface]
-    type = ChangeElementSubdomainByCoupledVariable
-    coupled_var = 'phi'
-    activate_value = 0
-    activate_type = below
-    origin_subdomain_id = 2
-    target_subdomain_id = 1
+    type = ChangeElementSubdomainByGeometricCut
+    cut = cut
+    origin_subdomain_id = 1
+    target_subdomain_id = 2
     moving_boundary_name = 'moving_interface'
     include_domain_boundary = false
-    reversible = false
-    initialize_solution_on_move = true
-    execute_on = 'INITIAL TIMESTEP_BEGIN'
-  []
-[]
-
-[Problem]
-  kernel_coverage_check = false
-[]
-
-[Variables]
-  [u]
-    block = 1
+    reversible = true
+    initialize_solution_on_move = false
+    execute_on = 'TIMESTEP_BEGIN TIMESTEP_END'
   []
 []
 
 [Functions]
   [wavy_interface]
     type = ParsedFunction
-    value = 'if(t<0.8, x-0.1-t+0.05*sin(5*pi*(y+t))+0.025*cos(8*pi*(y+2*t)), '
-            'x-0.1+t-1.6+0.05*sin(5*pi*(y+t))+0.025*cos(8*pi*(y+2*t)))'
+    value = 'if(t<0.8, x-0.113-t+0.05*sin(5*pi*(y+t))+0.025*cos(8*pi*(y+2*t)), '
+            'x-0.113+t-1.6+0.05*sin(5*pi*(y+t))+0.025*cos(8*pi*(y+2*t)))'
+  []
+[]
+
+[Variables]
+  [u]
   []
 []
 
@@ -85,7 +89,6 @@
     type = MatDiffusion
     diffusivity = 'diffusivity'
     variable = 'u'
-    block = 1
   []
 []
 
@@ -96,11 +99,21 @@
     boundary = 'left'
     value = 0
   []
-  [interface]
+  [right]
     type = DirichletBC
     variable = u
-    boundary = 'moving_interface'
+    boundary = 'right'
     value = 1
+  []
+[]
+
+[Constraints]
+  [u_continuity]
+    type = XFEMSingleVariableConstraint
+    variable = u
+    geometric_cut_userobject = cut
+    alpha = 100
+    use_penalty = true
   []
 []
 
@@ -130,7 +143,8 @@
   nl_abs_tol = 1e-08
 
   dt = 0.01
-  end_time = 0.8
+  end_time = 1.6
+  max_xfem_update = 1
 []
 
 [Outputs]
