@@ -257,13 +257,6 @@ public:
   }
 
   /**
-   * Randomly pick one node on the element that is in the physical domain
-   * @param elem Constant pointer to the element
-   * @return A constant pointer to the node
-   */
-  virtual const Node * pickOnePhysicalNode(const Elem * e) const;
-
-  /**
    * Determine which cut subdomain of the element belongs to relative to the cut
    * @param parent_elem The parent element
    * @param cut_elem    The element being cut
@@ -452,4 +445,11 @@ private:
   void setMaterialPropertiesForElement(const Elem * parent_elem,
                                        const Elem * cut_elem,
                                        const GeometricCutUserObject * gcuo);
+
+  /**
+   * Randomly pick one node on the element that is in the physical domain
+   * @param elem Constant pointer to the element
+   * @return A constant pointer to the node
+   */
+  virtual const Node * pickOnePhysicalNode(const Elem * e) const;
 };

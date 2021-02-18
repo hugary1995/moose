@@ -1,6 +1,6 @@
 # GeometricCutSubdomainIDAux
 
-!syntax description /Bounds/GeometricCutSubdomainIDAux
+!syntax description /AuxKernels/GeometricCutSubdomainIDAux
 
 ## Overview
 
@@ -8,8 +8,8 @@ The `GeometricCutSubdomainIDAux` outputs the GeometricCutSubdomainID for each el
 
 ## Example Input File Syntax
 
-!syntax parameters /Bounds/GeometricCutSubdomainIDAux
+!syntax parameters /AuxKernels/GeometricCutSubdomainIDAux
 
-!syntax inputs /Bounds/GeometricCutSubdomainIDAux
+!syntax inputs /AuxKernels/GeometricCutSubdomainIDAux
 
-!syntax children /Bounds/GeometricCutSubdomainIDAux
+!syntax children /AuxKernels/GeometricCutSubdomainIDAux

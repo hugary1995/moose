@@ -44,7 +44,7 @@ template <typename T, bool is_ad>
 GeometricCutSwitchingMaterialTempl<T, is_ad>::GeometricCutSwitchingMaterialTempl(
     const InputParameters & parameters)
   : Material(parameters),
-    _cut(getUserObject<GeometricCutUserObject>("geometric_cut_userobject")),
+    _cut(&getUserObject<GeometricCutUserObject>("geometric_cut_userobject")),
     _keys(getParam<std::vector<GeometricCutSubdomainID>>("base_name_keys")),
     _vals(getParam<std::vector<std::string>>("base_name_vals")),
     _base_name(isParamValid("base_name") ? getParam<std::string>("base_name") + "_" : ""),
@@ -72,8 +72,7 @@ template <typename T, bool is_ad>
 void
 GeometricCutSwitchingMaterialTempl<T, is_ad>::computeProperties()
 {
-  const Node * node = _xfem->pickOnePhysicalNode(_current_elem);
-  unsigned int key = _cut.getCutSubdomainID(node);
+  GeometricCutSubdomainID key = _xfem->getGeometricCutSubdomainID(_current_elem, _cut);
 
   // We may run into situations where the key doesn't exist in the base_name_map. This may happen
   // when the problem is not well defined, or the level-set variables are very nonlinear, so that
