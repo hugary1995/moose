@@ -193,7 +193,7 @@ public:
   virtual GeometricCutSubdomainID getCutSubdomainID(const Node * /*node*/) const
   {
     mooseError("Objects that inherit from GeometricCutUserObject should override the "
-               "getCutSideID method");
+               "getCutSubdomainID method");
     return 0;
   }
 

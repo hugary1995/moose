@@ -102,6 +102,8 @@ public:
 
   virtual void initSolution(NonlinearSystemBase & nl, AuxiliarySystem & aux) override;
 
+  virtual void initMaterialProperties() override;
+
   void buildEFAMesh();
   bool markCuts(Real time);
   bool markCutEdgesByGeometry();
@@ -332,12 +334,10 @@ private:
    * Data structures to store material properties of the children elements prior to heal. These
    * material properties are copied back to the children elements if the healed element is re-cut.
    */
-  std::map<const Elem *, std::map<const GeometricCutSubdomainID, const Elem *>> _healed_elems;
-  std::map<const Elem *, std::map<const GeometricCutSubdomainID, bool>>
-      _healed_material_properties_used;
-
-  /// healed geometric cuts
-  std::map<const Elem *, const GeometricCutUserObject *> _healed_cuts;
+  typedef std::tuple<const Elem *, const GeometricCutUserObject *, GeometricCutSubdomainID>
+      GeometricCutElemInfo;
+  std::map<const Elem *, GeometricCutElemInfo> _geom_cut_elems;
+  std::map<const Elem *, GeometricCutElemInfo> _old_geom_cut_elems;
 
   /**
    * Store the solution in stored_solution for a given node
@@ -433,23 +433,19 @@ private:
    * @param elem2       The second child element
    */
   void storeMaterialPropertiesForElements(const Elem * parent_elem,
-                                          const std::vector<const Elem *> & elems,
-                                          const GeometricCutUserObject * gcuo);
+                                          const std::vector<const Elem *> & elems);
 
   /**
    * Helper function to store the material properties of a healed element
-   * @param parent_elem The parent element
-   * @param cut_elem    The element being cut
-   * @param elem_from   The element to copy material properties from
+   * @param elem       The cut element to restore material properties to.
+   * @param elem_from  The element to copy material properties from.
    */
-  void setMaterialPropertiesForElement(const Elem * parent_elem,
-                                       const Elem * cut_elem,
-                                       const GeometricCutUserObject * gcuo);
+  void setMaterialPropertiesForElement(const Elem * elem, const Elem * elem_from);
 
   /**
    * Randomly pick one node on the element that is in the physical domain
    * @param elem Constant pointer to the element
    * @return A constant pointer to the node
    */
-  virtual const Node * pickOnePhysicalNode(const Elem * e) const;
+  const Node * pickOnePhysicalNode(const Elem * e) const;
 };
