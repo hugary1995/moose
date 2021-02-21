@@ -373,8 +373,9 @@ XFEM::initMaterialProperties()
         setMaterialPropertiesForElement(elem, elem_from);
 
       // Now that the old material properties have been used, remove the entry in the old map
-      // TODO: also erase the corresponding entries in MaterialPropertyStorage.
       _old_geom_cut_elems.erase(elem_from);
+      (*_material_data)[0]->eraseProperty(elem_from);
+      (*_bnd_material_data)[0]->eraseProperty(elem_from);
     }
   }
 
@@ -396,7 +397,11 @@ XFEM::initMaterialProperties()
         GeometricCutSubdomainID old_csid = std::get<2>(ogce.second);
         GeometricCutSubdomainID cur_csid = getGeometricCutSubdomainID(parent_elem, gcuo);
         if (old_csid == cur_csid && cut_elem != parent_elem)
+        {
           setMaterialPropertiesForElement(parent_elem, cut_elem);
+          (*_material_data)[0]->eraseProperty(cut_elem);
+          (*_bnd_material_data)[0]->eraseProperty(cut_elem);
+        }
       }
     }
 
@@ -1477,10 +1482,6 @@ XFEM::cutMeshWithEFA(NonlinearSystemBase & nl, AuxiliarySystem & aux)
     }
 
     elem_to_delete->nullify_neighbors();
-
-    // remove the property storage of deleted element/side
-    (*_material_data)[0]->eraseProperty(elem_to_delete);
-    (*_bnd_material_data)[0]->eraseProperty(elem_to_delete);
 
     _mesh->boundary_info->remove(elem_to_delete);
     unsigned int deleted_elem_id = elem_to_delete->id();
