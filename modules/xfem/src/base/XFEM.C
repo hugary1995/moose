@@ -338,76 +338,82 @@ void
 XFEM::initMaterialProperties()
 {
   // If there is no stateful material data, there is no need to initialize the material properties.
-  if (!(*_material_data)[0]->getMaterialPropertyStorage().hasStatefulProperties())
-    return;
-
-  for (auto & elem : as_range(_mesh->local_elements_begin(), _mesh->local_elements_end()))
+  if ((*_material_data)[0]->getMaterialPropertyStorage().hasStatefulProperties())
   {
-    // If the parent element was previously healed, copy the stored material properties into the
-    // new element. If the parent element wasn't previously healed, copy the parent's material
-    // properties into the new element.
-    auto gceit = _geom_cut_elems.find(elem);
 
-    if (gceit != _geom_cut_elems.end())
+    for (auto & elem : as_range(_mesh->local_elements_begin(), _mesh->local_elements_end()))
     {
-      // If the geometric cut userobject does not heal, then there is no need to initialize the
-      // material properties.
-      const GeometricCutUserObject * gcuo = std::get<1>(gceit->second);
-      if (!gcuo || !gcuo->shouldHealMesh())
-        continue;
+      // If the parent element was previously healed, copy the stored material properties into the
+      // new element. If the parent element wasn't previously healed, copy the parent's material
+      // properties into the new element.
+      auto gceit = _geom_cut_elems.find(elem);
 
-      // Now we can evaluate the geometric cut subdomain ID since the solution has been properly
-      // initialized.
-      std::get<2>(gceit->second) = getGeometricCutSubdomainID(elem, gcuo);
-
-      // Find the element to copy data from.
-      // Iterate through the old geometrically cut elements, if its parent element AND the geometric
-      // cut user object AND the geometric cut subdomain ID are the same as the current element,
-      // then that must be it.
-      const GeometricCutElemInfo & info = gceit->second;
-      const Elem * elem_from = nullptr;
-      for (auto ogce : _old_geom_cut_elems)
-        if (ogce.second == info)
-          elem_from = ogce.first;
-      if (elem_from)
-        setMaterialPropertiesForElement(elem, elem_from);
-
-      // Now that the old material properties have been used, remove the entry in the old map
-      _old_geom_cut_elems.erase(elem_from);
-      (*_material_data)[0]->eraseProperty(elem_from);
-      (*_bnd_material_data)[0]->eraseProperty(elem_from);
-    }
-  }
-
-  // Everytime material properties are set for a geometrically cut element, its corresponding entry
-  // in the old is deleted. Therefore, any remaining entry in the old map represents a previously
-  // healed element that has not been re-cut, or a cut element that is off-processor. We need to
-  // figure out the local elements' current geometric cut subdomain ID and assign the corresponding
-  // material properties to it.
-  for (auto & elem : as_range(_mesh->local_elements_begin(), _mesh->local_elements_end()))
-    for (auto ogce : _old_geom_cut_elems)
-    {
-      const Elem * parent_elem = std::get<0>(ogce.second);
-      if (parent_elem == elem)
+      if (gceit != _geom_cut_elems.end())
       {
-        const Elem * cut_elem = ogce.first;
-        const GeometricCutUserObject * gcuo = std::get<1>(ogce.second);
+        // If the geometric cut userobject does not heal, then there is no need to initialize the
+        // material properties.
+        const GeometricCutUserObject * gcuo = std::get<1>(gceit->second);
         if (!gcuo || !gcuo->shouldHealMesh())
           continue;
-        GeometricCutSubdomainID old_csid = std::get<2>(ogce.second);
-        GeometricCutSubdomainID cur_csid = getGeometricCutSubdomainID(parent_elem, gcuo);
-        if (old_csid == cur_csid && cut_elem != parent_elem)
-        {
-          setMaterialPropertiesForElement(parent_elem, cut_elem);
-          (*_material_data)[0]->eraseProperty(cut_elem);
-          (*_bnd_material_data)[0]->eraseProperty(cut_elem);
-        }
+
+        // Now we can evaluate the geometric cut subdomain ID since the solution has been properly
+        // initialized.
+        std::get<2>(gceit->second) = getGeometricCutSubdomainID(elem, gcuo);
+
+        // Find the element to copy data from.
+        // Iterate through the old geometrically cut elements, if its parent element AND the
+        // geometric cut user object AND the geometric cut subdomain ID are the same as the current
+        // element, then that must be it.
+        const GeometricCutElemInfo & info = gceit->second;
+        const Elem * elem_from = nullptr;
+        for (auto ogce : _old_geom_cut_elems)
+          if (ogce.second == info)
+            elem_from = ogce.first;
+
+        setMaterialPropertiesForElement(elem, elem_from);
+
+        // Now that the old material properties have been used, remove the entry in the old map
+        _old_geom_cut_elems.erase(elem_from);
       }
     }
+
+    // Everytime material properties are set for a geometrically cut element, its corresponding
+    // entry in the old map is deleted. Therefore, any remaining entry in the old map represents a
+    // previously healed element that has not been re-cut, or a cut element that is off-processor.
+    // We need to figure out the local elements' current geometric cut subdomain ID and assign the
+    // corresponding material properties to it.
+    for (auto & elem : as_range(_mesh->local_elements_begin(), _mesh->local_elements_end()))
+      for (auto ogce : _old_geom_cut_elems)
+      {
+        const Elem * parent_elem = std::get<0>(ogce.second);
+        if (parent_elem == elem)
+        {
+          const Elem * cut_elem = ogce.first;
+          const GeometricCutUserObject * gcuo = std::get<1>(ogce.second);
+          if (!gcuo || !gcuo->shouldHealMesh())
+            continue;
+          GeometricCutSubdomainID old_csid = std::get<2>(ogce.second);
+          GeometricCutSubdomainID cur_csid = getGeometricCutSubdomainID(parent_elem, gcuo);
+          if (old_csid == cur_csid && cut_elem != parent_elem)
+            setMaterialPropertiesForElement(parent_elem, cut_elem);
+        }
+      }
+  }
 
   // After initializing material properties for newly created elements, shift the map back in time
   _old_geom_cut_elems = _geom_cut_elems;
   _geom_cut_elems.clear();
+
+  // Remove the dangling material properties
+  for (auto e : _mat_props_to_erase)
+    if (std::find(_mesh->local_elements_begin(), _mesh->local_elements_end(), e) ==
+        _mesh->local_elements_end())
+    {
+      (*_material_data)[0]->eraseProperty(e);
+      (*_bnd_material_data)[0]->eraseProperty(e);
+    }
+
+  _mat_props_to_erase.clear();
 }
 
 void
@@ -1001,6 +1007,9 @@ XFEM::healMesh()
   unsigned int deleted_elem_count = 0;
   std::vector<std::string> healed_geometric_cuts;
 
+  _healed_mat_props.clear();
+  _bnd_healed_mat_props.clear();
+
   for (unsigned int i = 0; i < _geometric_cuts.size(); ++i)
   {
     if (_geometric_cuts[i]->shouldHealMesh())
@@ -1036,6 +1045,15 @@ XFEM::healMesh()
         else
           mooseError("Could not find XFEMCutElem for element to be kept in healing");
 
+        // Store the material properties of the elements to be healed. So that if the element is
+        // immediately re-cut, we can restore the material properties (especially those stateful
+        // ones).
+        if (elem1->processor_id() == _mesh->processor_id() &&
+            elem2->processor_id() == _mesh->processor_id() &&
+            (*_material_data)[0]->getMaterialPropertyStorage().hasStatefulProperties())
+          storeMaterialPropertiesForElements(elem1, {{elem1, elem2}});
+        _mat_props_to_erase.insert(elem2);
+
         if (_displaced_mesh)
         {
           Elem * elem1_displaced = _displaced_mesh->elem_ptr(it.first->id());
@@ -1067,11 +1085,6 @@ XFEM::healMesh()
           _displaced_mesh->boundary_info->remove(elem2_displaced);
           _displaced_mesh->delete_elem(elem2_displaced);
         }
-
-        if (elem1->processor_id() == _mesh->processor_id() &&
-            elem2->processor_id() == _mesh->processor_id() &&
-            (*_material_data)[0]->getMaterialPropertyStorage().hasStatefulProperties())
-          storeMaterialPropertiesForElements(elem1, {{elem1, elem2}});
 
         cutelems_to_delete.insert(elem2->unique_id());
         elem2->nullify_neighbors();
@@ -1471,6 +1484,7 @@ XFEM::cutMeshWithEFA(NonlinearSystemBase & nl, AuxiliarySystem & aux)
   for (std::size_t i = 0; i < delete_elements.size(); ++i)
   {
     Elem * elem_to_delete = _mesh->elem_ptr(delete_elements[i]->id());
+    _mat_props_to_erase.insert(elem_to_delete);
 
     // delete the XFEMCutElem object for any elements that are to be deleted
     std::map<unique_id_type, XFEMCutElem *>::iterator cemit =
@@ -2158,24 +2172,64 @@ XFEM::storeMaterialPropertiesForElements(const Elem * parent_elem,
 {
   for (auto e : elems)
   {
+    // Set the parent element so that it is consistent post-healing
     std::get<0>(_old_geom_cut_elems[e]) = parent_elem;
-    std::get<0>(_old_geom_cut_elems[e]) = parent_elem;
+
+    // Locally store the element material properties
+    HashMap<unsigned int, MaterialProperties> props, props_old, props_older;
+    props = (*_material_data)[0]->getMaterialPropertyStorage().props().at(e);
+    props_old = (*_material_data)[0]->getMaterialPropertyStorage().propsOld().at(e);
+    if ((*_material_data)[0]->getMaterialPropertyStorage().hasOlderProperties())
+      props_older = (*_material_data)[0]->getMaterialPropertyStorage().propsOlder().at(e);
+    _healed_mat_props.emplace(e, ElemMaterialProperties(props, props_old, props_older));
+
+    // Locally store the boundary material properties, if any
+    for (unsigned int side = 0; side < e->n_sides(); ++side)
+    {
+      std::vector<boundary_id_type> elem_boundary_ids;
+      _mesh->boundary_info->boundary_ids(e, side, elem_boundary_ids);
+      for (auto bdid : elem_boundary_ids)
+        if (_fe_problem->needBoundaryMaterialOnSide(bdid, 0))
+        {
+          props = (*_bnd_material_data)[0]->getMaterialPropertyStorage().props().at(e);
+          props_old = (*_bnd_material_data)[0]->getMaterialPropertyStorage().propsOld().at(e);
+          if ((*_bnd_material_data)[0]->getMaterialPropertyStorage().hasOlderProperties())
+            props_older = (*_bnd_material_data)[0]->getMaterialPropertyStorage().propsOlder().at(e);
+          _bnd_healed_mat_props.emplace(e, ElemMaterialProperties(props, props_old, props_older));
+        }
+    }
   }
 }
 
 void
 XFEM::setMaterialPropertiesForElement(const Elem * elem, const Elem * elem_from)
 {
-  // Copy material properties to the cut element.
-  (*_material_data)[0]->copy(elem, elem_from, 0);
-  for (unsigned int side = 0; side < elem->n_sides(); ++side)
+  // Restore the element material properties
+  auto hmpit = _healed_mat_props.find(elem_from);
+  if (hmpit != _healed_mat_props.end())
   {
-    std::vector<boundary_id_type> elem_boundary_ids;
-    _mesh->boundary_info->boundary_ids(elem, side, elem_boundary_ids);
-    for (auto bdid : elem_boundary_ids)
+    (*_material_data)[0]->copy(elem,
+                               std::get<0>(hmpit->second),
+                               std::get<1>(hmpit->second),
+                               std::get<2>(hmpit->second),
+                               0);
+  }
+
+  // Restore the boundary material properties, if any
+  auto bhmpit = _bnd_healed_mat_props.find(elem_from);
+  if (bhmpit != _bnd_healed_mat_props.end())
+  {
+    for (unsigned int side = 0; side < elem->n_sides(); ++side)
     {
-      if (_fe_problem->needBoundaryMaterialOnSide(bdid, 0))
-        (*_bnd_material_data)[0]->copy(elem, elem_from, side);
+      std::vector<boundary_id_type> elem_boundary_ids;
+      _mesh->boundary_info->boundary_ids(elem, side, elem_boundary_ids);
+      for (auto bdid : elem_boundary_ids)
+        if (_fe_problem->needBoundaryMaterialOnSide(bdid, 0))
+          (*_bnd_material_data)[0]->copy(elem,
+                                         std::get<0>(bhmpit->second),
+                                         std::get<1>(bhmpit->second),
+                                         std::get<2>(bhmpit->second),
+                                         side);
     }
   }
 }

@@ -338,6 +338,13 @@ private:
       GeometricCutElemInfo;
   std::map<const Elem *, GeometricCutElemInfo> _geom_cut_elems;
   std::map<const Elem *, GeometricCutElemInfo> _old_geom_cut_elems;
+  typedef std::tuple<HashMap<unsigned int, MaterialProperties>,
+                     HashMap<unsigned int, MaterialProperties>,
+                     HashMap<unsigned int, MaterialProperties>>
+      ElemMaterialProperties;
+  std::map<const Elem *, ElemMaterialProperties> _healed_mat_props;
+  std::map<const Elem *, ElemMaterialProperties> _bnd_healed_mat_props;
+  std::set<const Elem *> _mat_props_to_erase;
 
   /**
    * Store the solution in stored_solution for a given node
