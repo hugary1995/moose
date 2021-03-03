@@ -46,7 +46,7 @@ protected:
 
   ConstBndNodeRange & movedBndNodesRange() const { return *_moved_bnd_nodes_range.get(); }
 
-  std::shared_ptr<DisplacedProblem> _displaced_problem;
+  DisplacedProblem * _displaced_problem;
 
 private:
   void setMovingBoundaryName(MooseMesh & mesh);

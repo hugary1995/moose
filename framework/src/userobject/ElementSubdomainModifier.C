@@ -38,7 +38,7 @@ ElementSubdomainModifier::validParams()
 
 ElementSubdomainModifier::ElementSubdomainModifier(const InputParameters & parameters)
   : ElementUserObject(parameters),
-    _displaced_problem(_fe_problem.getDisplacedProblem()),
+    _displaced_problem(_fe_problem.getDisplacedProblem().get()),
     _apply_ic(getParam<bool>("apply_initial_conditions")),
     _moving_boundary_specified(isParamValid("moving_boundary_name"))
 {
@@ -130,11 +130,12 @@ ElementSubdomainModifier::finalize()
   // Reinit equation systems
   _fe_problem.meshChanged();
 
+  // Apply initial condition for the newly moved elements and boundary nodes
+  buildMovedElemsRange();
+  buildMovedBndNodesRange();
+
   if (_apply_ic)
   {
-    // Apply initial condition for the newly moved elements and boundary nodes
-    buildMovedElemsRange();
-    buildMovedBndNodesRange();
     _fe_problem.projectInitialConditionOnCustomRange(movedElemsRange(), movedBndNodesRange());
 
     // Set old and older solution on the initialized dofs
