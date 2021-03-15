@@ -9,26 +9,21 @@
 
 #pragma once
 
-// Moose Includes
+// MOOSE includes
 #include "XFEMInterfaceKernel.h"
 #include "Function.h"
 
-class XFEMPressure : public XFEMInterfaceKernel
+class XFEMInterfaceFunctionNeumannBC : public XFEMInterfaceKernel
 {
 public:
   static InputParameters validParams();
 
-  XFEMPressure(const InputParameters & parameters);
+  XFEMInterfaceFunctionNeumannBC(const InputParameters & parameters);
 
 protected:
   virtual Real computeQpResidual() override;
+  virtual Real computeQpJacobian() override;
 
-  /// Component of the normal traction
-  const int _component;
-
-  /// Factor to be multiplied to the pressure
-  const Real _factor;
-
-  /// Function to be multiplied to the pressure
-  const Function * const _function;
+  /// The function being used for setting the value
+  const Function & _func;
 };

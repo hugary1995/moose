@@ -11,24 +11,24 @@
 
 // Moose Includes
 #include "XFEMInterfaceKernel.h"
-#include "Function.h"
 
-class XFEMPressure : public XFEMInterfaceKernel
+class XFEMInterfaceConvectiveHeatFluxBC : public XFEMInterfaceKernel
 {
 public:
   static InputParameters validParams();
 
-  XFEMPressure(const InputParameters & parameters);
+  XFEMInterfaceConvectiveHeatFluxBC(const InputParameters & parameters);
 
 protected:
   virtual Real computeQpResidual() override;
+  virtual Real computeQpJacobian() override;
 
-  /// Component of the normal traction
-  const int _component;
+  /// Far-field temperature variable
+  const MaterialProperty<Real> & _T_infinity;
 
-  /// Factor to be multiplied to the pressure
-  const Real _factor;
+  /// Convective heat transfer coefficient
+  const MaterialProperty<Real> & _htc;
 
-  /// Function to be multiplied to the pressure
-  const Function * const _function;
+  /// Derivative of convective heat transfer coefficient with respect to temperature
+  const MaterialProperty<Real> & _htc_dT;
 };
