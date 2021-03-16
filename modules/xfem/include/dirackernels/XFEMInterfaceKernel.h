@@ -20,7 +20,7 @@ public:
 
   XFEMInterfaceKernel(const InputParameters & parameters);
 
-  virtual void addPoints();
+  virtual void addPoints() override;
 
 protected:
   virtual void reinitQp() override;
