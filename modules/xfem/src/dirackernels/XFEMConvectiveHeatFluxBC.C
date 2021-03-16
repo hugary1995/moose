@@ -29,8 +29,7 @@ XFEMConvectiveHeatFluxBC::validParams()
   return params;
 }
 
-XFEMConvectiveHeatFluxBC::XFEMConvectiveHeatFluxBC(
-    const InputParameters & parameters)
+XFEMConvectiveHeatFluxBC::XFEMConvectiveHeatFluxBC(const InputParameters & parameters)
   : XFEMIntegratedBC(parameters),
     _T_infinity(getMaterialProperty<Real>("T_infinity")),
     _htc(getMaterialProperty<Real>("heat_transfer_coefficient")),
