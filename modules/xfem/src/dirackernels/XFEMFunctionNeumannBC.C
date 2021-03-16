@@ -7,32 +7,32 @@
 //* Licensed under LGPL 2.1, please see LICENSE for details
 //* https://www.gnu.org/licenses/lgpl-2.1.html
 
-#include "XFEMInterfaceFunctionNeumannBC.h"
+#include "XFEMFunctionNeumannBC.h"
 
-registerMooseObject("XFEMApp", XFEMInterfaceFunctionNeumannBC);
+registerMooseObject("XFEMApp", XFEMFunctionNeumannBC);
 
 InputParameters
-XFEMInterfaceFunctionNeumannBC::validParams()
+XFEMFunctionNeumannBC::validParams()
 {
-  InputParameters params = XFEMInterfaceKernel::validParams();
+  InputParameters params = XFEMIntegratedBC::validParams();
   params.addClassDescription("A constant Neumann BC on an XFEM interface.");
   params.addRequiredParam<FunctionName>("function", "The function");
   return params;
 }
 
-XFEMInterfaceFunctionNeumannBC::XFEMInterfaceFunctionNeumannBC(const InputParameters & parameters)
-  : XFEMInterfaceKernel(parameters), _func(getFunction("function"))
+XFEMFunctionNeumannBC::XFEMFunctionNeumannBC(const InputParameters & parameters)
+  : XFEMIntegratedBC(parameters), _func(getFunction("function"))
 {
 }
 
 Real
-XFEMInterfaceFunctionNeumannBC::computeQpResidual()
+XFEMFunctionNeumannBC::computeQpResidual()
 {
   return -_test[_i][_qp] * _func.value(_t, _current_point);
 }
 
 Real
-XFEMInterfaceFunctionNeumannBC::computeQpJacobian()
+XFEMFunctionNeumannBC::computeQpJacobian()
 {
   return 0;
 }

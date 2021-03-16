@@ -1,5 +1,5 @@
 [Tests]
-  design = 'XFEMInterfaceConvectiveHeatFluxBC.md'
+  design = 'XFEMConvectiveHeatFluxBC.md'
   issues = '#17331'
   [2d]
     type = Exodiff

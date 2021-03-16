@@ -7,11 +7,11 @@
 //* Licensed under LGPL 2.1, please see LICENSE for details
 //* https://www.gnu.org/licenses/lgpl-2.1.html
 
-#include "XFEMInterfaceKernel.h"
+#include "XFEMIntegratedBC.h"
 #include "ElementPairLocator.h"
 
 InputParameters
-XFEMInterfaceKernel::validParams()
+XFEMIntegratedBC::validParams()
 {
   InputParameters params = DiracKernel::validParams();
   params.addClassDescription("Applies a pressure on an interface cut by XFEM.");
@@ -20,7 +20,7 @@ XFEMInterfaceKernel::validParams()
   return params;
 }
 
-XFEMInterfaceKernel::XFEMInterfaceKernel(const InputParameters & parameters)
+XFEMIntegratedBC::XFEMIntegratedBC(const InputParameters & parameters)
   : DiracKernel(parameters),
     _gcuo(getUserObject<GeometricCutUserObject>("geometric_cut_userobject")),
     _interface_id(_gcuo.getInterfaceID()),
@@ -29,7 +29,7 @@ XFEMInterfaceKernel::XFEMInterfaceKernel(const InputParameters & parameters)
 }
 
 void
-XFEMInterfaceKernel::addPoints()
+XFEMIntegratedBC::addPoints()
 {
   _elem_qp_normal.clear();
   _elem_qp_JxW.clear();
@@ -58,7 +58,7 @@ XFEMInterfaceKernel::addPoints()
 }
 
 void
-XFEMInterfaceKernel::reinitQp()
+XFEMIntegratedBC::reinitQp()
 {
   _current_point = _physical_point[_qp];
   _interface_normal = _elem_qp_normal[_current_elem][_qp];

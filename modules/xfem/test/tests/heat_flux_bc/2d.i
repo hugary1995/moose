@@ -41,7 +41,7 @@
 
 [DiracKernels]
   [right]
-    type = XFEMInterfaceConvectiveHeatFluxBC
+    type = XFEMConvectiveHeatFluxBC
     variable = temp
     geometric_cut_userobject = line_seg_cut_uo
     T_infinity = 100

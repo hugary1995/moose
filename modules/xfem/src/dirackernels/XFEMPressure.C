@@ -14,7 +14,7 @@ registerMooseObject("XFEMApp", XFEMPressure);
 InputParameters
 XFEMPressure::validParams()
 {
-  InputParameters params = XFEMInterfaceKernel::validParams();
+  InputParameters params = XFEMIntegratedBC::validParams();
   params.addClassDescription("Applies a pressure on an interface cut by XFEM.");
   params.addRequiredParam<unsigned int>("component", "The component for the pressure");
   params.addParam<Real>("factor", 1.0, "The magnitude to use in computing the pressure");
@@ -23,7 +23,7 @@ XFEMPressure::validParams()
 }
 
 XFEMPressure::XFEMPressure(const InputParameters & parameters)
-  : XFEMInterfaceKernel(parameters),
+  : XFEMIntegratedBC(parameters),
     _component(getParam<unsigned int>("component")),
     _factor(getParam<Real>("factor")),
     _function(isParamValid("function") ? &getFunction("function") : NULL)

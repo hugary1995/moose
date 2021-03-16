@@ -10,10 +10,10 @@
 #pragma once
 
 // Moose Includes
-#include "XFEMInterfaceKernel.h"
+#include "XFEMIntegratedBC.h"
 #include "Function.h"
 
-class XFEMPressure : public XFEMInterfaceKernel
+class XFEMPressure : public XFEMIntegratedBC
 {
 public:
   static InputParameters validParams();

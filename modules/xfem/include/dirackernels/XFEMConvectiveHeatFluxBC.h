@@ -10,14 +10,14 @@
 #pragma once
 
 // Moose Includes
-#include "XFEMInterfaceKernel.h"
+#include "XFEMIntegratedBC.h"
 
-class XFEMInterfaceConvectiveHeatFluxBC : public XFEMInterfaceKernel
+class XFEMConvectiveHeatFluxBC : public XFEMIntegratedBC
 {
 public:
   static InputParameters validParams();
 
-  XFEMInterfaceConvectiveHeatFluxBC(const InputParameters & parameters);
+  XFEMConvectiveHeatFluxBC(const InputParameters & parameters);
 
 protected:
   virtual Real computeQpResidual() override;

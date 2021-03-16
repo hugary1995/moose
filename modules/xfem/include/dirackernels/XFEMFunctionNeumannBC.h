@@ -10,18 +10,20 @@
 #pragma once
 
 // MOOSE includes
-#include "XFEMInterfaceKernel.h"
+#include "XFEMIntegratedBC.h"
+#include "Function.h"
 
-class XFEMInterfaceNeumannBC : public XFEMInterfaceKernel
+class XFEMFunctionNeumannBC : public XFEMIntegratedBC
 {
 public:
   static InputParameters validParams();
 
-  XFEMInterfaceNeumannBC(const InputParameters & parameters);
+  XFEMFunctionNeumannBC(const InputParameters & parameters);
 
 protected:
   virtual Real computeQpResidual() override;
   virtual Real computeQpJacobian() override;
 
-  const Real _v;
+  /// The function being used for setting the value
+  const Function & _func;
 };

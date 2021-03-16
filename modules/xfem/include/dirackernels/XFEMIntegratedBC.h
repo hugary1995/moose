@@ -13,12 +13,12 @@
 #include "DiracKernel.h"
 #include "GeometricCutUserObject.h"
 
-class XFEMInterfaceKernel : public DiracKernel
+class XFEMIntegratedBC : public DiracKernel
 {
 public:
   static InputParameters validParams();
 
-  XFEMInterfaceKernel(const InputParameters & parameters);
+  XFEMIntegratedBC(const InputParameters & parameters);
 
   virtual void addPoints() override;
 

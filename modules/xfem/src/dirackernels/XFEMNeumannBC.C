@@ -7,32 +7,32 @@
 //* Licensed under LGPL 2.1, please see LICENSE for details
 //* https://www.gnu.org/licenses/lgpl-2.1.html
 
-#include "XFEMInterfaceNeumannBC.h"
+#include "XFEMNeumannBC.h"
 
-registerMooseObject("XFEMApp", XFEMInterfaceNeumannBC);
+registerMooseObject("XFEMApp", XFEMNeumannBC);
 
 InputParameters
-XFEMInterfaceNeumannBC::validParams()
+XFEMNeumannBC::validParams()
 {
-  InputParameters params = XFEMInterfaceKernel::validParams();
+  InputParameters params = XFEMIntegratedBC::validParams();
   params.addClassDescription("A constant Neumann BC on an XFEM interface.");
   params.addRequiredParam<Real>("value", "Value of the BC");
   return params;
 }
 
-XFEMInterfaceNeumannBC::XFEMInterfaceNeumannBC(const InputParameters & parameters)
-  : XFEMInterfaceKernel(parameters), _v(getParam<Real>("value"))
+XFEMNeumannBC::XFEMNeumannBC(const InputParameters & parameters)
+  : XFEMIntegratedBC(parameters), _v(getParam<Real>("value"))
 {
 }
 
 Real
-XFEMInterfaceNeumannBC::computeQpResidual()
+XFEMNeumannBC::computeQpResidual()
 {
   return -_test[_i][_qp] * _v;
 }
 
 Real
-XFEMInterfaceNeumannBC::computeQpJacobian()
+XFEMNeumannBC::computeQpJacobian()
 {
   return 0;
 }

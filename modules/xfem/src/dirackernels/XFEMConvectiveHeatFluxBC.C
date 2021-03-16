@@ -7,14 +7,14 @@
 //* Licensed under LGPL 2.1, please see LICENSE for details
 //* https://www.gnu.org/licenses/lgpl-2.1.html
 
-#include "XFEMInterfaceConvectiveHeatFluxBC.h"
+#include "XFEMConvectiveHeatFluxBC.h"
 
-registerMooseObject("XFEMApp", XFEMInterfaceConvectiveHeatFluxBC);
+registerMooseObject("XFEMApp", XFEMConvectiveHeatFluxBC);
 
 InputParameters
-XFEMInterfaceConvectiveHeatFluxBC::validParams()
+XFEMConvectiveHeatFluxBC::validParams()
 {
-  InputParameters params = XFEMInterfaceKernel::validParams();
+  InputParameters params = XFEMIntegratedBC::validParams();
   params.addClassDescription(
       "Convective heat transfer across an XFEM interface with temperature and heat "
       "transfer coefficent given by material properties.");
@@ -29,9 +29,9 @@ XFEMInterfaceConvectiveHeatFluxBC::validParams()
   return params;
 }
 
-XFEMInterfaceConvectiveHeatFluxBC::XFEMInterfaceConvectiveHeatFluxBC(
+XFEMConvectiveHeatFluxBC::XFEMConvectiveHeatFluxBC(
     const InputParameters & parameters)
-  : XFEMInterfaceKernel(parameters),
+  : XFEMIntegratedBC(parameters),
     _T_infinity(getMaterialProperty<Real>("T_infinity")),
     _htc(getMaterialProperty<Real>("heat_transfer_coefficient")),
     _htc_dT(getMaterialProperty<Real>("heat_transfer_coefficient_dT"))
@@ -39,13 +39,13 @@ XFEMInterfaceConvectiveHeatFluxBC::XFEMInterfaceConvectiveHeatFluxBC(
 }
 
 Real
-XFEMInterfaceConvectiveHeatFluxBC::computeQpResidual()
+XFEMConvectiveHeatFluxBC::computeQpResidual()
 {
   return -_test[_i][_qp] * _htc[_qp] * (_T_infinity[_qp] - _u[_qp]);
 }
 
 Real
-XFEMInterfaceConvectiveHeatFluxBC::computeQpJacobian()
+XFEMConvectiveHeatFluxBC::computeQpJacobian()
 {
   return -_test[_i][_qp] * _phi[_j][_qp] *
          (-_htc[_qp] + _htc_dT[_qp] * (_T_infinity[_qp] - _u[_qp]));

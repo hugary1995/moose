@@ -41,7 +41,7 @@
 
 [DiracKernels]
   [right]
-    type = XFEMInterfaceFunctionNeumannBC
+    type = XFEMFunctionNeumannBC
     variable = temp
     geometric_cut_userobject = line_seg_cut_uo
     function = '-x'
