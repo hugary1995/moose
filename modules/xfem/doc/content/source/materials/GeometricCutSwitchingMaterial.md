@@ -2,7 +2,9 @@
 
 !syntax description /Materials/GeometricCutSwitchingMaterialReal
 
-`GeometricCutSwitchingMaterial` has four instantiations depending on the type of the material property:
+To allow using XFEM to model interfaces between materials, the XFEM system uses geometric cut subdomain IDs to denote the subset of a standard MOOSE subdomain (element block) that a material point belongs to. Based on these geometric cut subdomains, `GeometricCutSwitchingMaterial` is a templated class that is used to switch between material properties depending on which geometric cut subdomain a point is located within. This class reads in multiple versions of a material property, all with different values of `base_name`, and sets the value of the material property without that base name to the name of the property that applies to the current geometric cut subdomain.
+
+This class has four instantiations described below that are used to switch between properties with specific types:
 
 ## GeometricCutSwitchingMaterialReal
 

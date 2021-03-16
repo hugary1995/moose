@@ -331,19 +331,47 @@ private:
   std::map<unique_id_type, std::vector<Real>> _cached_aux_solution;
 
   /**
-   * Data structures to store material properties of the children elements prior to heal. These
-   * material properties are copied back to the children elements if the healed element is re-cut.
+   * Information about a geometrically cut element. This is a tuple of (0) the parent
+   * element, (1) the geometric cut userobject that cuts the element, and (2) the geometric cut
+   * subdomain ID.
    */
   typedef std::tuple<const Elem *, const GeometricCutUserObject *, GeometricCutSubdomainID>
       GeometricCutElemInfo;
+
+  /**
+   * All geometrically cut elements and their GeometricCutElemInfo during the current execution of
+   * XFEM_MARK. This data structure is updated everytime a new cut element is created. Its
+   * GeometricCutElemInfo is filled with (0) its parent element, (1) the geometric cut userobject
+   * and (2) an invalid geometric cut subdomain ID. During healing, the parent element will be
+   * updated to be consistent with the element kept. After the execution of XFEM_MARK and
+   * initSolution(), the invalid geometric cut subdomain IDs will be updated based on the updated
+   * solution.
+   */
   std::map<const Elem *, GeometricCutElemInfo> _geom_cut_elems;
+
+  /**
+   * All geometrically cut elements and their GeometricCutElemInfo before the current execution of
+   * XFEM_MARK.
+   */
   std::map<const Elem *, GeometricCutElemInfo> _old_geom_cut_elems;
+
+  /// Convenient typedef for local storage of stateful material properties
   typedef std::tuple<HashMap<unsigned int, MaterialProperties>,
                      HashMap<unsigned int, MaterialProperties>,
                      HashMap<unsigned int, MaterialProperties>>
       ElemMaterialProperties;
+
+  /// Material properties for each healed cut element
   std::map<const Elem *, ElemMaterialProperties> _healed_mat_props;
+
+  /// Boundary material properties for each healed cut element
   std::map<const Elem *, ElemMaterialProperties> _bnd_healed_mat_props;
+
+  /**
+   * Set of pointers to deleted elements. These pointers are used to erase the corresponding entries
+   * in MaterialPropertyStorage after healed material properties are restored in
+   * initMaterialProperties().
+   */
   std::set<const Elem *> _mat_props_to_erase;
 
   /**
@@ -450,7 +478,7 @@ private:
   void setMaterialPropertiesForElement(const Elem * elem, const Elem * elem_from);
 
   /**
-   * Randomly pick one node on the element that is in the physical domain
+   * Return the first node in the provided element that is found to be in the physical domain
    * @param elem Constant pointer to the element
    * @return A constant pointer to the node
    */

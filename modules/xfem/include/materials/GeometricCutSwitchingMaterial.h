@@ -17,7 +17,7 @@
 
 /**
  * switches between materials in a multi-material system where the
- * interfaces are defined by multiple level set functions.
+ * interfaces are defined by multiple geometric cut userobjects.
  */
 template <typename T, bool is_ad>
 class GeometricCutSwitchingMaterialTempl : public Material
@@ -28,9 +28,9 @@ public:
   GeometricCutSwitchingMaterialTempl(const InputParameters & parameters);
 
 protected:
-  // At the time of initiating this switching material, the initeQpStatefulProperties methods of the
-  // base materials are already called. So we only need to assign the current values at _qp to the
-  // switching material property.
+  // At the time of initializing this switching material, the initeQpStatefulProperties methods of
+  // the base materials are already called. So we only need to assign the current values at _qp to
+  // the switching material property.
   virtual void initQpStatefulProperties() override { computeProperties(); }
 
   virtual void computeProperties() override;
