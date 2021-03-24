@@ -67,6 +67,17 @@ momentJacobianWC(const RankFourTensor & r4t, unsigned int i, unsigned int k, Rea
  */
 template <typename T>
 T
+getIsotropicLameConstant(const RankFourTensorTempl<T> & elasticity_tensor)
+{
+  return elasticity_tensor(0, 0, 1, 1);
+}
+
+/**
+ * Get the shear modulus for an isotropic elasticity tensor
+ * param elasticity_tensor the tensor (must be isotropic, but not checked for efficiency)
+ */
+template <typename T>
+T
 getIsotropicShearModulus(const RankFourTensorTempl<T> & elasticity_tensor)
 {
   return elasticity_tensor(0, 1, 0, 1);
