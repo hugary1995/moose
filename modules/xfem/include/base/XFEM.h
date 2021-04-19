@@ -146,6 +146,8 @@ public:
 
   virtual bool update(Real time, NonlinearSystemBase & nl, AuxiliarySystem & aux) override;
 
+  virtual void postUpdate() override;
+
   virtual void initSolution(NonlinearSystemBase & nl, AuxiliarySystem & aux) override;
 
   void buildEFAMesh();

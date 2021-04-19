@@ -296,6 +296,12 @@ XFEM::update(Real time, NonlinearSystemBase & nl, AuxiliarySystem & aux)
 }
 
 void
+XFEM::postUpdate()
+{
+  _fe_problem->execute(EXEC_XFEM_UPDATE_END);
+}
+
+void
 XFEM::initSolution(NonlinearSystemBase & nl, AuxiliarySystem & aux)
 {
   nl.serializeSolution();

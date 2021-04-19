@@ -51,8 +51,10 @@ XFEMIntegratedBC::addPoints()
       _elem_qp_normal[elem2][i] = info._elem2_normal;
       _elem_qp_JxW[elem1][i] = info._elem1_constraint_JxW[i];
       _elem_qp_JxW[elem2][i] = info._elem2_constraint_JxW[i];
-      addPoint(elem1, info._elem1_constraint_q_point[i]);
-      addPoint(elem2, info._elem2_constraint_q_point[i]);
+      if (hasBlocks(elem1->subdomain_id()))
+        addPoint(elem1, info._elem1_constraint_q_point[i]);
+      if (hasBlocks(elem2->subdomain_id()))
+        addPoint(elem2, info._elem2_constraint_q_point[i]);
     }
   }
 }

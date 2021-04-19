@@ -14,5 +14,8 @@
 /// marked for cutting by XFEM
 extern const ExecFlagType EXEC_XFEM_MARK;
 
+/// Exec flag used to execute MooseObjects after each XFEM update
+extern const ExecFlagType EXEC_XFEM_UPDATE_END;
+
 // XFEM typedefs
 typedef unsigned int CutSubdomainID;

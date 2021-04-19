@@ -11,3 +11,4 @@
 #include "MooseEnumItem.h"
 
 const ExecFlagType EXEC_XFEM_MARK("XFEM_MARK");
+const ExecFlagType EXEC_XFEM_UPDATE_END("XFEM_UPDATE_END");

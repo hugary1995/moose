@@ -53,6 +53,7 @@ XFEMApp::registerAll(Factory & f, ActionFactory & af, Syntax & s)
 
   auto & factory = f; // for registerExecFlags macro
   registerExecFlag(EXEC_XFEM_MARK);
+  registerExecFlag(EXEC_XFEM_UPDATE_END);
 }
 
 void
@@ -95,6 +96,7 @@ XFEMApp::registerExecFlags(Factory & factory)
 {
   mooseDeprecated("use registerAll instead of registerExecFlags");
   registerExecFlag(EXEC_XFEM_MARK);
+  registerExecFlag(EXEC_XFEM_UPDATE_END);
 }
 
 extern "C" void

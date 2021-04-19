@@ -97,6 +97,11 @@ public:
   virtual bool update(Real time, NonlinearSystemBase & nl, AuxiliarySystem & aux) = 0;
 
   /**
+   * Method called after each update
+   */
+  virtual void postUpdate() = 0;
+
+  /**
    * Initialize the solution on newly created nodes
    */
   virtual void initSolution(NonlinearSystemBase & nl, AuxiliarySystem & aux) = 0;
