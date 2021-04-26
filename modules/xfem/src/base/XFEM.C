@@ -33,7 +33,10 @@
 #include "libmesh/partitioner.h"
 
 XFEM::XFEM(const InputParameters & params)
-  : XFEMInterface(params), _efa_mesh(Moose::out), _debug_output_level(1)
+  : XFEMInterface(params),
+    _efa_mesh(Moose::out),
+    _debug_output_level(1),
+    _active_cut_subdomains(params.get<std::vector<CutSubdomainID>>("active_cut_subdomains"))
 {
 #ifndef LIBMESH_ENABLE_UNIQUE_ID
   mooseError("MOOSE requires unique ids to be enabled in libmesh (configure with "
@@ -48,6 +51,14 @@ XFEM::~XFEM()
        cemit != _cut_elem_map.end();
        ++cemit)
     delete cemit->second;
+}
+
+bool
+XFEM::isCutSubdomainActive(CutSubdomainID id) const
+{
+  return _active_cut_subdomains.empty() ||
+         std::find(_active_cut_subdomains.begin(), _active_cut_subdomains.end(), id) !=
+             _active_cut_subdomains.end();
 }
 
 void
@@ -967,14 +978,17 @@ XFEM::healMesh()
             if (elem1->processor_id() == _mesh->processor_id() &&
                 e->processor_id() == _mesh->processor_id())
             {
-              storeMaterialPropertiesForElement(/*parent_elem = */ elem1, /*child_elem = */ e);
-              // In case the healed element is not re-cut, copy the corresponding material
-              // properties to the parent element now than later.
               CutSubdomainID parent_gcsid =
                   _geometric_cuts[i]->getCutSubdomainID(elem1->node_ptr(0));
               CutSubdomainID gcsid = _geom_cut_elems[e]._cut_subdomain_id;
-              if (parent_gcsid == gcsid)
-                loadMaterialPropertiesForElement(elem1, e, _geom_cut_elems);
+              if (isCutSubdomainActive(gcsid))
+              {
+                storeMaterialPropertiesForElement(/*parent_elem = */ elem1, /*child_elem = */ e);
+                // In case the healed element is not re-cut, copy the corresponding material
+                // properties to the parent element now than later.
+                if (parent_gcsid == gcsid)
+                  loadMaterialPropertiesForElement(elem1, e, _geom_cut_elems);
+              }
             }
 
         if (_displaced_mesh)
@@ -1401,7 +1415,7 @@ XFEM::cutMeshWithEFA(NonlinearSystemBase & nl, AuxiliarySystem & aux)
         // geometric cut user object AND the cut subdomain ID are the same as the
         // current element, then that must be it.
         for (auto old_cei : _old_geom_cut_elems)
-          if (cei.match(old_cei.second))
+          if (cei.match(old_cei.second) && isCutSubdomainActive(gcsid))
           {
             loadMaterialPropertiesForElement(libmesh_elem, old_cei.first, _old_geom_cut_elems);
             if (_debug_output_level > 1)

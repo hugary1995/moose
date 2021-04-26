@@ -359,6 +359,8 @@ private:
   /// 3: Full dump of element fragment algorithm mesh
   unsigned int _debug_output_level;
 
+  const std::vector<CutSubdomainID> _active_cut_subdomains;
+
   /**
    * Data structure to store the nonlinear solution for nodes/elements affected by XFEM
    * For each node/element, this is stored as a vector that contains all components
@@ -388,6 +390,8 @@ private:
    * XFEM_MARK.
    */
   std::unordered_map<const Elem *, Xfem::CutElemInfo> _old_geom_cut_elems;
+
+  bool isCutSubdomainActive(CutSubdomainID id) const;
 
   /**
    * Store the solution in stored_solution for a given node
