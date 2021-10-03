@@ -17,7 +17,7 @@
 
 #include "libmesh/system.h"
 
-registerMooseObject("MooseApp", ParisLaw);
+registerMooseObject("XFEMTestApp", ParisLaw);
 
 template <>
 InputParameters
