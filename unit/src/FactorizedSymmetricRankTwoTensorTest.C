@@ -46,17 +46,11 @@ TEST(FactorizedSymmetricRankTwoTensor, constructors)
   EXPECT_VEC_NEAR(eigvals, A3.eigvals(), 1e-6);
   EXPECT_R2T_NEAR(eigvecs, A3.eigvecs(), 1e-6);
 
-  // From a FactorizedSymmetricRankTwoTensor with known factorization
-  FactorizedSymmetricRankTwoTensor A4(A1, A2.eigvals(), A3.eigvecs());
+  // From a factorization
+  FactorizedSymmetricRankTwoTensor A4(eigvals, eigvecs);
   EXPECT_R2T_NEAR(A1, A4.get(), 1e-6);
   EXPECT_VEC_NEAR(eigvals, A4.eigvals(), 1e-6);
   EXPECT_R2T_NEAR(eigvecs, A4.eigvecs(), 1e-6);
-
-  // From a factorization
-  FactorizedSymmetricRankTwoTensor A5(eigvals, eigvecs);
-  EXPECT_R2T_NEAR(A1, A5.get(), 1e-6);
-  EXPECT_VEC_NEAR(eigvals, A5.eigvals(), 1e-6);
-  EXPECT_R2T_NEAR(eigvecs, A5.eigvecs(), 1e-6);
 }
 
 TEST(FactorizedSymmetricRankTwoTensor, rotated)
@@ -67,7 +61,6 @@ TEST(FactorizedSymmetricRankTwoTensor, rotated)
 
   // Apply rotation R on A2
   FactorizedSymmetricRankTwoTensor Afr = Af.rotated(R);
-  Afr.validate();
   EXPECT_R2T_NEAR(A.rotated(R), Afr.get(), 1e-6);
 }
 
@@ -78,7 +71,6 @@ TEST(FactorizedSymmetricRankTwoTensor, transpose)
 
   // Transpose
   FactorizedSymmetricRankTwoTensor Aft = Af.transpose();
-  Aft.validate();
   EXPECT_R2T_NEAR(A.transpose(), Aft.get(), 1e-6);
 }
 
@@ -91,14 +83,12 @@ TEST(FactorizedSymmetricRankTwoTensor, assignment_operator)
 
   // Assignment from FactorizedSymmetricRankTwoTensor
   Bf = Af;
-  Bf.validate();
   EXPECT_R2T_NEAR(Af.get(), Bf.get(), 1e-6);
   EXPECT_VEC_NEAR(Af.eigvals(), Bf.eigvals(), 1e-6);
   EXPECT_R2T_NEAR(Af.eigvecs(), Bf.eigvecs(), 1e-6);
 
   // Assignment from RankTwoTensor
   Bf = A;
-  Bf.validate();
   EXPECT_R2T_NEAR(Af.get(), Bf.get(), 1e-6);
   EXPECT_VEC_NEAR(Af.eigvals(), Bf.eigvals(), 1e-6);
   EXPECT_R2T_NEAR(Af.eigvecs(), Bf.eigvecs(), 1e-6);
@@ -112,25 +102,21 @@ TEST(FactorizedSymmetricRankTwoTensor, scalar_multiplication_division)
   // operator*=
   A *= 2;
   Af *= 2;
-  Af.validate();
   EXPECT_R2T_NEAR(A, Af.get(), 1e-6);
 
   // operator*
   RankTwoTensor B = A * 2;
   FactorizedSymmetricRankTwoTensor Bf = Af * 2;
-  Bf.validate();
   EXPECT_R2T_NEAR(B, Bf.get(), 1e-6);
 
   // operator/=
   A /= 3;
   Af /= 3;
-  Af.validate();
   EXPECT_R2T_NEAR(A, Af.get(), 1e-6);
 
   // operator/
   RankTwoTensor C = A / 2;
   FactorizedSymmetricRankTwoTensor Cf = Af / 2;
-  Cf.validate();
   EXPECT_R2T_NEAR(C, Cf.get(), 1e-6);
 }
 
@@ -153,7 +139,6 @@ TEST(FactorizedSymmetricRankTwoTensor, inverse)
 
   RankTwoTensor Ainv = A.inverse();
   FactorizedSymmetricRankTwoTensor Afinv = Af.inverse();
-  Afinv.validate();
   EXPECT_R2T_NEAR(Ainv, Afinv.get(), 1e-6);
 }
 
@@ -164,8 +149,6 @@ TEST(FactorizedSymmetricRankTwoTensor, addIa)
 
   A.addIa(100);
   Af.addIa(100);
-
-  Af.validate();
   EXPECT_R2T_NEAR(A, Af.get(), 1e-6);
 }
 
@@ -184,8 +167,7 @@ TEST(FactorizedSymmetricRankTwoTensor, log)
   RankTwoTensor logA = eigvecs * eigvals_log * eigvecs.transpose();
 
   // Next get the log from the factorized matrix
-  FactorizedSymmetricRankTwoTensor logAf = MathUtils::log(logAf);
-  logAf.validate();
+  FactorizedSymmetricRankTwoTensor logAf = MathUtils::log(Af);
   EXPECT_R2T_NEAR(logA, logAf.get(), 1e-6);
 }
 
@@ -205,7 +187,6 @@ TEST(FactorizedSymmetricRankTwoTensor, exp)
 
   // Next get the exp from the factorized matrix
   FactorizedSymmetricRankTwoTensor expAf = MathUtils::exp(Af);
-  expAf.validate();
   EXPECT_R2T_NEAR(expA, expAf.get(), 1e-6);
 }
 
@@ -225,7 +206,6 @@ TEST(FactorizedSymmetricRankTwoTensor, pow)
 
   // Next get the power from the factorized matrix
   FactorizedSymmetricRankTwoTensor powAf = MathUtils::pow(Af, 3.5);
-  powAf.validate();
   EXPECT_R2T_NEAR(powA, powAf.get(), 1e-6);
 }
 
@@ -245,7 +225,6 @@ TEST(FactorizedSymmetricRankTwoTensor, sqrt)
 
   // Next get the sqrt from the factorized matrix
   FactorizedSymmetricRankTwoTensor sqrtAf = MathUtils::sqrt(Af);
-  sqrtAf.validate();
   EXPECT_R2T_NEAR(sqrtA, sqrtAf.get(), 1e-6);
 }
 
@@ -265,6 +244,5 @@ TEST(FactorizedSymmetricRankTwoTensor, cbrt)
 
   // Next get the sqrt from the factorized matrix
   FactorizedSymmetricRankTwoTensor cbrtAf = MathUtils::cbrt(Af);
-  cbrtAf.validate();
   EXPECT_R2T_NEAR(cbrtA, cbrtAf.get(), 1e-6);
 }

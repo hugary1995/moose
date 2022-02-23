@@ -58,39 +58,26 @@ public:
       default;
 
   /// Construct from RankTwoTensorTempl<T> if the factorization isn't known a priori
-  FactorizedSymmetricRankTwoTensorTempl(const RankTwoTensorTempl<T> & A) : _A(A)
+  FactorizedSymmetricRankTwoTensorTempl(const RankTwoTensorTempl<T> & A)
   {
+#ifdef DEBUG
+    RankTwoTensorTempl<T> error = A - A.transpose();
+    if (!MooseUtils::absoluteFuzzyEqual(error.norm(), 0))
+      mooseError("The tensor is not symmetric.");
+#endif
     A.symmetricEigenvaluesEigenvectors(_eigvals, _eigvecs);
   }
 
   /// Construct from RankTwoTensorTempl<T> if the factorization is known
-  FactorizedSymmetricRankTwoTensorTempl(const RankTwoTensorTempl<T> & A,
-                                        const std::vector<T> & eigvals,
-                                        const RankTwoTensorTempl<T> & eigvecs)
-    : _A(A), _eigvals(eigvals), _eigvecs(eigvecs)
-  {
-#ifdef DEBUG
-    validate();
-#endif
-  }
-
-  /// Construct from the factorization
   FactorizedSymmetricRankTwoTensorTempl(const std::vector<T> & eigvals,
                                         const RankTwoTensorTempl<T> & eigvecs)
     : _eigvals(eigvals), _eigvecs(eigvecs)
   {
-    RankTwoTensorTempl<T> D(eigvals);
-    _A = eigvecs * D * eigvecs.transpose();
   }
 
-  // @{ Indexing
-  const T & operator()(const unsigned int i, const unsigned int j) const { return _A(i, j); }
-  T operator()(const unsigned int i, const unsigned int j) { return _A(i, j); }
-  // @}
-
   // @{ getters
-  const RankTwoTensorTempl<T> & get() const { return _A; }
-  RankTwoTensorTempl<T> get() { return _A; }
+  RankTwoTensorTempl<T> get() const { return assemble(); }
+  RankTwoTensorTempl<T> get() { return assemble(); }
   const std::vector<T> & eigvals() const { return _eigvals; }
   std::vector<T> eigvals() { return _eigvals; }
   const RankTwoTensorTempl<T> & eigvecs() const { return _eigvecs; }
@@ -98,9 +85,6 @@ public:
   // @}
 
   void print(std::ostream & stm = Moose::out) const;
-
-  /// Test if the factorization is correct, and if _A is still symmetric.
-  void validate() const;
 
   /// Returns _A rotated by R.
   FactorizedSymmetricRankTwoTensorTempl<T> rotated(const RankTwoTensorTempl<T> & R) const;
@@ -140,8 +124,12 @@ public:
   void addIa(const T & a);
 
 private:
-  // The underlying un-factorized RankTwoTensorTempl<T>
-  RankTwoTensorTempl<T> _A;
+  // Assemble the tensor from the factorization
+  RankTwoTensorTempl<T> assemble() const
+  {
+    RankTwoTensorTempl<T> D(_eigvals);
+    return _eigvecs * D * _eigvecs.transpose();
+  }
 
   // The eigen values of _A;
   std::vector<T> _eigvals;
@@ -206,34 +194,17 @@ FactorizedSymmetricRankTwoTensorTempl<T>::print(std::ostream & stm) const
 }
 
 template <typename T>
-void
-FactorizedSymmetricRankTwoTensorTempl<T>::validate() const
-{
-  RankTwoTensorTempl<T> error = _A - _A.transpose();
-  if (!MooseUtils::absoluteFuzzyEqual(error.norm(), 0))
-    mooseError("The tensor is not symmetric.");
-
-  RankTwoTensorTempl<T> D(_eigvals);
-  RankTwoTensorTempl<T> A = _eigvecs * D * _eigvecs.transpose();
-  error = A - _A;
-  if (!MooseUtils::absoluteFuzzyEqual(error.norm(), 0))
-    mooseError("Internal error: The factorization is wrong.");
-}
-
-template <typename T>
 FactorizedSymmetricRankTwoTensorTempl<T>
 FactorizedSymmetricRankTwoTensorTempl<T>::rotated(const RankTwoTensorTempl<T> & R) const
 {
-  FactorizedSymmetricRankTwoTensorTempl<T> Ar(_A.rotated(R), _eigvals, R * _eigvecs);
-  return Ar;
+  return FactorizedSymmetricRankTwoTensorTempl<T>(_eigvals, R * _eigvecs);
 }
 
 template <typename T>
 FactorizedSymmetricRankTwoTensorTempl<T>
 FactorizedSymmetricRankTwoTensorTempl<T>::transpose() const
 {
-  FactorizedSymmetricRankTwoTensorTempl<T> At(_A.transpose(), _eigvals, _eigvecs);
-  return At;
+  return *this;
 }
 
 template <typename T>
@@ -241,7 +212,6 @@ FactorizedSymmetricRankTwoTensorTempl<T> &
 FactorizedSymmetricRankTwoTensorTempl<T>::operator=(
     const FactorizedSymmetricRankTwoTensorTempl<T> & A)
 {
-  _A = A._A;
   _eigvals = A._eigvals;
   _eigvecs = A._eigvecs;
   return *this;
@@ -251,7 +221,6 @@ template <typename T>
 FactorizedSymmetricRankTwoTensorTempl<T> &
 FactorizedSymmetricRankTwoTensorTempl<T>::operator=(const RankTwoTensorTempl<T> & A)
 {
-  _A = A;
   A.symmetricEigenvaluesEigenvectors(_eigvals, _eigvecs);
   return *this;
 }
@@ -260,7 +229,6 @@ template <typename T>
 FactorizedSymmetricRankTwoTensorTempl<T> &
 FactorizedSymmetricRankTwoTensorTempl<T>::operator*=(const T & a)
 {
-  _A *= a;
   for (auto & eigval : _eigvals)
     eigval *= a;
   return *this;
@@ -272,7 +240,6 @@ FactorizedSymmetricRankTwoTensorTempl<typename CompareTypes<T, T2>::supertype>
 FactorizedSymmetricRankTwoTensorTempl<T>::operator*(const T2 & a) const
 {
   FactorizedSymmetricRankTwoTensorTempl<typename CompareTypes<T, T2>::supertype> A = *this;
-  A._A *= a;
   for (auto & eigval : A._eigvals)
     eigval *= a;
   return A;
@@ -282,7 +249,6 @@ template <typename T>
 FactorizedSymmetricRankTwoTensorTempl<T> &
 FactorizedSymmetricRankTwoTensorTempl<T>::operator/=(const T & a)
 {
-  _A /= a;
   for (auto & eigval : _eigvals)
     eigval /= a;
   return *this;
@@ -294,7 +260,6 @@ FactorizedSymmetricRankTwoTensorTempl<typename CompareTypes<T, T2>::supertype>
 FactorizedSymmetricRankTwoTensorTempl<T>::operator/(const T2 & a) const
 {
   FactorizedSymmetricRankTwoTensorTempl<typename CompareTypes<T, T2>::supertype> A = *this;
-  A._A /= a;
   for (auto & eigval : A._eigvals)
     eigval /= a;
   return A;
@@ -305,9 +270,11 @@ bool
 FactorizedSymmetricRankTwoTensorTempl<T>::operator==(
     const FactorizedSymmetricRankTwoTensorTempl<T> & A) const
 {
+  RankTwoTensorTempl<T> me = get();
+  RankTwoTensorTempl<T> you = A.get();
   for (auto i : make_range(LIBMESH_DIM))
     for (auto j : make_range(LIBMESH_DIM))
-      if (!MooseUtils::absoluteFuzzyEqual((*this)(i, j), A(i, j)))
+      if (!MooseUtils::absoluteFuzzyEqual(me(i, j), you(i, j)))
         return false;
 
   return true;
@@ -325,7 +292,6 @@ template <typename T>
 void
 FactorizedSymmetricRankTwoTensorTempl<T>::addIa(const T & a)
 {
-  _A.addIa(a);
   for (auto & eigval : _eigvals)
     eigval += a;
 }
