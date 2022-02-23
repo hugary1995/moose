@@ -42,9 +42,7 @@ public:
     : _A(A), _eigvals(eigvals), _eigvecs(eigvecs)
   {
 #ifdef DEBUG
-    RankTwoTensorTempl<T> D(eigvals);
-    RankTwoTensorTempl<T> error = A - eigvecs * D * eigvecs.transpose();
-    libmesh_assert_less(error.norm(), MooseUtils::LIBMESH_TOLERANCE);
+    validate();
 #endif
   }
 
@@ -73,6 +71,7 @@ public:
 
   void print(std::ostream & stm = Moose::out) const;
 
+  /// Test if the factorization is correct, and if _A is still symmetric.
   void validate() const;
 
   /// Returns _A rotated by R.
@@ -151,11 +150,15 @@ template <typename T>
 void
 FactorizedSymmetricRankTwoTensorTempl<T>::validate() const
 {
+  RankTwoTensorTempl<T> error = _A - _A.transpose();
+  if (!MooseUtils::absoluteFuzzyEqual(error.norm(), 0))
+    mooseError("The tensor is not symmetric.");
+
   RankTwoTensorTempl<T> D(_eigvals);
   RankTwoTensorTempl<T> A = _eigvecs * D * _eigvecs.transpose();
   RankTwoTensorTempl<T> error = A - _A;
   if (!MooseUtils::absoluteFuzzyEqual(error.norm(), 0))
-    mooseError("Internal error: Tell Gary Hu the factorization is wrong.");
+    mooseError("Internal error: The factorization is wrong.");
 }
 
 template <typename T>
