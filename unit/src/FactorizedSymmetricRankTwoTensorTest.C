@@ -78,8 +78,7 @@ TEST(FactorizedSymmetricRankTwoTensor, assignment_operator)
 {
   RankTwoTensor A(1, 2, 3, 2, 5, -3, 3, -3, -9);
   FactorizedSymmetricRankTwoTensor Af(A);
-  RankTwoTensor B(9, 8, 7, 6, 5, 4, 3, 2, 1);
-  FactorizedSymmetricRankTwoTensor Bf(B);
+  FactorizedSymmetricRankTwoTensor Bf(A);
 
   // Assignment from FactorizedSymmetricRankTwoTensor
   Bf = Af;
