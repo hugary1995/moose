@@ -11,6 +11,34 @@
 
 #include "RankTwoTensor.h"
 
+// forward declarations
+template <typename>
+class FactorizedSymmetricRankTwoTensorTempl;
+
+namespace MathUtils
+{
+/// natural log of a factorized RankTwoTensor
+template <typename T>
+FactorizedSymmetricRankTwoTensorTempl<T> log(const FactorizedSymmetricRankTwoTensorTempl<T> &);
+
+/// exponentiated a factorized RankTwoTensor
+template <typename T>
+FactorizedSymmetricRankTwoTensorTempl<T> exp(const FactorizedSymmetricRankTwoTensorTempl<T> &);
+
+/// a factorized RankTwoTensor raised to a power
+template <typename T, typename T2, typename std::enable_if<ScalarTraits<T2>::value, int>::type = 0>
+FactorizedSymmetricRankTwoTensorTempl<typename CompareTypes<T, T2>::supertype>
+pow(const FactorizedSymmetricRankTwoTensorTempl<T> &, const T2 & p);
+
+/// sqrt of a factorized RankTwoTensor
+template <typename T>
+FactorizedSymmetricRankTwoTensorTempl<T> sqrt(const FactorizedSymmetricRankTwoTensorTempl<T> &);
+
+/// cbrt of a factorized RankTwoTensor
+template <typename T>
+FactorizedSymmetricRankTwoTensorTempl<T> cbrt(const FactorizedSymmetricRankTwoTensorTempl<T> &);
+} // end namespace MathUtils
+
 /**
  * FactorizedSymmetricRankTwoTensorTempl is designed to perform the spectral decomposition of an
  * underlying RankTwoTensorTempl and reuse its bases for future operations if possible.
@@ -111,23 +139,6 @@ public:
   /// add identity times a to _A
   void addIa(const T & a);
 
-  /// natural log of _A
-  FactorizedSymmetricRankTwoTensorTempl<T> log() const;
-
-  /// exponentiated _A
-  FactorizedSymmetricRankTwoTensorTempl<T> exp() const;
-
-  /// _A raised to a power
-  template <typename T2, typename std::enable_if<ScalarTraits<T2>::value, int>::type = 0>
-  FactorizedSymmetricRankTwoTensorTempl<typename CompareTypes<T, T2>::supertype>
-  pow(const T2 & p) const;
-
-  /// sqrt of _A
-  FactorizedSymmetricRankTwoTensorTempl<T> sqrt() const;
-
-  /// cbrt of _A
-  FactorizedSymmetricRankTwoTensorTempl<T> cbrt() const;
-
 private:
   // The underlying un-factorized RankTwoTensorTempl<T>
   RankTwoTensorTempl<T> _A;
@@ -138,6 +149,54 @@ private:
   // The eigen vectors of _A;
   RankTwoTensorTempl<T> _eigvecs;
 };
+
+namespace MathUtils
+{
+template <typename T>
+FactorizedSymmetricRankTwoTensorTempl<T>
+log(const FactorizedSymmetricRankTwoTensorTempl<T> & A)
+{
+  const auto & eigvals = A.eigvals();
+  return FactorizedSymmetricRankTwoTensorTempl<T>(
+      {std::log(eigvals[0]), std::log(eigvals[1]), std::log(eigvals[2])}, A.eigvecs());
+}
+
+template <typename T>
+FactorizedSymmetricRankTwoTensorTempl<T>
+exp(const FactorizedSymmetricRankTwoTensorTempl<T> & A)
+{
+  const auto & eigvals = A.eigvals();
+  return FactorizedSymmetricRankTwoTensorTempl<T>(
+      {std::exp(eigvals[0]), std::exp(eigvals[1]), std::exp(eigvals[2])}, A.eigvecs());
+}
+
+template <typename T, typename T2, typename std::enable_if<ScalarTraits<T2>::value, int>::type>
+FactorizedSymmetricRankTwoTensorTempl<typename CompareTypes<T, T2>::supertype>
+pow(const FactorizedSymmetricRankTwoTensorTempl<T> & A, const T2 & p)
+{
+  const auto & eigvals = A.eigvals();
+  return FactorizedSymmetricRankTwoTensorTempl<typename CompareTypes<T, T2>::supertype>(
+      {std::pow(eigvals[0], p), std::pow(eigvals[1], p), std::pow(eigvals[2], p)}, A.eigvecs());
+}
+
+template <typename T>
+FactorizedSymmetricRankTwoTensorTempl<T>
+sqrt(const FactorizedSymmetricRankTwoTensorTempl<T> & A)
+{
+  const auto & eigvals = A.eigvals();
+  return FactorizedSymmetricRankTwoTensorTempl<T>(
+      {std::sqrt(eigvals[0]), std::sqrt(eigvals[1]), std::sqrt(eigvals[2])}, A.eigvecs());
+}
+
+template <typename T>
+FactorizedSymmetricRankTwoTensorTempl<T>
+cbrt(const FactorizedSymmetricRankTwoTensorTempl<T> & A)
+{
+  const auto & eigvals = A.eigvals();
+  return FactorizedSymmetricRankTwoTensorTempl<T>(
+      {std::cbrt(eigvals[0]), std::cbrt(eigvals[1]), std::cbrt(eigvals[2])}, A.eigvecs());
+}
+} // end namespace MathUtils
 
 template <typename T>
 void
@@ -156,7 +215,7 @@ FactorizedSymmetricRankTwoTensorTempl<T>::validate() const
 
   RankTwoTensorTempl<T> D(_eigvals);
   RankTwoTensorTempl<T> A = _eigvecs * D * _eigvecs.transpose();
-  RankTwoTensorTempl<T> error = A - _A;
+  error = A - _A;
   if (!MooseUtils::absoluteFuzzyEqual(error.norm(), 0))
     mooseError("Internal error: The factorization is wrong.");
 }
@@ -269,47 +328,6 @@ FactorizedSymmetricRankTwoTensorTempl<T>::addIa(const T & a)
   _A.addIa(a);
   for (auto & eigval : _eigvals)
     eigval += a;
-}
-
-template <typename T>
-FactorizedSymmetricRankTwoTensorTempl<T>
-FactorizedSymmetricRankTwoTensorTempl<T>::log() const
-{
-  return FactorizedSymmetricRankTwoTensorTempl<T>(
-      {std::log(_eigvals[0]), std::log(_eigvals[1]), std::log(_eigvals[2])}, _eigvecs);
-}
-
-template <typename T>
-FactorizedSymmetricRankTwoTensorTempl<T>
-FactorizedSymmetricRankTwoTensorTempl<T>::exp() const
-{
-  return FactorizedSymmetricRankTwoTensorTempl<T>(
-      {std::exp(_eigvals[0]), std::exp(_eigvals[1]), std::exp(_eigvals[2])}, _eigvecs);
-}
-
-template <typename T>
-template <typename T2, typename std::enable_if<ScalarTraits<T2>::value, int>::type>
-FactorizedSymmetricRankTwoTensorTempl<typename CompareTypes<T, T2>::supertype>
-FactorizedSymmetricRankTwoTensorTempl<T>::pow(const T2 & p) const
-{
-  return FactorizedSymmetricRankTwoTensorTempl<typename CompareTypes<T, T2>::supertype>(
-      {std::pow(_eigvals[0], p), std::pow(_eigvals[1], p), std::pow(_eigvals[2], p)}, _eigvecs);
-}
-
-template <typename T>
-FactorizedSymmetricRankTwoTensorTempl<T>
-FactorizedSymmetricRankTwoTensorTempl<T>::sqrt() const
-{
-  return FactorizedSymmetricRankTwoTensorTempl<T>(
-      {std::sqrt(_eigvals[0]), std::sqrt(_eigvals[1]), std::sqrt(_eigvals[2])}, _eigvecs);
-}
-
-template <typename T>
-FactorizedSymmetricRankTwoTensorTempl<T>
-FactorizedSymmetricRankTwoTensorTempl<T>::cbrt() const
-{
-  return FactorizedSymmetricRankTwoTensorTempl<T>(
-      {std::cbrt(_eigvals[0]), std::cbrt(_eigvals[1]), std::cbrt(_eigvals[2])}, _eigvecs);
 }
 
 typedef FactorizedSymmetricRankTwoTensorTempl<Real> FactorizedSymmetricRankTwoTensor;

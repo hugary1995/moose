@@ -222,9 +222,9 @@ ComputeFiniteStrain::computeQpIncrements(RankTwoTensor & total_strain_increment,
     case DecompMethod::EigenSolution:
     {
       FactorizedSymmetricRankTwoTensor Chat = _Fhat[_qp].transpose() * _Fhat[_qp];
-      FactorizedSymmetricRankTwoTensor Uhat = Chat.sqrt();
+      FactorizedSymmetricRankTwoTensor Uhat = MathUtils::sqrt(Chat);
       rotation_increment = _Fhat[_qp] * Uhat.inverse().get();
-      total_strain_increment = Uhat.log().get();
+      total_strain_increment = MathUtils::log(Uhat).get();
       break;
     }
 

@@ -184,7 +184,7 @@ TEST(FactorizedSymmetricRankTwoTensor, log)
   RankTwoTensor logA = eigvecs * eigvals_log * eigvecs.transpose();
 
   // Next get the log from the factorized matrix
-  FactorizedSymmetricRankTwoTensor logAf = Af.log();
+  FactorizedSymmetricRankTwoTensor logAf = MathUtils::log(logAf);
   logAf.validate();
   EXPECT_R2T_NEAR(logA, logAf.get(), 1e-6);
 }
@@ -204,7 +204,7 @@ TEST(FactorizedSymmetricRankTwoTensor, exp)
   RankTwoTensor expA = eigvecs * eigvals_exp * eigvecs.transpose();
 
   // Next get the exp from the factorized matrix
-  FactorizedSymmetricRankTwoTensor expAf = Af.exp();
+  FactorizedSymmetricRankTwoTensor expAf = MathUtils::exp(Af);
   expAf.validate();
   EXPECT_R2T_NEAR(expA, expAf.get(), 1e-6);
 }
@@ -224,7 +224,47 @@ TEST(FactorizedSymmetricRankTwoTensor, pow)
   RankTwoTensor powA = eigvecs * eigvals_pow * eigvecs.transpose();
 
   // Next get the power from the factorized matrix
-  FactorizedSymmetricRankTwoTensor powAf = Af.pow(3.5);
+  FactorizedSymmetricRankTwoTensor powAf = MathUtils::pow(Af, 3.5);
   powAf.validate();
   EXPECT_R2T_NEAR(powA, powAf.get(), 1e-6);
+}
+
+TEST(FactorizedSymmetricRankTwoTensor, sqrt)
+{
+  RankTwoTensor A(7, 2, 3, 2, 5, 3, 3, 3, 9);
+  FactorizedSymmetricRankTwoTensor Af(A);
+
+  // First manually compute the matrix sqrt
+  std::vector<Real> eigvals;
+  RankTwoTensor eigvecs;
+  A.symmetricEigenvaluesEigenvectors(eigvals, eigvecs);
+  for (auto & eigval : eigvals)
+    eigval = std::sqrt(eigval);
+  RankTwoTensor eigvals_sqrt(eigvals);
+  RankTwoTensor sqrtA = eigvecs * eigvals_sqrt * eigvecs.transpose();
+
+  // Next get the sqrt from the factorized matrix
+  FactorizedSymmetricRankTwoTensor sqrtAf = MathUtils::sqrt(Af);
+  sqrtAf.validate();
+  EXPECT_R2T_NEAR(sqrtA, sqrtAf.get(), 1e-6);
+}
+
+TEST(FactorizedSymmetricRankTwoTensor, cbrt)
+{
+  RankTwoTensor A(7, 2, 3, 2, 5, 3, 3, 3, 9);
+  FactorizedSymmetricRankTwoTensor Af(A);
+
+  // First manually compute the matrix sqrt
+  std::vector<Real> eigvals;
+  RankTwoTensor eigvecs;
+  A.symmetricEigenvaluesEigenvectors(eigvals, eigvecs);
+  for (auto & eigval : eigvals)
+    eigval = std::cbrt(eigval);
+  RankTwoTensor eigvals_cbrt(eigvals);
+  RankTwoTensor cbrtA = eigvecs * eigvals_cbrt * eigvecs.transpose();
+
+  // Next get the sqrt from the factorized matrix
+  FactorizedSymmetricRankTwoTensor cbrtAf = MathUtils::cbrt(Af);
+  cbrtAf.validate();
+  EXPECT_R2T_NEAR(cbrtA, cbrtAf.get(), 1e-6);
 }
