@@ -62,8 +62,6 @@ NodesetModifier::execute()
   // the current node isn't already on the to_boundary
   if (shouldModify() &&
       std::find(current_boundary_ids.begin(), current_boundary_ids.end(), _from_boundary_id) !=
-          current_boundary_ids.end() &&
-      std::find(current_boundary_ids.begin(), current_boundary_ids.end(), _to_boundary_id) ==
           current_boundary_ids.end())
     _nodes_to_modify.push_back(_current_node);
 }
