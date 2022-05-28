@@ -11,7 +11,7 @@
 
 #include "libmesh/vector_value.h"
 
-#include "FactorizedSymmetricRankTwoTensor.h"
+#include "FactorizedRankTwoTensor.h"
 
 #define EXPECT_VEC_NEAR(v1, v2, tol)                                                               \
   {                                                                                                \
@@ -27,7 +27,7 @@
         EXPECT_NEAR(A1(i, j), A2(i, j), tol);                                                      \
   }
 
-TEST(FactorizedSymmetricRankTwoTensor, constructors)
+TEST(FactorizedRankTwoTensor, constructors)
 {
   RankTwoTensor A1(1, 2, 3, 2, 5, -3, 3, -3, -9);
   std::vector<Real> eigvals;
@@ -35,52 +35,52 @@ TEST(FactorizedSymmetricRankTwoTensor, constructors)
   A1.symmetricEigenvaluesEigenvectors(eigvals, eigvecs);
 
   // From a RankTwoTensor
-  FactorizedSymmetricRankTwoTensor A2(A1);
+  FactorizedRankTwoTensor A2(A1);
   EXPECT_R2T_NEAR(A1, A2.get(), 1e-6);
   EXPECT_VEC_NEAR(eigvals, A2.eigvals(), 1e-6);
   EXPECT_R2T_NEAR(eigvecs, A2.eigvecs(), 1e-6);
 
-  // From a FactorizedSymmetricRankTwoTensor
-  FactorizedSymmetricRankTwoTensor A3(A2);
+  // From a FactorizedRankTwoTensor
+  FactorizedRankTwoTensor A3(A2);
   EXPECT_R2T_NEAR(A1, A3.get(), 1e-6);
   EXPECT_VEC_NEAR(eigvals, A3.eigvals(), 1e-6);
   EXPECT_R2T_NEAR(eigvecs, A3.eigvecs(), 1e-6);
 
   // From a factorization
-  FactorizedSymmetricRankTwoTensor A4(eigvals, eigvecs);
+  FactorizedRankTwoTensor A4(eigvals, eigvecs);
   EXPECT_R2T_NEAR(A1, A4.get(), 1e-6);
   EXPECT_VEC_NEAR(eigvals, A4.eigvals(), 1e-6);
   EXPECT_R2T_NEAR(eigvecs, A4.eigvecs(), 1e-6);
 }
 
-TEST(FactorizedSymmetricRankTwoTensor, rotated)
+TEST(FactorizedRankTwoTensor, rotated)
 {
   RankTwoTensor A(1, 2, 3, 2, 5, -3, 3, -3, -9);
-  FactorizedSymmetricRankTwoTensor Af(A);
+  FactorizedRankTwoTensor Af(A);
   RankTwoTensor R(0, 1, 0, 1, 0, 0, 0, 0, 1);
 
   // Apply rotation R on A2
-  FactorizedSymmetricRankTwoTensor Afr = Af.rotated(R);
+  FactorizedRankTwoTensor Afr = Af.rotated(R);
   EXPECT_R2T_NEAR(A.rotated(R), Afr.get(), 1e-6);
 }
 
-TEST(FactorizedSymmetricRankTwoTensor, transpose)
+TEST(FactorizedRankTwoTensor, transpose)
 {
   RankTwoTensor A(1, 2, 3, 2, 5, -3, 3, -3, -9);
-  FactorizedSymmetricRankTwoTensor Af(A);
+  FactorizedRankTwoTensor Af(A);
 
   // Transpose
-  FactorizedSymmetricRankTwoTensor Aft = Af.transpose();
+  FactorizedRankTwoTensor Aft = Af.transpose();
   EXPECT_R2T_NEAR(A.transpose(), Aft.get(), 1e-6);
 }
 
-TEST(FactorizedSymmetricRankTwoTensor, assignment_operator)
+TEST(FactorizedRankTwoTensor, assignment_operator)
 {
   RankTwoTensor A(1, 2, 3, 2, 5, -3, 3, -3, -9);
-  FactorizedSymmetricRankTwoTensor Af(A);
-  FactorizedSymmetricRankTwoTensor Bf(A);
+  FactorizedRankTwoTensor Af(A);
+  FactorizedRankTwoTensor Bf(A);
 
-  // Assignment from FactorizedSymmetricRankTwoTensor
+  // Assignment from FactorizedRankTwoTensor
   Bf = Af;
   EXPECT_R2T_NEAR(Af.get(), Bf.get(), 1e-6);
   EXPECT_VEC_NEAR(Af.eigvals(), Bf.eigvals(), 1e-6);
@@ -93,10 +93,10 @@ TEST(FactorizedSymmetricRankTwoTensor, assignment_operator)
   EXPECT_R2T_NEAR(Af.eigvecs(), Bf.eigvecs(), 1e-6);
 }
 
-TEST(FactorizedSymmetricRankTwoTensor, scalar_multiplication_division)
+TEST(FactorizedRankTwoTensor, scalar_multiplication_division)
 {
   RankTwoTensor A(1, 2, 3, 2, 5, -3, 3, -3, -9);
-  FactorizedSymmetricRankTwoTensor Af(A);
+  FactorizedRankTwoTensor Af(A);
 
   // operator*=
   A *= 2;
@@ -105,7 +105,7 @@ TEST(FactorizedSymmetricRankTwoTensor, scalar_multiplication_division)
 
   // operator*
   RankTwoTensor B = A * 2;
-  FactorizedSymmetricRankTwoTensor Bf = Af * 2;
+  FactorizedRankTwoTensor Bf = Af * 2;
   EXPECT_R2T_NEAR(B, Bf.get(), 1e-6);
 
   // operator/=
@@ -115,46 +115,46 @@ TEST(FactorizedSymmetricRankTwoTensor, scalar_multiplication_division)
 
   // operator/
   RankTwoTensor C = A / 2;
-  FactorizedSymmetricRankTwoTensor Cf = Af / 2;
+  FactorizedRankTwoTensor Cf = Af / 2;
   EXPECT_R2T_NEAR(C, Cf.get(), 1e-6);
 }
 
-TEST(FactorizedSymmetricRankTwoTensor, logical_equal)
+TEST(FactorizedRankTwoTensor, logical_equal)
 {
   RankTwoTensor A(1, 2, 3, 2, 5, -3, 3, -3, -9);
   RankTwoTensor B(1, 3, 3, 3, 5, -1, 3, -1, 4);
-  FactorizedSymmetricRankTwoTensor Af1(A);
-  FactorizedSymmetricRankTwoTensor Af2(A);
-  FactorizedSymmetricRankTwoTensor Bf(B);
+  FactorizedRankTwoTensor Af1(A);
+  FactorizedRankTwoTensor Af2(A);
+  FactorizedRankTwoTensor Bf(B);
 
   EXPECT_TRUE(Af1 == Af2);
   EXPECT_FALSE(Af1 == Bf);
 }
 
-TEST(FactorizedSymmetricRankTwoTensor, inverse)
+TEST(FactorizedRankTwoTensor, inverse)
 {
   RankTwoTensor A(1, 2, 3, 2, 5, -3, 3, -3, -9);
-  FactorizedSymmetricRankTwoTensor Af(A);
+  FactorizedRankTwoTensor Af(A);
 
   RankTwoTensor Ainv = A.inverse();
-  FactorizedSymmetricRankTwoTensor Afinv = Af.inverse();
+  FactorizedRankTwoTensor Afinv = Af.inverse();
   EXPECT_R2T_NEAR(Ainv, Afinv.get(), 1e-6);
 }
 
-TEST(FactorizedSymmetricRankTwoTensor, addIa)
+TEST(FactorizedRankTwoTensor, addIa)
 {
   RankTwoTensor A(1, 2, 3, 2, 5, -3, 3, -3, -9);
-  FactorizedSymmetricRankTwoTensor Af(A);
+  FactorizedRankTwoTensor Af(A);
 
   A.addIa(100);
   Af.addIa(100);
   EXPECT_R2T_NEAR(A, Af.get(), 1e-6);
 }
 
-TEST(FactorizedSymmetricRankTwoTensor, log)
+TEST(FactorizedRankTwoTensor, log)
 {
   RankTwoTensor A(7, 2, 3, 2, 5, 3, 3, 3, 9);
-  FactorizedSymmetricRankTwoTensor Af(A);
+  FactorizedRankTwoTensor Af(A);
 
   // First manually compute the matrix log
   std::vector<Real> eigvals;
@@ -166,14 +166,14 @@ TEST(FactorizedSymmetricRankTwoTensor, log)
   RankTwoTensor logA = eigvecs * eigvals_log * eigvecs.transpose();
 
   // Next get the log from the factorized matrix
-  FactorizedSymmetricRankTwoTensor logAf = MathUtils::log(Af);
+  FactorizedRankTwoTensor logAf = MathUtils::log(Af);
   EXPECT_R2T_NEAR(logA, logAf.get(), 1e-6);
 }
 
-TEST(FactorizedSymmetricRankTwoTensor, exp)
+TEST(FactorizedRankTwoTensor, exp)
 {
   RankTwoTensor A(7, 2, 3, 2, 5, 3, 3, 3, 9);
-  FactorizedSymmetricRankTwoTensor Af(A);
+  FactorizedRankTwoTensor Af(A);
 
   // First manually compute the matrix exponential
   std::vector<Real> eigvals;
@@ -185,14 +185,14 @@ TEST(FactorizedSymmetricRankTwoTensor, exp)
   RankTwoTensor expA = eigvecs * eigvals_exp * eigvecs.transpose();
 
   // Next get the exp from the factorized matrix
-  FactorizedSymmetricRankTwoTensor expAf = MathUtils::exp(Af);
+  FactorizedRankTwoTensor expAf = MathUtils::exp(Af);
   EXPECT_R2T_NEAR(expA, expAf.get(), 1e-6);
 }
 
-TEST(FactorizedSymmetricRankTwoTensor, pow)
+TEST(FactorizedRankTwoTensor, pow)
 {
   RankTwoTensor A(7, 2, 3, 2, 5, 3, 3, 3, 9);
-  FactorizedSymmetricRankTwoTensor Af(A);
+  FactorizedRankTwoTensor Af(A);
 
   // First manually compute the matrix power
   std::vector<Real> eigvals;
@@ -204,14 +204,14 @@ TEST(FactorizedSymmetricRankTwoTensor, pow)
   RankTwoTensor powA = eigvecs * eigvals_pow * eigvecs.transpose();
 
   // Next get the power from the factorized matrix
-  FactorizedSymmetricRankTwoTensor powAf = MathUtils::pow(Af, 3.5);
+  FactorizedRankTwoTensor powAf = MathUtils::pow(Af, 3.5);
   EXPECT_R2T_NEAR(powA, powAf.get(), 1e-6);
 }
 
-TEST(FactorizedSymmetricRankTwoTensor, sqrt)
+TEST(FactorizedRankTwoTensor, sqrt)
 {
   RankTwoTensor A(7, 2, 3, 2, 5, 3, 3, 3, 9);
-  FactorizedSymmetricRankTwoTensor Af(A);
+  FactorizedRankTwoTensor Af(A);
 
   // First manually compute the matrix sqrt
   std::vector<Real> eigvals;
@@ -223,14 +223,14 @@ TEST(FactorizedSymmetricRankTwoTensor, sqrt)
   RankTwoTensor sqrtA = eigvecs * eigvals_sqrt * eigvecs.transpose();
 
   // Next get the sqrt from the factorized matrix
-  FactorizedSymmetricRankTwoTensor sqrtAf = MathUtils::sqrt(Af);
+  FactorizedRankTwoTensor sqrtAf = MathUtils::sqrt(Af);
   EXPECT_R2T_NEAR(sqrtA, sqrtAf.get(), 1e-6);
 }
 
-TEST(FactorizedSymmetricRankTwoTensor, cbrt)
+TEST(FactorizedRankTwoTensor, cbrt)
 {
   RankTwoTensor A(7, 2, 3, 2, 5, 3, 3, 3, 9);
-  FactorizedSymmetricRankTwoTensor Af(A);
+  FactorizedRankTwoTensor Af(A);
 
   // First manually compute the matrix sqrt
   std::vector<Real> eigvals;
@@ -242,6 +242,6 @@ TEST(FactorizedSymmetricRankTwoTensor, cbrt)
   RankTwoTensor cbrtA = eigvecs * eigvals_cbrt * eigvecs.transpose();
 
   // Next get the sqrt from the factorized matrix
-  FactorizedSymmetricRankTwoTensor cbrtAf = MathUtils::cbrt(Af);
+  FactorizedRankTwoTensor cbrtAf = MathUtils::cbrt(Af);
   EXPECT_R2T_NEAR(cbrtA, cbrtAf.get(), 1e-6);
 }

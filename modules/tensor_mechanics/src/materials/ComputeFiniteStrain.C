@@ -13,7 +13,7 @@
 #include "libmesh/quadrature.h"
 #include "libmesh/utility.h"
 
-#include "FactorizedSymmetricRankTwoTensor.h"
+#include "FactorizedRankTwoTensor.h"
 
 MooseEnum
 ComputeFiniteStrain::decompositionType()
@@ -221,8 +221,8 @@ ComputeFiniteStrain::computeQpIncrements(RankTwoTensor & total_strain_increment,
 
     case DecompMethod::EigenSolution:
     {
-      FactorizedSymmetricRankTwoTensor Chat = _Fhat[_qp].transpose() * _Fhat[_qp];
-      FactorizedSymmetricRankTwoTensor Uhat = MathUtils::sqrt(Chat);
+      FactorizedRankTwoTensor Chat = _Fhat[_qp].transpose() * _Fhat[_qp];
+      FactorizedRankTwoTensor Uhat = MathUtils::sqrt(Chat);
       rotation_increment = _Fhat[_qp] * Uhat.inverse().get();
       total_strain_increment = MathUtils::log(Uhat).get();
       break;
