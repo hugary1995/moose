@@ -172,8 +172,8 @@ namespace MathUtils
       op_derivs.push_back(derivative);                                                             \
     }                                                                                              \
                                                                                                    \
-    RankFourTensorTempl<typename T::value_type> P;                                                 \
-    RankTwoTensorTempl<typename T::value_type> Gab, Gba, Ma, Mb;                                   \
+    RankFourTensorTempl<typename T::value_type> P, Gab, Gba;                                       \
+    RankTwoTensorTempl<typename T::value_type> Ma, Mb;                                             \
                                                                                                    \
     for (auto a : make_range(3))                                                                   \
     {                                                                                              \
