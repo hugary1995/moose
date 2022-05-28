@@ -15,28 +15,28 @@
 template <typename>
 class FactorizedRankTwoTensorTempl;
 
-namespace MathUtils
-{
-/// natural log of a factorized RankTwoTensor
-template <typename T>
-FactorizedRankTwoTensorTempl<T> log(const FactorizedRankTwoTensorTempl<T> &);
-
-/// exponentiated a factorized RankTwoTensor
-template <typename T>
-FactorizedRankTwoTensorTempl<T> exp(const FactorizedRankTwoTensorTempl<T> &);
-
-/// a factorized RankTwoTensor raised to a power
-template <typename T, typename T2>
-FactorizedRankTwoTensorTempl<T> pow(const FactorizedRankTwoTensorTempl<T> &, const T2 &);
-
-/// sqrt of a factorized RankTwoTensor
-template <typename T>
-FactorizedRankTwoTensorTempl<T> sqrt(const FactorizedRankTwoTensorTempl<T> &);
-
-/// cbrt of a factorized RankTwoTensor
-template <typename T>
-FactorizedRankTwoTensorTempl<T> cbrt(const FactorizedRankTwoTensorTempl<T> &);
-} // end namespace MathUtils
+// namespace MathUtils
+// {
+// /// natural log of a factorized RankTwoTensor
+// template <typename T>
+// FactorizedRankTwoTensorTempl<T> log(const FactorizedRankTwoTensorTempl<T> &);
+//
+// /// exponentiated a factorized RankTwoTensor
+// template <typename T>
+// FactorizedRankTwoTensorTempl<T> exp(const FactorizedRankTwoTensorTempl<T> &);
+//
+// /// sqrt of a factorized RankTwoTensor
+// template <typename T>
+// FactorizedRankTwoTensorTempl<T> sqrt(const FactorizedRankTwoTensorTempl<T> &);
+//
+// /// cbrt of a factorized RankTwoTensor
+// template <typename T>
+// FactorizedRankTwoTensorTempl<T> cbrt(const FactorizedRankTwoTensorTempl<T> &);
+//
+// /// a factorized RankTwoTensor raised to a power
+// template <typename T, typename T2>
+// FactorizedRankTwoTensorTempl<T> pow(const FactorizedRankTwoTensorTempl<T> &, const T2 &);
+// } // end namespace MathUtils
 
 /**
  * FactorizedRankTwoTensorTempl is designed to perform the spectral decomposition of an
@@ -152,53 +152,38 @@ private:
 
 namespace MathUtils
 {
-template <typename T>
-FactorizedRankTwoTensorTempl<T>
-log(const FactorizedRankTwoTensorTempl<T> & A)
-{
-  const auto & eigvals = A.eigvals();
-  return FactorizedRankTwoTensorTempl<T>(
-      {std::log(eigvals[0]), std::log(eigvals[1]), std::log(eigvals[2])}, A.eigvecs());
-}
-
-template <typename T>
-FactorizedRankTwoTensorTempl<T>
-exp(const FactorizedRankTwoTensorTempl<T> & A)
-{
-  const auto & eigvals = A.eigvals();
-  return FactorizedRankTwoTensorTempl<T>(
-      {std::exp(eigvals[0]), std::exp(eigvals[1]), std::exp(eigvals[2])}, A.eigvecs());
-}
-
-template <typename T, typename T2>
-FactorizedRankTwoTensorTempl<T>
-pow(const FactorizedRankTwoTensorTempl<T> & A, const T2 & p)
-{
-  if constexpr (ScalarTraits<T2>::value)
-  {
-    const auto & eigvals = A.eigvals();
-    return FactorizedRankTwoTensorTempl<T>(
-        {std::pow(eigvals[0], p), std::pow(eigvals[1], p), std::pow(eigvals[2], p)}, A.eigvecs());
+#define FactorizedRankTwoTensorOperatorMapStdUnary(operator)                                       \
+  template <typename T>                                                                            \
+  FactorizedRankTwoTensorTempl<T> operator(const FactorizedRankTwoTensorTempl<T> & A)              \
+  {                                                                                                \
+    const auto & eigvals = A.eigvals();                                                            \
+    return FactorizedRankTwoTensorTempl<T>(                                                        \
+        {std::operator(eigvals[0]), std::operator(eigvals[1]), std::operator(eigvals[2])},         \
+        A.eigvecs());                                                                              \
   }
-}
 
-template <typename T>
-FactorizedRankTwoTensorTempl<T>
-sqrt(const FactorizedRankTwoTensorTempl<T> & A)
-{
-  const auto & eigvals = A.eigvals();
-  return FactorizedRankTwoTensorTempl<T>(
-      {std::sqrt(eigvals[0]), std::sqrt(eigvals[1]), std::sqrt(eigvals[2])}, A.eigvecs());
-}
+#define FactorizedRankTwoTensorOperatorMapStdBinary(operator)                                      \
+  template <typename T, typename T2>                                                               \
+  FactorizedRankTwoTensorTempl<T> operator(const FactorizedRankTwoTensorTempl<T> & A,              \
+                                           const T2 & b)                                           \
+  {                                                                                                \
+    if constexpr (ScalarTraits<T2>::value)                                                         \
+    {                                                                                              \
+      const auto & eigvals = A.eigvals();                                                          \
+      return FactorizedRankTwoTensorTempl<T>({std::operator(eigvals[0], b),                        \
+                                              std::operator(eigvals[1], b),                        \
+                                              std::operator(eigvals[2], b)},                       \
+                                             A.eigvecs());                                         \
+    }                                                                                              \
+  }
 
-template <typename T>
-FactorizedRankTwoTensorTempl<T>
-cbrt(const FactorizedRankTwoTensorTempl<T> & A)
-{
-  const auto & eigvals = A.eigvals();
-  return FactorizedRankTwoTensorTempl<T>(
-      {std::cbrt(eigvals[0]), std::cbrt(eigvals[1]), std::cbrt(eigvals[2])}, A.eigvecs());
-}
+// TODO: While the macro is here, in the future we could instantiate other operator maps like
+// trignometry functions.
+FactorizedRankTwoTensorOperatorMapStdUnary(log);
+FactorizedRankTwoTensorOperatorMapStdUnary(exp);
+FactorizedRankTwoTensorOperatorMapStdUnary(sqrt);
+FactorizedRankTwoTensorOperatorMapStdUnary(cbrt);
+FactorizedRankTwoTensorOperatorMapStdBinary(pow);
 } // end namespace MathUtils
 
 template <typename T>
