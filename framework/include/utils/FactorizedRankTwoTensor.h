@@ -15,29 +15,6 @@
 template <typename>
 class FactorizedRankTwoTensorTempl;
 
-// namespace MathUtils
-// {
-// /// natural log of a factorized RankTwoTensor
-// template <typename T>
-// FactorizedRankTwoTensorTempl<T> log(const FactorizedRankTwoTensorTempl<T> &);
-//
-// /// exponentiated a factorized RankTwoTensor
-// template <typename T>
-// FactorizedRankTwoTensorTempl<T> exp(const FactorizedRankTwoTensorTempl<T> &);
-//
-// /// sqrt of a factorized RankTwoTensor
-// template <typename T>
-// FactorizedRankTwoTensorTempl<T> sqrt(const FactorizedRankTwoTensorTempl<T> &);
-//
-// /// cbrt of a factorized RankTwoTensor
-// template <typename T>
-// FactorizedRankTwoTensorTempl<T> cbrt(const FactorizedRankTwoTensorTempl<T> &);
-//
-// /// a factorized RankTwoTensor raised to a power
-// template <typename T, typename T2>
-// FactorizedRankTwoTensorTempl<T> pow(const FactorizedRankTwoTensorTempl<T> &, const T2 &);
-// } // end namespace MathUtils
-
 /**
  * FactorizedRankTwoTensorTempl is designed to perform the spectral decomposition of an
  * underlying symmetric second order tensor and reuse its bases for future operations if possible.
@@ -160,38 +137,37 @@ private:
 
 namespace MathUtils
 {
-#define FactorizedRankTwoTensorOperatorMapStdUnary(operator)                                       \
+#define FactorizedRankTwoTensorOperatorMapUnary(operatorname, operator)                            \
   template <typename T>                                                                            \
-  FactorizedRankTwoTensorTempl<T> operator(const FactorizedRankTwoTensorTempl<T> & A)              \
+  FactorizedRankTwoTensorTempl<T> operatorname(const FactorizedRankTwoTensorTempl<T> & A)          \
   {                                                                                                \
-    const auto & eigvals = A.eigvals();                                                            \
-    return FactorizedRankTwoTensorTempl<T>(                                                        \
-        {std::operator(eigvals[0]), std::operator(eigvals[1]), std::operator(eigvals[2])},         \
-        A.eigvecs());                                                                              \
+    std::vector<typename T::value_type> op_eigvals;                                                \
+    for (const auto & eigval : A.eigvals())                                                        \
+      op_eigvals.push_back(operator);                                                              \
+    return FactorizedRankTwoTensorTempl<T>(op_eigvals, A.eigvecs());                               \
   }
 
-#define FactorizedRankTwoTensorOperatorMapStdBinary(operator)                                      \
+#define FactorizedRankTwoTensorOperatorMapBinary(operatorname, operator)                           \
   template <typename T, typename T2>                                                               \
-  FactorizedRankTwoTensorTempl<T> operator(const FactorizedRankTwoTensorTempl<T> & A,              \
-                                           const T2 & b)                                           \
+  FactorizedRankTwoTensorTempl<T> operatorname(const FactorizedRankTwoTensorTempl<T> & A,          \
+                                               const T2 & b)                                       \
   {                                                                                                \
     if constexpr (ScalarTraits<T2>::value)                                                         \
     {                                                                                              \
-      const auto & eigvals = A.eigvals();                                                          \
-      return FactorizedRankTwoTensorTempl<T>({std::operator(eigvals[0], b),                        \
-                                              std::operator(eigvals[1], b),                        \
-                                              std::operator(eigvals[2], b)},                       \
-                                             A.eigvecs());                                         \
+      std::vector<typename T::value_type> op_eigvals;                                              \
+      for (const auto & eigval : A.eigvals())                                                      \
+        op_eigvals.push_back(operator);                                                            \
+      return FactorizedRankTwoTensorTempl<T>(op_eigvals, A.eigvecs());                             \
     }                                                                                              \
   }
 
 // TODO: While the macro is here, in the future we could instantiate other operator maps like
 // trignometry functions.
-FactorizedRankTwoTensorOperatorMapStdUnary(log);
-FactorizedRankTwoTensorOperatorMapStdUnary(exp);
-FactorizedRankTwoTensorOperatorMapStdUnary(sqrt);
-FactorizedRankTwoTensorOperatorMapStdUnary(cbrt);
-FactorizedRankTwoTensorOperatorMapStdBinary(pow);
+FactorizedRankTwoTensorOperatorMapUnary(log, std::log(eigval));
+FactorizedRankTwoTensorOperatorMapUnary(exp, std::exp(eigval));
+FactorizedRankTwoTensorOperatorMapUnary(sqrt, std::sqrt(eigval));
+FactorizedRankTwoTensorOperatorMapUnary(cbrt, std::cbrt(eigval));
+FactorizedRankTwoTensorOperatorMapBinary(pow, std::pow(eigval, b));
 } // end namespace MathUtils
 
 template <typename T>
@@ -222,9 +198,6 @@ FactorizedRankTwoTensorTempl<T>::operator/(const T2 & a) const
   }
 }
 
+// In the future, we could also instantiate on [AD]SymmtericRankTwoTensor
 typedef FactorizedRankTwoTensorTempl<RankTwoTensor> FactorizedRankTwoTensor;
 typedef FactorizedRankTwoTensorTempl<ADRankTwoTensor> ADFactorizedRankTwoTensor;
-// In the future, we could also instantiate on
-// typedef FactorizedRankTwoTensorTempl<SymmtericRankTwoTensor> FactorizedSymmetricRankTwoTensor;
-// typedef FactorizedRankTwoTensorTempl<ADSymmetricRankTwoTensor>
-// ADFactorizedSymmetricRankTwoTensor;
