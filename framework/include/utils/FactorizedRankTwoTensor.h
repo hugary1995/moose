@@ -137,9 +137,7 @@ private:
 
 namespace MathUtils
 {
-#define FactorizedRankTwoTensorOperatorMapUnary(operatorname, operator)                            \
-  template <typename T>                                                                            \
-  FactorizedRankTwoTensorTempl<T> operatorname(const FactorizedRankTwoTensorTempl<T> & A)          \
+#define FactorizedRankTwoTensorOperatorMapBody(operator)                                           \
   {                                                                                                \
     std::vector<typename T::value_type> op_eigvals;                                                \
     for (const auto & eigval : A.eigvals())                                                        \
@@ -147,27 +145,105 @@ namespace MathUtils
     return FactorizedRankTwoTensorTempl<T>(op_eigvals, A.eigvecs());                               \
   }
 
+#define FactorizedRankTwoTensorOperatorMapUnary(operatorname, operator)                            \
+  template <typename T>                                                                            \
+  FactorizedRankTwoTensorTempl<T> operatorname(const FactorizedRankTwoTensorTempl<T> & A)          \
+  {                                                                                                \
+    FactorizedRankTwoTensorOperatorMapBody(operator)                                               \
+  }
+
 #define FactorizedRankTwoTensorOperatorMapBinary(operatorname, operator)                           \
   template <typename T, typename T2>                                                               \
   FactorizedRankTwoTensorTempl<T> operatorname(const FactorizedRankTwoTensorTempl<T> & A,          \
-                                               const T2 & b)                                       \
+                                               const T2 & arg)                                     \
   {                                                                                                \
     if constexpr (ScalarTraits<T2>::value)                                                         \
     {                                                                                              \
-      std::vector<typename T::value_type> op_eigvals;                                              \
-      for (const auto & eigval : A.eigvals())                                                      \
-        op_eigvals.push_back(operator);                                                            \
-      return FactorizedRankTwoTensorTempl<T>(op_eigvals, A.eigvecs());                             \
+      FactorizedRankTwoTensorOperatorMapBody(operator)                                             \
     }                                                                                              \
   }
 
-// TODO: While the macro is here, in the future we could instantiate other operator maps like
+#define FactorizedRankTwoTensorOperatorMapDerivativeBody(operator, derivative)                     \
+  {                                                                                                \
+    std::vector<typename T::value_type> op_eigvals, op_derivs;                                     \
+    for (const auto & eigval : A.eigvals())                                                        \
+    {                                                                                              \
+      op_eigvals.push_back(operator);                                                              \
+      op_derivs.push_back(derivative);                                                             \
+    }                                                                                              \
+                                                                                                   \
+    RankFourTensorTempl<typename T::value_type> P;                                                 \
+    RankTwoTensorTempl<typename T::value_type> Gab, Gba, Ma, Mb;                                   \
+                                                                                                   \
+    for (auto a : make_range(3))                                                                   \
+    {                                                                                              \
+      Ma.vectorOuterProduct(A.eigvecs().column(a), A.eigvecs().column(a));                         \
+      P += op_derivs[a] * Ma.outerProduct(Ma);                                                     \
+    }                                                                                              \
+                                                                                                   \
+    for (auto a : make_range(3))                                                                   \
+      for (auto b : make_range(a))                                                                 \
+      {                                                                                            \
+        Ma.vectorOuterProduct(A.eigvecs().column(a), A.eigvecs().column(a));                       \
+        Mb.vectorOuterProduct(A.eigvecs().column(b), A.eigvecs().column(b));                       \
+                                                                                                   \
+        Gab = Ma.mixedProductIkJl(Mb) + Ma.mixedProductIlJk(Mb);                                   \
+        Gba = Mb.mixedProductIkJl(Ma) + Mb.mixedProductIlJk(Ma);                                   \
+                                                                                                   \
+        Real theta_ab;                                                                             \
+        if (!MooseUtils::absoluteFuzzyEqual(A.eigvals()[a], A.eigvals()[b]))                       \
+          theta_ab = 0.5 * (op_eigvals[a] - op_eigvals[b]) / (A.eigvals()[a] - A.eigvals()[b]);    \
+        else                                                                                       \
+          theta_ab = 0.25 * (op_derivs[a] + op_derivs[b]);                                         \
+                                                                                                   \
+        P += theta_ab * (Gab + Gba);                                                               \
+      }                                                                                            \
+    return P;                                                                                      \
+  }
+
+#define FactorizedRankTwoTensorOperatorMapDerivativeUnary(derivativename, operator, derivative)    \
+  template <typename T>                                                                            \
+  RankFourTensorTempl<typename T::value_type> derivativename(                                      \
+      const FactorizedRankTwoTensorTempl<T> & A)                                                   \
+  {                                                                                                \
+    FactorizedRankTwoTensorOperatorMapDerivativeBody(operator, derivative)                         \
+  }
+
+#define FactorizedRankTwoTensorOperatorMapDerivativeBinary(derivativename, operator, derivative)   \
+  template <typename T, typename T2>                                                               \
+  RankFourTensorTempl<typename T::value_type> derivativename(                                      \
+      const FactorizedRankTwoTensorTempl<T> & A, const T2 & arg)                                   \
+  {                                                                                                \
+    if constexpr (ScalarTraits<T2>::value)                                                         \
+    {                                                                                              \
+      FactorizedRankTwoTensorOperatorMapDerivativeBody(operator, derivative)                       \
+    }                                                                                              \
+  }
+
+// TODO: While the macros are here, in the future we could instantiate other operator maps like
 // trignometry functions.
+// @{
 FactorizedRankTwoTensorOperatorMapUnary(log, std::log(eigval));
+FactorizedRankTwoTensorOperatorMapDerivativeUnary(dlog, std::log(eigval), 1 / eigval);
+
 FactorizedRankTwoTensorOperatorMapUnary(exp, std::exp(eigval));
+FactorizedRankTwoTensorOperatorMapDerivativeUnary(dexp, std::exp(eigval), std::exp(eigval));
+
 FactorizedRankTwoTensorOperatorMapUnary(sqrt, std::sqrt(eigval));
+FactorizedRankTwoTensorOperatorMapDerivativeUnary(dsqrt,
+                                                  std::sqrt(eigval),
+                                                  1 / 2 / std::sqrt(eigval));
+
 FactorizedRankTwoTensorOperatorMapUnary(cbrt, std::cbrt(eigval));
-FactorizedRankTwoTensorOperatorMapBinary(pow, std::pow(eigval, b));
+FactorizedRankTwoTensorOperatorMapDerivativeUnary(dcbrt,
+                                                  std::cbrt(eigval),
+                                                  1 / 3 / std::cbrt(eigval));
+
+FactorizedRankTwoTensorOperatorMapBinary(pow, std::pow(eigval, arg));
+FactorizedRankTwoTensorOperatorMapDerivativeBinary(dpow,
+                                                   std::pow(eigval, arg),
+                                                   arg * std::pow(eigval, arg - 1));
+// @}
 } // end namespace MathUtils
 
 template <typename T>
