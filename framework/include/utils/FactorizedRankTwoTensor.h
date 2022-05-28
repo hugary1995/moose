@@ -27,8 +27,7 @@ FactorizedRankTwoTensorTempl<T> exp(const FactorizedRankTwoTensorTempl<T> &);
 
 /// a factorized RankTwoTensor raised to a power
 template <typename T, typename T2>
-typename std::enable_if<ScalarTraits<T2>::value, FactorizedRankTwoTensorTempl<T>>::type
-pow(const FactorizedRankTwoTensorTempl<T> &, const T2 & p);
+FactorizedRankTwoTensorTempl<T> pow(const FactorizedRankTwoTensorTempl<T> &, const T2 &);
 
 /// sqrt of a factorized RankTwoTensor
 template <typename T>
@@ -115,16 +114,14 @@ public:
 
   /// returns _A * a, also updates eigen values
   template <typename T2>
-  typename std::enable_if<ScalarTraits<T2>::value, FactorizedRankTwoTensorTempl<T>>::type
-  operator*(const T2 & a) const;
+  FactorizedRankTwoTensorTempl<T> operator*(const T2 & a) const;
 
   /// performs _A /= a in place, also updates eigen values
   FactorizedRankTwoTensorTempl<T> & operator/=(const typename T::value_type & a);
 
   /// returns _A / a, also updates eigen values
   template <typename T2>
-  typename std::enable_if<ScalarTraits<T2>::value, FactorizedRankTwoTensorTempl<T>>::type
-  operator/(const T2 & a) const;
+  FactorizedRankTwoTensorTempl<T> operator/(const T2 & a) const;
 
   /// Defines logical equality with another second order tensor
   bool operator==(const T & A) const;
@@ -174,12 +171,15 @@ exp(const FactorizedRankTwoTensorTempl<T> & A)
 }
 
 template <typename T, typename T2>
-typename std::enable_if<ScalarTraits<T2>::value, FactorizedRankTwoTensorTempl<T>>::type
+FactorizedRankTwoTensorTempl<T>
 pow(const FactorizedRankTwoTensorTempl<T> & A, const T2 & p)
 {
-  const auto & eigvals = A.eigvals();
-  return FactorizedRankTwoTensorTempl<T>(
-      {std::pow(eigvals[0], p), std::pow(eigvals[1], p), std::pow(eigvals[2], p)}, A.eigvecs());
+  if constexpr (ScalarTraits<T2>::value)
+  {
+    const auto & eigvals = A.eigvals();
+    return FactorizedRankTwoTensorTempl<T>(
+        {std::pow(eigvals[0], p), std::pow(eigvals[1], p), std::pow(eigvals[2], p)}, A.eigvecs());
+  }
 }
 
 template <typename T>
@@ -200,6 +200,34 @@ cbrt(const FactorizedRankTwoTensorTempl<T> & A)
       {std::cbrt(eigvals[0]), std::cbrt(eigvals[1]), std::cbrt(eigvals[2])}, A.eigvecs());
 }
 } // end namespace MathUtils
+
+template <typename T>
+template <typename T2>
+FactorizedRankTwoTensorTempl<T>
+FactorizedRankTwoTensorTempl<T>::operator*(const T2 & a) const
+{
+  if constexpr (ScalarTraits<T2>::value)
+  {
+    FactorizedRankTwoTensorTempl<T> A = *this;
+    for (auto & eigval : A._eigvals)
+      eigval *= a;
+    return A;
+  }
+}
+
+template <typename T>
+template <typename T2>
+FactorizedRankTwoTensorTempl<T>
+FactorizedRankTwoTensorTempl<T>::operator/(const T2 & a) const
+{
+  if constexpr (ScalarTraits<T2>::value)
+  {
+    FactorizedRankTwoTensorTempl<T> A = *this;
+    for (auto & eigval : A._eigvals)
+      eigval /= a;
+    return A;
+  }
+}
 
 typedef FactorizedRankTwoTensorTempl<RankTwoTensor> FactorizedRankTwoTensor;
 typedef FactorizedRankTwoTensorTempl<ADRankTwoTensor> ADFactorizedRankTwoTensor;

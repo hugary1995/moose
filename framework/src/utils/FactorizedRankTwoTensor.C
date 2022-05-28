@@ -57,34 +57,12 @@ FactorizedRankTwoTensorTempl<T>::operator*=(const typename T::value_type & a)
 }
 
 template <typename T>
-template <typename T2>
-typename std::enable_if<ScalarTraits<T2>::value, FactorizedRankTwoTensorTempl<T>>::type
-FactorizedRankTwoTensorTempl<T>::operator*(const T2 & a) const
-{
-  FactorizedRankTwoTensorTempl<T> A = *this;
-  for (auto & eigval : A._eigvals)
-    eigval *= a;
-  return A;
-}
-
-template <typename T>
 FactorizedRankTwoTensorTempl<T> &
 FactorizedRankTwoTensorTempl<T>::operator/=(const typename T::value_type & a)
 {
   for (auto & eigval : _eigvals)
     eigval /= a;
   return *this;
-}
-
-template <typename T>
-template <typename T2>
-typename std::enable_if<ScalarTraits<T2>::value, FactorizedRankTwoTensorTempl<T>>::type
-FactorizedRankTwoTensorTempl<T>::operator/(const T2 & a) const
-{
-  FactorizedRankTwoTensorTempl<T> A = *this;
-  for (auto & eigval : A._eigvals)
-    eigval /= a;
-  return A;
 }
 
 template <typename T>
