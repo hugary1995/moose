@@ -87,8 +87,16 @@ public:
   }
 
   // @{ getters
-  T get() const { return assemble(); }
-  T get() { return assemble(); }
+  template <typename T2 = RankTwoTensorTempl<typename T::value_type>>
+  T2 get() const
+  {
+    return static_cast<T2>(assemble());
+  }
+  template <typename T2 = RankTwoTensorTempl<typename T::value_type>>
+  T2 get()
+  {
+    return static_cast<T2>(assemble());
+  }
   const std::vector<typename T::value_type> & eigvals() const { return _eigvals; }
   std::vector<typename T::value_type> eigvals() { return _eigvals; }
   const RankTwoTensorTempl<typename T::value_type> & eigvecs() const { return _eigvecs; }
@@ -137,10 +145,10 @@ public:
 
 private:
   // Assemble the tensor from the factorization
-  T assemble() const
+  RankTwoTensorTempl<typename T::value_type> assemble() const
   {
     RankTwoTensorTempl<typename T::value_type> D(_eigvals);
-    return static_cast<T>(_eigvecs * D * _eigvecs.transpose());
+    return _eigvecs * D * _eigvecs.transpose();
   }
 
   // The eigen values of _A;
