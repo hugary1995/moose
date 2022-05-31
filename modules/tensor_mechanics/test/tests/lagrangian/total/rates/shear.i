@@ -1,3 +1,6 @@
+# shear modulus
+G = 5000
+
 [Mesh]
   [msh]
     type = GeneratedMeshGenerator
@@ -41,211 +44,71 @@
 []
 
 [AuxVariables]
-  [strain_xx]
-    order = CONSTANT
-    family = MONOMIAL
-  []
-  [strain_yy]
-    order = CONSTANT
-    family = MONOMIAL
-  []
-  [strain_zz]
-    order = CONSTANT
-    family = MONOMIAL
-  []
-  [strain_xy]
-    order = CONSTANT
-    family = MONOMIAL
-  []
-  [strain_xz]
-    order = CONSTANT
-    family = MONOMIAL
-  []
-  [strain_yz]
-    order = CONSTANT
-    family = MONOMIAL
-  []
   [stress_xx]
     order = CONSTANT
     family = MONOMIAL
+    [AuxKernel]
+      type = RankTwoAux
+      rank_two_tensor = cauchy_stress
+      index_i = 0
+      index_j = 0
+      execute_on = 'INITIAL TIMESTEP_END'
+    []
   []
   [stress_yy]
     order = CONSTANT
     family = MONOMIAL
-  []
-  [stress_zz]
-    order = CONSTANT
-    family = MONOMIAL
-  []
-  [stress_xy]
-    order = CONSTANT
-    family = MONOMIAL
-  []
-  [stress_yz]
-    order = CONSTANT
-    family = MONOMIAL
-  []
-  [stress_xz]
-    order = CONSTANT
-    family = MONOMIAL
-  []
-[]
-
-[AuxKernels]
-  [stress_xx]
-    type = RankTwoAux
-    rank_two_tensor = cauchy_stress
-    variable = stress_xx
-    index_i = 0
-    index_j = 0
-    execute_on = timestep_end
-  []
-  [stress_yy]
-    type = RankTwoAux
-    rank_two_tensor = cauchy_stress
-    variable = stress_yy
-    index_i = 1
-    index_j = 1
-    execute_on = timestep_end
-  []
-  [stress_zz]
-    type = RankTwoAux
-    rank_two_tensor = cauchy_stress
-    variable = stress_zz
-    index_i = 2
-    index_j = 2
-    execute_on = timestep_end
+    [AuxKernel]
+      type = RankTwoAux
+      rank_two_tensor = cauchy_stress
+      index_i = 1
+      index_j = 1
+      execute_on = 'INITIAL TIMESTEP_END'
+    []
   []
   [stress_xy]
-    type = RankTwoAux
-    rank_two_tensor = cauchy_stress
-    variable = stress_xy
-    index_i = 0
-    index_j = 1
-    execute_on = timestep_end
-  []
-  [stress_xz]
-    type = RankTwoAux
-    rank_two_tensor = cauchy_stress
-    variable = stress_xz
-    index_i = 0
-    index_j = 2
-    execute_on = timestep_end
-  []
-  [stress_yz]
-    type = RankTwoAux
-    rank_two_tensor = cauchy_stress
-    variable = stress_yz
-    index_i = 1
-    index_j = 2
-    execute_on = timestep_end
-  []
-
-  [strain_xx]
-    type = RankTwoAux
-    rank_two_tensor = mechanical_strain
-    variable = strain_xx
-    index_i = 0
-    index_j = 0
-    execute_on = timestep_end
-  []
-  [strain_yy]
-    type = RankTwoAux
-    rank_two_tensor = mechanical_strain
-    variable = strain_yy
-    index_i = 1
-    index_j = 1
-    execute_on = timestep_end
-  []
-  [strain_zz]
-    type = RankTwoAux
-    rank_two_tensor = mechanical_strain
-    variable = strain_zz
-    index_i = 2
-    index_j = 2
-    execute_on = timestep_end
-  []
-  [strain_xy]
-    type = RankTwoAux
-    rank_two_tensor = mechanical_strain
-    variable = strain_xy
-    index_i = 0
-    index_j = 1
-    execute_on = timestep_end
-  []
-  [strain_xz]
-    type = RankTwoAux
-    rank_two_tensor = mechanical_strain
-    variable = strain_xz
-    index_i = 0
-    index_j = 2
-    execute_on = timestep_end
-  []
-  [strain_yz]
-    type = RankTwoAux
-    rank_two_tensor = mechanical_strain
-    variable = strain_yz
-    index_i = 1
-    index_j = 2
-    execute_on = timestep_end
-  []
-[]
-
-[Functions]
-  [shearme]
-    type = PiecewiseLinear
-    x = '0 10'
-    y = '0 20'
+    order = CONSTANT
+    family = MONOMIAL
+    [AuxKernel]
+      type = RankTwoAux
+      rank_two_tensor = cauchy_stress
+      index_i = 0
+      index_j = 1
+      execute_on = 'INITIAL TIMESTEP_END'
+    []
   []
 []
 
 [BCs]
-  [back]
-    type = DirichletBC
-    preset = true
-    variable = disp_z
-    boundary = back
-    value = 0.0
-  []
-  [bottom_y]
-    type = DirichletBC
-    preset = true
-    variable = disp_y
-    boundary = bottom
-    value = 0.0
-  []
-  [bottom_x]
-    type = DirichletBC
-    preset = true
-    variable = disp_x
-    boundary = bottom
-    value = 0.0
-  []
-  [shear]
+  [x]
     type = FunctionDirichletBC
     variable = disp_x
-    boundary = top
-    function = shearme
-    preset = true
+    boundary = 'top bottom' # This contains all 8 nodes in the patch
+    function = 'x+t*y'
   []
-  [hmm]
-    type = DirichletBC
-    preset = true
+  [y]
+    type = FunctionDirichletBC
     variable = disp_y
-    boundary = top
-    value = 0.0
+    boundary = 'top bottom' # This contains all 8 nodes in the patch
+    function = 'y'
+  []
+  [z]
+    type = FunctionDirichletBC
+    variable = disp_z
+    boundary = 'top bottom' # This contains all 8 nodes in the patch
+    function = 'z'
   []
 []
 
 [Materials]
   [elastic_tensor]
     type = ComputeIsotropicElasticityTensor
-    youngs_modulus = 100000.0
-    poissons_ratio = 0.3
+    lambda = ${G}
+    shear_modulus = ${G}
   []
   [compute_stress]
     type = ComputeLagrangianLinearElasticStress
-    objective_rate = truesdell
+    objective_rate = green_naghdi
   []
   [compute_strain]
     type = ComputeLagrangianStrain
@@ -253,30 +116,24 @@
 []
 
 [Postprocessors]
-  [exy]
-    type = ElementAverageValue
-    variable = strain_xy
-    execute_on = 'initial timestep_end'
-  []
   [sxy]
     type = ElementAverageValue
     variable = stress_xy
-    execute_on = 'initial timestep_end'
+    execute_on = 'INITIAL TIMESTEP_BEGIN'
   []
-[]
-
-[Preconditioning]
-  [smp]
-    type = SMP
-    full = true
+  [sxy0]
+    type = ParsedPostprocessor
+    pp_names = 'sxy'
+    function = 'sxy/${G}'
+    execute_on = 'INITIAL TIMESTEP_BEGIN'
   []
 []
 
 [Executioner]
   type = Transient
-  dt = 0.01
+  dt = 0.05
 
-  solve_type = 'newton'
+  solve_type = NEWTON
 
   petsc_options_iname = -pc_type
   petsc_options_value = lu
@@ -284,10 +141,9 @@
   nl_abs_tol = 1e-10
   nl_rel_tol = 1e-10
 
-  end_time = 4
+  end_time = 8
 []
 
 [Outputs]
-  exodus = false
   csv = true
 []
