@@ -84,19 +84,19 @@ G = 5000
     type = FunctionDirichletBC
     variable = disp_x
     boundary = 'top bottom' # This contains all 8 nodes in the patch
-    function = 'x+t*y'
+    function = 't*y'
   []
   [y]
     type = FunctionDirichletBC
     variable = disp_y
     boundary = 'top bottom' # This contains all 8 nodes in the patch
-    function = 'y'
+    function = '0'
   []
   [z]
     type = FunctionDirichletBC
     variable = disp_z
     boundary = 'top bottom' # This contains all 8 nodes in the patch
-    function = 'z'
+    function = '0'
   []
 []
 
@@ -116,10 +116,35 @@ G = 5000
 []
 
 [Postprocessors]
+  [sxx]
+    type = ElementAverageValue
+    variable = stress_xx
+    execute_on = 'INITIAL TIMESTEP_BEGIN'
+    outputs = none
+  []
+  [sxx0]
+    type = ParsedPostprocessor
+    pp_names = 'sxx'
+    function = 'sxx/${G}'
+    execute_on = 'INITIAL TIMESTEP_BEGIN'
+  []
+  [syy]
+    type = ElementAverageValue
+    variable = stress_yy
+    execute_on = 'INITIAL TIMESTEP_BEGIN'
+    outputs = none
+  []
+  [syy0]
+    type = ParsedPostprocessor
+    pp_names = 'syy'
+    function = 'syy/${G}'
+    execute_on = 'INITIAL TIMESTEP_BEGIN'
+  []
   [sxy]
     type = ElementAverageValue
     variable = stress_xy
     execute_on = 'INITIAL TIMESTEP_BEGIN'
+    outputs = none
   []
   [sxy0]
     type = ParsedPostprocessor
@@ -141,7 +166,7 @@ G = 5000
   nl_abs_tol = 1e-10
   nl_rel_tol = 1e-10
 
-  end_time = 8
+  end_time = 20
 []
 
 [Outputs]
