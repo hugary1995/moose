@@ -53,8 +53,10 @@ ComputeHypoelasticStVenantKirchhoffStress::computeQpSmallStress()
   const RankTwoTensor F = _def_grad[_qp];
   const RankTwoTensor Ft = F.transpose();
   const Real J = F.det();
+  const RankFourTensor FF = F.mixedProductIkJl(F);
+  const RankFourTensor FtFt = Ft.mixedProductIkJl(Ft);
   const RankFourTensor C0 = _elasticity_tensor[_qp];
-  const RankFourTensor C = F.mixedProductIkJl(F) * C0 * Ft.mixedProductIkJl(Ft) / J;
+  const RankFourTensor C = FF * C0 * FtFt / J;
 
   // Update the small stress
   const RankTwoTensor dS = C * dL;
@@ -65,22 +67,12 @@ ComputeHypoelasticStVenantKirchhoffStress::computeQpSmallStress()
   {
     const RankFourTensor dFddL = _inv_df[_qp].inverse().mixedProductIkJl(Ft);
     _small_jacobian[_qp] =
-        C - dS.outerProduct(_inv_def_grad[_qp].transpose().initialContraction(dFddL));
-    for (auto i : make_range(3))
-      for (auto j : make_range(3))
-        for (auto r : make_range(3))
-          for (auto s : make_range(3))
-            for (auto m : make_range(3))
-              for (auto n : make_range(3))
-                for (auto p : make_range(3))
-                  for (auto q : make_range(3))
-                    for (auto k : make_range(3))
-                      for (auto l : make_range(3))
-                        _small_jacobian[_qp](i, j, r, s) +=
-                            (dFddL(i, m, r, s) * F(j, n) * F(k, p) * F(l, q) +
-                             F(i, m) * dFddL(j, n, r, s) * F(k, p) * F(l, q) +
-                             F(i, m) * F(j, n) * dFddL(k, p, r, s) * F(l, q) +
-                             F(i, m) * F(j, n) * F(k, p) * dFddL(l, q, r, s)) *
-                            C0(m, n, p, q) * dL(k, l) / J;
+        C +
+        (dFddL.singleProductJ(MathUtils::transpose(C0.tripleProductJkl(F, F, F) * dL)) +
+         dFddL.singleProductJ(C0.tripleProductIkl(F, F, F) * dL).transposeIj() +
+         FF * C0.singleProductL(F * dL).transposeKl() * dFddL +
+         FF * C0.singleProductK(dL.transpose() * F) * dFddL) /
+            J -
+        dS.outerProduct(_inv_def_grad[_qp].transpose().initialContraction(dFddL));
   }
 }
