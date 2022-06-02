@@ -108,7 +108,6 @@ G = 5000
   []
   [compute_stress]
     type = ComputeLagrangianLinearElasticStress
-    objective_rate = green_naghdi
   []
   [compute_strain]
     type = ComputeLagrangianStrain

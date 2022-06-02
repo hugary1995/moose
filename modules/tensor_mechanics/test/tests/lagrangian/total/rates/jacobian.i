@@ -128,7 +128,6 @@
   []
   [compute_stress]
     type = ComputeLagrangianLinearElasticStress
-    objective_rate = truesdell
   []
   [compute_strain]
     type = ComputeLagrangianStrain

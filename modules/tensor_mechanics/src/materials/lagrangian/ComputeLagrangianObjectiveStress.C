@@ -175,8 +175,7 @@ RankFourTensor
 ComputeLagrangianObjectiveStress::cauchyJacobian(const RankFourTensor & Jinv,
                                                  const RankFourTensor & U) const
 {
-  RankFourTensor Isym = RankFourTensor(RankFourTensor::initIdentitySymmetricFour);
-  return Jinv * (_small_jacobian[_qp] * Isym - U);
+  return Jinv * (_small_jacobian[_qp] - U);
 }
 
 void
