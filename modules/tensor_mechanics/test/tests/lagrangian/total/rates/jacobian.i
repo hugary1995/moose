@@ -149,6 +149,7 @@
 
   petsc_options_iname = '-pc_type'
   petsc_options_value = 'lu'
+  automatic_scaling = true
 
   l_max_its = 2
   l_tol = 1e-14

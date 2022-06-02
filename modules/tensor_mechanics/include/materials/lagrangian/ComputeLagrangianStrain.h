@@ -51,8 +51,8 @@ protected:
   virtual void computeQpProperties() override;
 
 private:
-  /// Calculate the strains based on the spatial velocity gradient
-  void calculateIncrementalStrains(const RankTwoTensor & L);
+  /// Calculate the strains based on the spatial velocity gradient increment
+  void calculateIncrementalStrains(const RankTwoTensor & dL);
   /// Subtract the eigenstrain increment to subtract from the total strain
   void subtractEigenstrainIncrement(RankTwoTensor & strain);
   /// Calculate the unstabilized and stabilized deformation gradients
@@ -84,8 +84,11 @@ protected:
   MaterialProperty<RankTwoTensor> & _mechanical_strain;
   const MaterialProperty<RankTwoTensor> & _mechanical_strain_old;
 
-  /// Strain increment
+  /// Strain increment, i.e. symmetric part of the spatial velocity gradient increment
   MaterialProperty<RankTwoTensor> & _strain_increment;
+
+  /// Vorticity increment, i.e. antisymmetric part of the spatial velocity gradient increment
+  MaterialProperty<RankTwoTensor> & _vorticity_increment;
 
   /// Deformation gradient
   MaterialProperty<RankTwoTensor> & _def_grad;

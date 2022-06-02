@@ -51,6 +51,7 @@ ComputeLagrangianStrain::ComputeLagrangianStrain(const InputParameters & paramet
     _mechanical_strain(declareProperty<RankTwoTensor>(_base_name + "mechanical_strain")),
     _mechanical_strain_old(getMaterialPropertyOld<RankTwoTensor>(_base_name + "mechanical_strain")),
     _strain_increment(declareProperty<RankTwoTensor>(_base_name + "strain_increment")),
+    _vorticity_increment(declareProperty<RankTwoTensor>(_base_name + "vorticity_increment")),
     _def_grad(declareProperty<RankTwoTensor>(_base_name + "deformation_gradient")),
     _def_grad_old(getMaterialPropertyOld<RankTwoTensor>(_base_name + "deformation_gradient")),
     _unstabilized_def_grad(
@@ -130,13 +131,13 @@ ComputeLagrangianStrain::computeQpProperties()
 
   // If the kernel is large deformation then we need the "actual"
   // kinematic quantities
-  RankTwoTensor L;
+  RankTwoTensor dL;
   if (_large_kinematics)
   {
     _inv_def_grad[_qp] = _def_grad[_qp].inverse();
     _detJ[_qp] = _def_grad[_qp].det();
     _inv_inv_inc_def_grad[_qp] = _def_grad_old[_qp] * _inv_def_grad[_qp];
-    L = RankTwoTensor::Identity() - _inv_inv_inc_def_grad[_qp];
+    dL = RankTwoTensor::Identity() - _inv_inv_inc_def_grad[_qp];
   }
   // For small deformations we just provide the identity
   else
@@ -144,17 +145,18 @@ ComputeLagrangianStrain::computeQpProperties()
     _inv_def_grad[_qp] = RankTwoTensor::Identity();
     _detJ[_qp] = 1.0;
     _inv_inv_inc_def_grad[_qp] = RankTwoTensor::Identity();
-    L = _def_grad[_qp] - _def_grad_old[_qp];
+    dL = _def_grad[_qp] - _def_grad_old[_qp];
   }
 
-  calculateIncrementalStrains(L);
+  calculateIncrementalStrains(dL);
 }
 
 void
-ComputeLagrangianStrain::calculateIncrementalStrains(const RankTwoTensor & L)
+ComputeLagrangianStrain::calculateIncrementalStrains(const RankTwoTensor & dL)
 {
   // Get the deformation increments
-  _strain_increment[_qp] = (L + L.transpose()) / 2.0;
+  _strain_increment[_qp] = (dL + dL.transpose()) / 2.0;
+  _vorticity_increment[_qp] = (dL - dL.transpose()) / 2.0;
 
   // Increment the total strain
   _total_strain[_qp] = _total_strain_old[_qp] + _strain_increment[_qp];

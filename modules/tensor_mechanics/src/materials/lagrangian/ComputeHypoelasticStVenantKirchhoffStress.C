@@ -37,10 +37,13 @@ ComputeHypoelasticStVenantKirchhoffStress::ComputeHypoelasticStVenantKirchhoffSt
 void
 ComputeHypoelasticStVenantKirchhoffStress::computeQpSmallStress()
 {
+  // The increment in the spatial velocity gradient
+  RankTwoTensor dL = _strain_increment[_qp] + _vorticity_increment[_qp];
+
   // If small kinematics, it falls back to the grade-zero hypoelasticity
   if (!_large_kinematics)
   {
-    _small_stress[_qp] = _elasticity_tensor[_qp] * _mechanical_strain[_qp];
+    _small_stress[_qp] = _small_stress_old[_qp] + _elasticity_tensor[_qp] * dL;
     _small_jacobian[_qp] = _elasticity_tensor[_qp];
     return;
   }
@@ -54,18 +57,13 @@ ComputeHypoelasticStVenantKirchhoffStress::computeQpSmallStress()
   const RankFourTensor C = F.mixedProductIkJl(F) * C0 * Ft.mixedProductIkJl(Ft) / J;
 
   // Update the small stress
-  const RankTwoTensor dD = _strain_increment[_qp];
-  const RankTwoTensor dS = C * dD;
+  const RankTwoTensor dS = C * dL;
   _small_stress[_qp] = _small_stress_old[_qp] + dS;
 
+  // Compute the small Jacobian
   if (_fe_problem.currentlyComputingJacobian())
   {
-    // Derivative of the deformation gradient w.r.t. the strain increment depends on kinmatics:
-    const RankFourTensor Isym(RankFourTensor::initIdentitySymmetricFour);
-    const RankTwoTensor dL = RankTwoTensor::Identity() - _inv_df[_qp];
     const RankFourTensor dFddL = _inv_df[_qp].inverse().mixedProductIkJl(Ft);
-
-    // Compute the small Jacobian
     _small_jacobian[_qp] =
         C - dS.outerProduct(_inv_def_grad[_qp].transpose().initialContraction(dFddL));
     for (auto i : make_range(3))

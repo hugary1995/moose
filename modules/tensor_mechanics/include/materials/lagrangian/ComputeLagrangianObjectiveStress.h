@@ -61,6 +61,9 @@ protected:
   /// Provided for material models that use the strain increment
   const MaterialProperty<RankTwoTensor> & _strain_increment;
 
+  /// Provided for material models that use the vorticity increment
+  const MaterialProperty<RankTwoTensor> & _vorticity_increment;
+
   /// Deformation gradient
   const MaterialProperty<RankTwoTensor> & _def_grad;
 
