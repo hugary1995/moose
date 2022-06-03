@@ -36,7 +36,6 @@ ComputeLagrangianObjectiveStress::ComputeLagrangianObjectiveStress(
     _strain_increment(getMaterialPropertyByName<RankTwoTensor>(_base_name + "strain_increment")),
     _vorticity_increment(
         getMaterialPropertyByName<RankTwoTensor>(_base_name + "vorticity_increment")),
-    _def_grad(getMaterialPropertyByName<RankTwoTensor>(_base_name + "deformation_gradient")),
     _def_grad_old(getMaterialPropertyOldByName<RankTwoTensor>(_base_name + "deformation_gradient")),
     _rate(getParam<MooseEnum>("objective_rate").getEnum<ObjectiveRate>()),
     _polar_decomp(_rate == ObjectiveRate::GreenNaghdi),

@@ -65,9 +65,6 @@ protected:
   const MaterialProperty<RankTwoTensor> & _vorticity_increment;
 
   /// Deformation gradient
-  const MaterialProperty<RankTwoTensor> & _def_grad;
-
-  /// Deformation gradient
   const MaterialProperty<RankTwoTensor> & _def_grad_old;
 
   /// Types of objective integrations

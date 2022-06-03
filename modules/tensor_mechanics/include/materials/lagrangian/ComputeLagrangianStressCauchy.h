@@ -35,8 +35,10 @@ protected:
   virtual void computeQpCauchyStress() = 0;
 
 private:
-  /// Wrap the Cauchy stress to get the PK stress
+  /// Wrap the Cauchy stress to get the PK1 stress
   virtual void computeQpPK1Stress();
+  /// Wrap the PK1 stress to get the PK2 stress
+  virtual void computeQpPK2Stress();
 
 protected:
   /// Inverse incremental deformation gradient
@@ -45,4 +47,6 @@ protected:
   const MaterialProperty<RankTwoTensor> & _inv_def_grad;
   /// Volume change
   const MaterialProperty<Real> & _detJ;
+  /// Deformation gradient
+  const MaterialProperty<RankTwoTensor> & _def_grad;
 };

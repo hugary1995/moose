@@ -82,4 +82,9 @@ protected:
   MaterialProperty<RankTwoTensor> & _pk1_stress;
   /// The derivative of the 1st PK stress wrt the deformation gradient
   MaterialProperty<RankFourTensor> & _pk1_jacobian;
+
+  /// The Green-Lagrange strain
+  MaterialProperty<RankTwoTensor> & _green_lagrange_strain;
+  /// The 2st Piola-Kirchhoff stress
+  MaterialProperty<RankTwoTensor> & _pk2_stress;
 };

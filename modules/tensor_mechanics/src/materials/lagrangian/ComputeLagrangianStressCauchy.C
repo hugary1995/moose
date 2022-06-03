@@ -23,7 +23,8 @@ ComputeLagrangianStressCauchy::ComputeLagrangianStressCauchy(const InputParamete
   : ComputeLagrangianStressBase(parameters),
     _inv_df(getMaterialPropertyByName<RankTwoTensor>(_base_name + "inv_inc_def_grad")),
     _inv_def_grad(getMaterialPropertyByName<RankTwoTensor>(_base_name + "inv_def_grad")),
-    _detJ(getMaterialPropertyByName<Real>(_base_name + "detJ"))
+    _detJ(getMaterialPropertyByName<Real>(_base_name + "detJ")),
+    _def_grad(getMaterialPropertyByName<RankTwoTensor>(_base_name + "deformation_gradient"))
 {
 }
 
@@ -32,6 +33,7 @@ ComputeLagrangianStressCauchy::computeQpStressUpdate()
 {
   computeQpCauchyStress();
   computeQpPK1Stress(); // This could be "switched"
+  computeQpPK2Stress();
 }
 
 void
@@ -53,4 +55,12 @@ ComputeLagrangianStressCauchy::computeQpPK1Stress()
     _pk1_stress[_qp] = _cauchy_stress[_qp];
     _pk1_jacobian[_qp] = _cauchy_jacobian[_qp];
   }
+}
+
+void
+ComputeLagrangianStressCauchy::computeQpPK2Stress()
+{
+  _green_lagrange_strain[_qp] =
+      0.5 * (_def_grad[_qp].transpose() * _def_grad[_qp] - RankTwoTensor::Identity());
+  _pk2_stress[_qp] = _inv_def_grad[_qp] * _pk1_stress[_qp];
 }
