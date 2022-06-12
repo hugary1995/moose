@@ -12,8 +12,6 @@
 #include "ElementIntegralUserObject.h"
 #include "DependencyResolverInterface.h"
 
-#include <any>
-
 /* This class gathers material properties requested by a material object to form a vector */
 class VectorizedMaterial : public ElementUserObject, public DependencyResolverInterface
 {
@@ -30,11 +28,8 @@ public:
   virtual const std::set<std::string> & getRequestedItems() override { return _reqs; }
   virtual const std::set<std::string> & getSuppliedItems() override { return _sups; }
 
-  virtual Real getReal(const std::string name, unsigned int elem, unsigned int qp) const;
-  virtual RankTwoTensor
-  getRankTwoTensor(const std::string name, unsigned int elem, unsigned int qp) const;
-  virtual RankFourTensor
-  getRankFourTensor(const std::string name, unsigned int elem, unsigned int qp) const;
+  template <typename T>
+  inline T get(const std::string name, unsigned int elem, unsigned int qp) const;
 
   virtual bool ready() const { return _ready; }
 
@@ -47,6 +42,13 @@ protected:
 
   mutable std::set<std::string> _reqs;
   std::set<std::string> _sups;
+
+private:
+  void
+  allocateVector(const std::set<std::string> & prop_names,
+                 std::map<std::string, std::vector<MooseArray<Real>>> & r_container,
+                 std::map<std::string, std::vector<MooseArray<RankTwoTensor>>> & r2t_container,
+                 std::map<std::string, std::vector<MooseArray<RankFourTensor>>> & r4t_container);
 
   std::set<std::string> _input;
   std::set<std::string> _input_old;
@@ -64,9 +66,30 @@ protected:
   std::map<std::string, std::vector<MooseArray<RankTwoTensor>>> _output_RankTwoTensor;
   std::map<std::string, std::vector<MooseArray<RankFourTensor>>> _output_RankFourTensor;
 
-private:
-  void allocateInputVector(const std::string & name);
-  void allocateOutputVector(const std::string & name);
-  void allocateInputOldVector(const std::string & name);
   bool _ready;
 };
+
+template <>
+inline Real
+VectorizedMaterial::get<Real>(const std::string name, unsigned int elem, unsigned int qp) const
+{
+  return _output_Real.at(name)[elem][qp];
+}
+
+template <>
+inline RankTwoTensor
+VectorizedMaterial::get<RankTwoTensor>(const std::string name,
+                                       unsigned int elem,
+                                       unsigned int qp) const
+{
+  return _output_RankTwoTensor.at(name)[elem][qp];
+}
+
+template <>
+inline RankFourTensor
+VectorizedMaterial::get<RankFourTensor>(const std::string name,
+                                        unsigned int elem,
+                                        unsigned int qp) const
+{
+  return _output_RankFourTensor.at(name)[elem][qp];
+}

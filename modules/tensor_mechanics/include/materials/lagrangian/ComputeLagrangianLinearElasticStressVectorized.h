@@ -38,8 +38,8 @@ protected:
       return;
     }
 
-    _small_stress[_qp] = _vec_mat.getRankTwoTensor("small_stress", _current_elem->id(), _qp);
-    _small_jacobian[_qp] = _vec_mat.getRankFourTensor("small_jacobian", _current_elem->id(), _qp);
+    _small_stress[_qp] = _vec_mat.get<RankTwoTensor>("small_stress", _current_elem->id(), _qp);
+    _small_jacobian[_qp] = _vec_mat.get<RankFourTensor>("small_jacobian", _current_elem->id(), _qp);
   }
 
   const VectorizedMaterial & _vec_mat;

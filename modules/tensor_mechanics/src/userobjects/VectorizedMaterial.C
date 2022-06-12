@@ -54,81 +54,47 @@ VectorizedMaterial::initialSetup()
   _material_property_dependencies.insert(dep_ids.begin(), dep_ids.end());
 
   // Debugging output
-  _console << "Input material property names: ";
+  _console << COLOR_CYAN << "    Input material property names: " << COLOR_DEFAULT;
   for (const auto & name : _input)
-    _console << name << "[" << _type[name] << "] ";
+    _console << name << " ";
   _console << std::endl;
-  _console << "Input old material property names: ";
+  _console << COLOR_CYAN << "Input old material property names: " << COLOR_DEFAULT;
   for (const auto & name : _input_old)
-    _console << name << "[" << _type[name] << "] ";
+    _console << name << " ";
   _console << std::endl;
-  _console << "Output material property names: ";
+  _console << COLOR_CYAN << "   Output material property names: " << COLOR_DEFAULT;
   for (const auto & name : _output)
-    _console << name << "[" << _type[name] << "] ";
+    _console << name << " ";
   _console << std::endl;
 
-  for (const auto & name : _input)
-    allocateInputVector(name);
-  for (const auto & name : _output)
-    allocateOutputVector(name);
-  for (const auto & name : _input_old)
-    allocateInputOldVector(name);
+  allocateVector(_input, _input_Real, _input_RankTwoTensor, _input_RankFourTensor);
+  allocateVector(_input_old, _input_Real_old, _input_RankTwoTensor_old, _input_RankFourTensor_old);
+  allocateVector(_output, _output_Real, _output_RankTwoTensor, _output_RankFourTensor);
 }
 
 void
-VectorizedMaterial::allocateInputVector(const std::string & name)
+VectorizedMaterial::allocateVector(
+    const std::set<std::string> & prop_names,
+    std::map<std::string, std::vector<MooseArray<Real>>> & r_container,
+    std::map<std::string, std::vector<MooseArray<RankTwoTensor>>> & r2t_container,
+    std::map<std::string, std::vector<MooseArray<RankFourTensor>>> & r4t_container)
 {
-  try
+  unsigned int N = _mesh.maxElemId();
+  for (const auto name : prop_names)
   {
-    unsigned int N = _mesh.maxElemId();
-    if (_type.at(name) == typeid(Real).name())
-      _input_Real[name] = std::vector<MooseArray<Real>>(N);
-    if (_type.at(name) == typeid(RankTwoTensor).name())
-      _input_RankTwoTensor[name] = std::vector<MooseArray<RankTwoTensor>>(N);
-    if (_type.at(name) == typeid(RankFourTensor).name())
-      _input_RankFourTensor[name] = std::vector<MooseArray<RankFourTensor>>(N);
-  }
-  catch (std::out_of_range &)
-  {
-    mooseError("Unknown material property type for ", name);
-  }
-}
-
-void
-VectorizedMaterial::allocateOutputVector(const std::string & name)
-{
-  try
-  {
-    unsigned int N = _mesh.maxElemId();
-    if (_type.at(name) == typeid(Real).name())
-      _output_Real[name] = std::vector<MooseArray<Real>>(N);
-    if (_type.at(name) == typeid(RankTwoTensor).name())
-      _output_RankTwoTensor[name] = std::vector<MooseArray<RankTwoTensor>>(N);
-    if (_type.at(name) == typeid(RankFourTensor).name())
-      _output_RankFourTensor[name] = std::vector<MooseArray<RankFourTensor>>(N);
-  }
-  catch (std::out_of_range &)
-  {
-    mooseError("Unknown material property type for ", name);
-  }
-}
-
-void
-VectorizedMaterial::allocateInputOldVector(const std::string & name)
-{
-  try
-  {
-    unsigned int N = _mesh.maxElemId();
-    if (_type.at(name) == typeid(Real).name())
-      _input_Real_old[name] = std::vector<MooseArray<Real>>(N);
-    if (_type.at(name) == typeid(RankTwoTensor).name())
-      _input_RankTwoTensor_old[name] = std::vector<MooseArray<RankTwoTensor>>(N);
-    if (_type.at(name) == typeid(RankFourTensor).name())
-      _input_RankFourTensor_old[name] = std::vector<MooseArray<RankFourTensor>>(N);
-  }
-  catch (std::out_of_range &)
-  {
-    mooseError("Unknown material property type for ", name);
+    try
+    {
+      if (_type.at(name) == typeid(Real).name())
+        r_container[name] = std::vector<MooseArray<Real>>(N);
+      if (_type.at(name) == typeid(RankTwoTensor).name())
+        r2t_container[name] = std::vector<MooseArray<RankTwoTensor>>(N);
+      if (_type.at(name) == typeid(RankFourTensor).name())
+        r4t_container[name] = std::vector<MooseArray<RankFourTensor>>(N);
+    }
+    catch (std::out_of_range &)
+    {
+      mooseError("Unknown material property type for ", name);
+    }
   }
 }
 
@@ -164,16 +130,17 @@ VectorizedMaterial::execute()
     auto prop_id = _prop_name_id_map[name];
     if (_type.at(name) == typeid(Real).name())
       _input_Real_old[name][_current_elem->id()] =
-          static_cast<MaterialPropertyBase<Real, false> *>(_material_data->props()[prop_id])->get();
+          static_cast<MaterialPropertyBase<Real, false> *>(_material_data->propsOld()[prop_id])
+              ->get();
     if (_type.at(name) == typeid(RankTwoTensor).name())
       _input_RankTwoTensor_old[name][_current_elem->id()] =
           static_cast<MaterialPropertyBase<RankTwoTensor, false> *>(
-              _material_data->props()[prop_id])
+              _material_data->propsOld()[prop_id])
               ->get();
     if (_type.at(name) == typeid(RankFourTensor).name())
       _input_RankFourTensor_old[name][_current_elem->id()] =
           static_cast<MaterialPropertyBase<RankFourTensor, false> *>(
-              _material_data->props()[prop_id])
+              _material_data->propsOld()[prop_id])
               ->get();
   }
 
@@ -208,26 +175,4 @@ VectorizedMaterial::finalize()
 void
 VectorizedMaterial::threadJoin(const UserObject & /*y*/)
 {
-}
-
-Real
-VectorizedMaterial::getReal(const std::string name, unsigned int elem, unsigned int qp) const
-{
-  return _output_Real.at(name)[elem][qp];
-}
-
-RankTwoTensor
-VectorizedMaterial::getRankTwoTensor(const std::string name,
-                                     unsigned int elem,
-                                     unsigned int qp) const
-{
-  return _output_RankTwoTensor.at(name)[elem][qp];
-}
-
-RankFourTensor
-VectorizedMaterial::getRankFourTensor(const std::string name,
-                                      unsigned int elem,
-                                      unsigned int qp) const
-{
-  return _output_RankFourTensor.at(name)[elem][qp];
 }
