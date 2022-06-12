@@ -17,21 +17,12 @@ VectorizedMaterial::validParams()
 {
   InputParameters params = ElementUserObject::validParams();
   params.addRequiredParam<MaterialName>("material", "The material to vectorize.");
-  params.addParam<std::vector<MaterialPropertyName>>("mat_prop_names",
-                                                     "Material properties to vectorize.");
-  params.addParam<std::vector<std::string>>("mat_prop_types",
-                                            "Types of the material properties to vectorize");
   return params;
 }
 
 VectorizedMaterial::VectorizedMaterial(const InputParameters & parameters)
-  : ElementUserObject(parameters),
-    _mat_prop_names(getParam<std::vector<MaterialPropertyName>>("mat_prop_names")),
-    _mat_prop_types(getParam<std::vector<std::string>>("mat_prop_types")),
-    _ready(false)
+  : ElementUserObject(parameters), _ready(false)
 {
-  for (auto i : make_range(_mat_prop_names.size()))
-    _type.emplace(_mat_prop_names[i], _mat_prop_types[i]);
   _sups.insert(name());
 }
 
@@ -40,11 +31,13 @@ VectorizedMaterial::initialSetup()
 {
   _mat = &getMaterialByName(getParam<MaterialName>("material"), /*no_warn=*/true);
 
-  const auto & prop_name_id_map = _material_data->getMaterialPropertyStorage().propIDs();
+  const auto & storage = _material_data->getMaterialPropertyStorage();
+  const auto & prop_name_id_map = storage.propIDs();
   for (const auto & [name, id] : prop_name_id_map)
   {
     _prop_name_id_map.emplace(name, id);
     _prop_id_name_map.emplace(id, name);
+    _type.emplace(name, _material_data->props()[id]->type());
   }
 
   const auto & reqs = _mat->getRequestedItems();
@@ -53,7 +46,7 @@ VectorizedMaterial::initialSetup()
   _input.insert(reqs.begin(), reqs.end());
   _output.insert(sups.begin(), sups.end());
   for (const auto & dep_id : dep_ids)
-    if (_material_data->getMaterialPropertyStorage().isStatefulProp(_prop_id_name_map[dep_id]))
+    if (storage.isStatefulProp(_prop_id_name_map[dep_id]))
       _input_old.insert(_prop_id_name_map[dep_id]);
 
   // The requested material properties must be reinited before the execution of this userobject.
@@ -63,15 +56,15 @@ VectorizedMaterial::initialSetup()
   // Debugging output
   _console << "Input material property names: ";
   for (const auto & name : _input)
-    _console << name << " ";
+    _console << name << "[" << _type[name] << "] ";
   _console << std::endl;
   _console << "Input old material property names: ";
   for (const auto & name : _input_old)
-    _console << name << " ";
+    _console << name << "[" << _type[name] << "] ";
   _console << std::endl;
   _console << "Output material property names: ";
   for (const auto & name : _output)
-    _console << name << " ";
+    _console << name << "[" << _type[name] << "] ";
   _console << std::endl;
 
   for (const auto & name : _input)
@@ -88,11 +81,11 @@ VectorizedMaterial::allocateInputVector(const std::string & name)
   try
   {
     unsigned int N = _mesh.maxElemId();
-    if (_type.at(name) == "Real")
+    if (_type.at(name) == typeid(Real).name())
       _input_Real[name] = std::vector<MooseArray<Real>>(N);
-    if (_type.at(name) == "RankTwoTensor")
+    if (_type.at(name) == typeid(RankTwoTensor).name())
       _input_RankTwoTensor[name] = std::vector<MooseArray<RankTwoTensor>>(N);
-    if (_type.at(name) == "RankFourTensor")
+    if (_type.at(name) == typeid(RankFourTensor).name())
       _input_RankFourTensor[name] = std::vector<MooseArray<RankFourTensor>>(N);
   }
   catch (std::out_of_range &)
@@ -107,11 +100,11 @@ VectorizedMaterial::allocateOutputVector(const std::string & name)
   try
   {
     unsigned int N = _mesh.maxElemId();
-    if (_type.at(name) == "Real")
+    if (_type.at(name) == typeid(Real).name())
       _output_Real[name] = std::vector<MooseArray<Real>>(N);
-    if (_type.at(name) == "RankTwoTensor")
+    if (_type.at(name) == typeid(RankTwoTensor).name())
       _output_RankTwoTensor[name] = std::vector<MooseArray<RankTwoTensor>>(N);
-    if (_type.at(name) == "RankFourTensor")
+    if (_type.at(name) == typeid(RankFourTensor).name())
       _output_RankFourTensor[name] = std::vector<MooseArray<RankFourTensor>>(N);
   }
   catch (std::out_of_range &)
@@ -126,11 +119,11 @@ VectorizedMaterial::allocateInputOldVector(const std::string & name)
   try
   {
     unsigned int N = _mesh.maxElemId();
-    if (_type.at(name) == "Real")
+    if (_type.at(name) == typeid(Real).name())
       _input_Real_old[name] = std::vector<MooseArray<Real>>(N);
-    if (_type.at(name) == "RankTwoTensor")
+    if (_type.at(name) == typeid(RankTwoTensor).name())
       _input_RankTwoTensor_old[name] = std::vector<MooseArray<RankTwoTensor>>(N);
-    if (_type.at(name) == "RankFourTensor")
+    if (_type.at(name) == typeid(RankFourTensor).name())
       _input_RankFourTensor_old[name] = std::vector<MooseArray<RankFourTensor>>(N);
   }
   catch (std::out_of_range &)
@@ -151,15 +144,15 @@ VectorizedMaterial::execute()
   for (const auto & name : _input)
   {
     auto prop_id = _prop_name_id_map[name];
-    if (_type.at(name) == "Real")
+    if (_type.at(name) == typeid(Real).name())
       _input_Real[name][_current_elem->id()] =
           static_cast<MaterialPropertyBase<Real, false> *>(_material_data->props()[prop_id])->get();
-    if (_type.at(name) == "RankTwoTensor")
+    if (_type.at(name) == typeid(RankTwoTensor).name())
       _input_RankTwoTensor[name][_current_elem->id()] =
           static_cast<MaterialPropertyBase<RankTwoTensor, false> *>(
               _material_data->props()[prop_id])
               ->get();
-    if (_type.at(name) == "RankFourTensor")
+    if (_type.at(name) == typeid(RankFourTensor).name())
       _input_RankFourTensor[name][_current_elem->id()] =
           static_cast<MaterialPropertyBase<RankFourTensor, false> *>(
               _material_data->props()[prop_id])
@@ -169,15 +162,15 @@ VectorizedMaterial::execute()
   for (const auto & name : _input_old)
   {
     auto prop_id = _prop_name_id_map[name];
-    if (_type.at(name) == "Real")
+    if (_type.at(name) == typeid(Real).name())
       _input_Real_old[name][_current_elem->id()] =
           static_cast<MaterialPropertyBase<Real, false> *>(_material_data->props()[prop_id])->get();
-    if (_type.at(name) == "RankTwoTensor")
+    if (_type.at(name) == typeid(RankTwoTensor).name())
       _input_RankTwoTensor_old[name][_current_elem->id()] =
           static_cast<MaterialPropertyBase<RankTwoTensor, false> *>(
               _material_data->props()[prop_id])
               ->get();
-    if (_type.at(name) == "RankFourTensor")
+    if (_type.at(name) == typeid(RankFourTensor).name())
       _input_RankFourTensor_old[name][_current_elem->id()] =
           static_cast<MaterialPropertyBase<RankFourTensor, false> *>(
               _material_data->props()[prop_id])
@@ -186,11 +179,11 @@ VectorizedMaterial::execute()
 
   for (const auto & name : _output)
   {
-    if (_type.at(name) == "Real")
+    if (_type.at(name) == typeid(Real).name())
       _output_Real[name][_current_elem->id()].resize(_material_data->nQPoints());
-    if (_type.at(name) == "RankTwoTensor")
+    if (_type.at(name) == typeid(RankTwoTensor).name())
       _output_RankTwoTensor[name][_current_elem->id()].resize(_material_data->nQPoints());
-    if (_type.at(name) == "RankFourTensor")
+    if (_type.at(name) == typeid(RankFourTensor).name())
       _output_RankFourTensor[name][_current_elem->id()].resize(_material_data->nQPoints());
   }
 }
@@ -198,8 +191,6 @@ VectorizedMaterial::execute()
 void
 VectorizedMaterial::finalize()
 {
-  _console << "Vectorized material " << getParam<MaterialName>("material") << std::endl;
-
   // Fake the behavior of an external vectorized library
   for (auto elem : make_range(_mesh.maxElemId()))
     for (auto qp : make_range(_material_data->nQPoints()))
@@ -211,6 +202,7 @@ VectorizedMaterial::finalize()
     }
 
   _ready = true;
+  _console << "Vectorized material " << getParam<MaterialName>("material") << std::endl;
 }
 
 void

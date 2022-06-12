@@ -40,8 +40,6 @@ public:
 
 protected:
   MaterialBase * _mat;
-  const std::vector<MaterialPropertyName> _mat_prop_names;
-  const std::vector<std::string> _mat_prop_types;
   std::map<MaterialPropertyName, std::string> _type;
 
   std::map<std::string, unsigned int> _prop_name_id_map;

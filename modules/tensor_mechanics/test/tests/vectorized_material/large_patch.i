@@ -241,12 +241,6 @@
   [compute_stress_vectorized]
     type = VectorizedMaterial
     material = compute_stress
-    mat_prop_names = 'detJ elasticity_tensor inv_def_grad  inv_inc_def_grad mechanical_strain '
-                     'strain_increment cauchy_jacobian cauchy_stress pk1_jacobian   pk1_stress '
-                     'small_jacobian small_stress'
-    mat_prop_types = 'Real RankFourTensor    RankTwoTensor RankTwoTensor    RankTwoTensor '
-                     'RankTwoTensor    RankFourTensor  RankTwoTensor RankFourTensor RankTwoTensor '
-                     'RankFourTensor RankTwoTensor'
     execute_on = 'INITIAL LINEAR'
   []
 []
