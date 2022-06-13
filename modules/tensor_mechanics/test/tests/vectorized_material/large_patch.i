@@ -1,19 +1,10 @@
 [Mesh]
-  [base]
-    type = FileMeshGenerator
-    file = 'patch.xda'
-  []
-  [sets]
-    input = base
-    type = SideSetsFromPointsGenerator
-    new_boundary = 'left right bottom top back front'
-    points = '    0 0.5 0.5
-                  1 0.5 0.5
-                  0.5 0.0 0.5
-               '
-             '   0.5 1.0 0.5
-                  0.5 0.5 0.0
-                  0.5 0.5 1.0'
+  [gmg]
+    type = GeneratedMeshGenerator
+    dim = 3
+    nx = 10
+    ny = 10
+    nz = 10
   []
 []
 
@@ -239,7 +230,7 @@
 # Vectorized version
 [UserObjects]
   [compute_stress_vectorized]
-    type = VectorizedMaterial
+    type = VectorizedMaterialFake
     material = compute_stress
     execute_on = 'INITIAL LINEAR'
   []

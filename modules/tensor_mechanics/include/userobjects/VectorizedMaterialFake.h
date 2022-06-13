@@ -9,18 +9,16 @@
 
 #pragma once
 
-#include "ComputeLagrangianLinearElasticStress.h"
-#include "VectorizedMaterialFake.h"
+#include "VectorizedMaterialBase.h"
 
-class ComputeLagrangianLinearElasticStressVectorized : public ComputeLagrangianLinearElasticStress
+// This is a faked vectorized material for testing purposes
+class VectorizedMaterialFake : public VectorizedMaterialBase
 {
 public:
   static InputParameters validParams();
 
-  ComputeLagrangianLinearElasticStressVectorized(const InputParameters & parameters);
+  VectorizedMaterialFake(const InputParameters & parameters);
 
 protected:
-  virtual void computeQpSmallStress() override;
-
-  const VectorizedMaterialFake & _vec_mat;
+  virtual void GPUCalls() override;
 };
