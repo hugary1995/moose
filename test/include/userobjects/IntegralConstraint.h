@@ -37,6 +37,10 @@ protected:
 
   const Function & _target;
 
+  const MaterialProperty<Real> & _D;
+
+  const bool _strain_constraint;
+
   unsigned int _qp;
 
   Real _residual;

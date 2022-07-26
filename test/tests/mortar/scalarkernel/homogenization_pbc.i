@@ -1,23 +1,27 @@
+[GlobalParams]
+  strain_constraint = true
+[]
+
 [Mesh]
   [gmg]
     type = GeneratedMeshGenerator
     dim = 2
     nx = 2
-    ny = 1
+    ny = 2
   []
   [matrix]
     type = SubdomainBoundingBoxGenerator
     input = gmg
     bottom_left = '0 0 0'
-    top_right = '0.5 1 0'
+    top_right = '1 1 1'
     block_id = 0
     block_name = matrix
   []
   [particle]
     type = SubdomainBoundingBoxGenerator
     input = matrix
-    bottom_left = '0.5 0 0'
-    top_right = '1 1 0'
+    bottom_left = '0 0 0'
+    top_right = '0.5 0.5 0.5'
     block_id = 1
     block_name = particle
   []
@@ -88,6 +92,7 @@
     variable = u
     scalar_variable = h
     target = 2
+    diffusivity = D
     execute_on = 'INITIAL LINEAR NONLINEAR'
   []
 []

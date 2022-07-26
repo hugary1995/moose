@@ -16,13 +16,16 @@ HomogenizedDiffusion::validParams()
 {
   InputParameters params = MatDiffusion::validParams();
   params.addRequiredCoupledVar("scalar_variable", "Scalar variable providing the macro gradient");
+  params.addRequiredParam<bool>("strain_constraint",
+                                "Whether to constrain the strain or the stress");
   return params;
 }
 
 HomogenizedDiffusion::HomogenizedDiffusion(const InputParameters & parameters)
   : MatDiffusion(parameters),
     _macro_gradient_num(coupledScalar("scalar_variable")),
-    _h(coupledScalarValue("scalar_variable"))
+    _h(coupledScalarValue("scalar_variable")),
+    _strain_constraint(getParam<bool>("strain_constraint"))
 {
 }
 
@@ -53,7 +56,10 @@ HomogenizedDiffusion::computeOffDiagJacobianScalar(unsigned int jvar)
       for (_qp = 0; _qp < _qrule->n_points(); _qp++)
       {
         ken(_i, 0) += _grad_test[_i][_qp](0) * _D[_qp] * _JxW[_qp] * _coord[_qp];
-        kne(0, _i) += _grad_phi[_j][_qp](0) * _JxW[_qp] * _coord[_qp];
+        if (_strain_constraint)
+          kne(0, _i) += _grad_phi[_j][_qp](0) * _JxW[_qp] * _coord[_qp];
+        else
+          kne(0, _i) += _D[_qp] * _grad_phi[_j][_qp](0) * _JxW[_qp] * _coord[_qp];
       }
     }
   }

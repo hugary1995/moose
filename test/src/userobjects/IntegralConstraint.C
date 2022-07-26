@@ -20,6 +20,9 @@ IntegralConstraint::validParams()
   params.addRequiredCoupledVar("variable", "Variable to constrain");
   params.addRequiredCoupledVar("scalar_variable", "Scalar variable providing the macro gradient");
   params.addRequiredParam<FunctionName>("target", "Function giving the target to hit");
+  params.addRequiredParam<MaterialPropertyName>("diffusivity", "Diffusivity");
+  params.addRequiredParam<bool>("strain_constraint",
+                                "Whether to constrain the strain or the stress");
   return params;
 }
 
@@ -28,7 +31,9 @@ IntegralConstraint::IntegralConstraint(const InputParameters & parameters)
     _grad_u(coupledGradient("variable")),
     _macro_gradient(coupledScalarValue("scalar_variable")),
     _grad_phi(_assembly.gradPhi()),
-    _target(getFunction("target"))
+    _target(getFunction("target")),
+    _D(getMaterialProperty<Real>("diffusivity")),
+    _strain_constraint(getParam<bool>("strain_constraint"))
 {
 }
 
@@ -44,9 +49,17 @@ IntegralConstraint::execute()
 {
   for (_qp = 0; _qp < _qrule->n_points(); _qp++)
   {
-    _residual += (_grad_u[_qp](0) + _macro_gradient[0] - _target.value(_t, _q_point[_qp])) *
-                 _JxW[_qp] * _coord[_qp];
-    _jacobian += 1.0 * _JxW[_qp] * _coord[_qp];
+    Real strain = _grad_u[_qp](0) + _macro_gradient[0];
+    if (_strain_constraint)
+    {
+      _residual += (strain - _target.value(_t, _q_point[_qp])) * _JxW[_qp] * _coord[_qp];
+      _jacobian += 1.0 * _JxW[_qp] * _coord[_qp];
+    }
+    else
+    {
+      _residual += (_D[_qp] * strain - _target.value(_t, _q_point[_qp])) * _JxW[_qp] * _coord[_qp];
+      _jacobian += _D[_qp] * _JxW[_qp] * _coord[_qp];
+    }
   }
 }
 

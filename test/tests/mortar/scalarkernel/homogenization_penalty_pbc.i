@@ -1,23 +1,28 @@
+[GlobalParams]
+  strain_constraint = false
+[]
+
 [Mesh]
   [gmg]
     type = GeneratedMeshGenerator
-    dim = 2
-    nx = 2
-    ny = 1
+    dim = 3
+    nx = 8
+    ny = 8
+    nz = 8
   []
   [matrix]
     type = SubdomainBoundingBoxGenerator
     input = gmg
     bottom_left = '0 0 0'
-    top_right = '0.5 1 0'
+    top_right = '1 1 1'
     block_id = 0
     block_name = matrix
   []
   [particle]
     type = SubdomainBoundingBoxGenerator
     input = matrix
-    bottom_left = '0.5 0 0'
-    top_right = '1 1 0'
+    bottom_left = '0 0 0'
+    top_right = '0.5 0.5 0.5'
     block_id = 1
     block_name = particle
   []
@@ -70,7 +75,7 @@
     secondary_boundary = left
     primary_subdomain = 12
     secondary_subdomain = 11
-    penalty_value = 1000
+    penalty_value = 1e10
   []
 []
 
@@ -94,13 +99,13 @@
   [D_matrix]
     type = GenericConstantMaterial
     prop_names = 'D'
-    prop_values = '1'
+    prop_values = '1e5'
     block = matrix
   []
   [D_particle]
     type = GenericConstantMaterial
     prop_names = 'D'
-    prop_values = '2'
+    prop_values = '2e5'
     block = particle
   []
 []
@@ -111,6 +116,7 @@
     variable = u
     scalar_variable = h
     target = 2
+    diffusivity = D
     block = 'matrix particle'
     execute_on = 'INITIAL LINEAR NONLINEAR'
   []
@@ -127,8 +133,9 @@
 [Executioner]
   type = Transient
   solve_type = NEWTON
-  petsc_options_iname = '-pc_type'
-  petsc_options_value = 'lu      '
+  petsc_options = '-snes_converged_reason -ksp_converged_reason -pc_svd_monitor'
+  petsc_options_iname = '-pc_type -pc_factor_shift_type -pc_factor_shift_amount'
+  petsc_options_value = 'svd      NONZERO               1e-15'
   num_steps = 1
 []
 

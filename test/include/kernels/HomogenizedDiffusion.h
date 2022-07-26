@@ -26,4 +26,6 @@ protected:
   const unsigned int _macro_gradient_num;
 
   const VariableValue & _h;
+
+  const bool _strain_constraint;
 };

@@ -1,44 +1,7 @@
 strain_rate = 8.33e-5
 strain_max = 0.5
 nsteps_max = 200
-nsteps_min = 2000
-
-# Bilinear mixed mode model parameters for fracture in particle phase
-# p_penalty_stiffness = 1e6
-# p_GI_C = 473
-# p_GII_C = 397
-# p_normal_strength = 1630
-# p_shear_strength = 934
-# p_eta = 1.0
-
-# [Materials]
-#   [czm_3dc_particle_particle]
-#     type = BiLinearMixedModeTraction
-#     penalty_stiffness = ${p_penalty_stiffness}
-#     GI_c = ${p_GI_C}
-#     GII_c = ${p_GII_C}
-#     normal_strength = ${p_normal_strength}
-#     shear_strength = ${p_shear_strength}
-#     displacements = 'disp_x disp_y disp_z'
-#     eta = ${p_eta}
-#     mixed_mode_criterion = POWER_LAW
-#     lag_mode_mixity = true
-#     lag_displacement_jump = true
-#     viscosity = 1e-6
-#     boundary = 'matrix_particle'
-#   []
-# []
-
-# [Modules/TensorMechanics/CohesiveZoneMaster]
-#   displacements = 'disp_x disp_y disp_z'
-#   [czm]
-#     displacements = 'disp_x disp_y disp_z'
-#     strain = FINITE
-#     generate_output = 'traction_x traction_y traction_z normal_traction tangent_traction jump_x '
-#                       'jump_y jump_z normal_jump tangent_jump'
-#     boundary = 'matrix_particle'
-#   []
-# []
+nsteps_min = 20000
 
 [GlobalParams]
   large_kinematics = true
@@ -48,16 +11,16 @@ nsteps_min = 2000
 []
 
 [Problem]
-  kernel_coverage_check = false
+  #kernel_coverage_check = true
 []
 
 [Mesh]
   [msh]
     type = GeneratedMeshGenerator
     dim = 3
-    nx = 8
-    ny = 8
-    nz = 8
+    nx = 4
+    ny = 4
+    nz = 4
   []
   [matrix]
     type = SubdomainBoundingBoxGenerator
@@ -71,7 +34,7 @@ nsteps_min = 2000
     type = SubdomainBoundingBoxGenerator
     input = matrix
     bottom_left = '0 0 0'
-    top_right = '0.3 0.3 0.3'
+    top_right = '0.5 0.5 0.5'
     block_id = 1
     block_name = particle
   []
@@ -135,18 +98,7 @@ nsteps_min = 2000
     coord = '1 1 0'
     new_boundary = 'fix_x'
   []
-  # [split]
-  #   type = BreakMeshByBlockGenerator
-  #   input = fix_x
-  #   block_pairs = '0 1'
-  #   split_interface = true
-  # []
-  # [fracture]
-  #   type = ExplodeMeshGenerator
-  #   input = split
-  #   subdomains = 1
-  #   interface_name = fracture
-  # []
+
 []
 
 [Functions]
@@ -279,6 +231,7 @@ nsteps_min = 2000
     secondary_subdomain = '11'
     secondary_variable = disp_x
     penalty_value = 1.0e10
+    quadrature = SECOND
   []
   [ev_y]
     type = PenaltyEqualValueConstraint
@@ -288,6 +241,7 @@ nsteps_min = 2000
     secondary_subdomain = '21'
     secondary_variable = disp_y
     penalty_value = 1.0e10
+    quadrature = SECOND
   []
   [ev_z]
     type = PenaltyEqualValueConstraint
@@ -297,6 +251,7 @@ nsteps_min = 2000
     secondary_subdomain = '31'
     secondary_variable = disp_z
     penalty_value = 1.0e10
+    quadrature = SECOND
   []
 []
 
@@ -316,11 +271,17 @@ nsteps_min = 2000
     type = ComputeLagrangianLinearElasticStress
     block = 'matrix particle'
   []
-  [C]
+  [C1]
     type = ComputeIsotropicElasticityTensor
     youngs_modulus = 2e5
     poissons_ratio = 0.3
-    block = 'matrix particle'
+    block = 'matrix'
+  []
+  [C2]
+    type = ComputeIsotropicElasticityTensor
+    youngs_modulus = 9e5
+    poissons_ratio = 0.2
+    block = 'particle'
   []
 []
 
@@ -333,17 +294,17 @@ nsteps_min = 2000
 
 [Executioner]
   type = Transient
-  solve_type = 'NEWTON'
-  petsc_options = '-snes_converged_reason -ksp_converged_reason'
-  #petsc_options_iname = '-pc_type -pc_factor_mat_solver_package -ksp_gmres_restart '
-  #                      '-pc_hypre_boomeramg_strong_threshold -pc_hypre_boomeramg_interp_type '
-  #                      '-pc_hypre_boomeramg_coarsen_type -pc_hypre_boomeramg_agg_nl '
-  #                      '-pc_hypre_boomeramg_agg_num_paths -pc_hypre_boomeramg_truncfactor '
-  #                      '-pc_factor_shift_amount'
-  #petsc_options_value = 'hypre boomeramg 200 0.7 ext+i PMIS 4 2 0.4 1e-15'
+  solve_type = NEWTON
+  petsc_options = '-snes_converged_reason -ksp_converged_reason -pc_svd_monitor'
+  # petsc_options_iname = '-pc_type -pc_factor_mat_solver_package -ksp_gmres_restart '
+  #                       '-pc_hypre_boomeramg_strong_threshold -pc_hypre_boomeramg_interp_type '
+  #                       '-pc_hypre_boomeramg_coarsen_type -pc_hypre_boomeramg_agg_nl '
+  #                       '-pc_hypre_boomeramg_agg_num_paths -pc_hypre_boomeramg_truncfactor '
+  #                       '-pc_factor_shift_amount'
+  # petsc_options_value = 'hypre boomeramg 200 0.7 ext+i PMIS 4 2 0.4 1e-15'
 
-  petsc_options_iname = '-pc_type'
-  petsc_options_value = 'lu'
+  petsc_options_iname = '-pc_type -ksp_grmres_restart -sub_ksp_type -sub_pc_type -pc_asm_overlap'
+  petsc_options_value = 'asm      31                  preonly       lu           2'
 
   # automatic_scaling = true
   l_max_its = 150
@@ -351,11 +312,13 @@ nsteps_min = 2000
   nl_max_its = 100
   nl_rel_tol = 1e-4
   nl_abs_tol = 1e-6
+  nl_forced_its = 1
 
-  line_search = 'none'
+  line_search = 'basic'
   end_time = '${fparse strain_max / strain_rate}'
   dtmin = '${fparse strain_max / strain_rate / nsteps_min}'
   dtmax = '${fparse strain_max / strain_rate / nsteps_max}'
+  num_steps = 10
 []
 
 [Outputs]
