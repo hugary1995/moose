@@ -20,8 +20,23 @@ HomogenizedDiffusion::validParams()
 }
 
 HomogenizedDiffusion::HomogenizedDiffusion(const InputParameters & parameters)
-  : MatDiffusion(parameters), _macro_gradient_num(coupledScalar("scalar_variable"))
+  : MatDiffusion(parameters),
+    _macro_gradient_num(coupledScalar("scalar_variable")),
+    _h(coupledScalarValue("scalar_variable"))
 {
+}
+
+Real
+HomogenizedDiffusion::computeQpResidual()
+{
+  RealVectorValue macro_gradient(_h[0], 0, 0);
+  return _D[_qp] * (_grad_u[_qp] + macro_gradient) * _grad_test[_i][_qp];
+}
+
+Real
+HomogenizedDiffusion::computeQpJacobian()
+{
+  return _D[_qp] * _grad_phi[_j][_qp] * _grad_test[_i][_qp];
 }
 
 void

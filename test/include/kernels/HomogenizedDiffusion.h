@@ -19,7 +19,11 @@ public:
   HomogenizedDiffusion(const InputParameters & parameters);
 
 protected:
+  virtual Real computeQpResidual() override;
+  virtual Real computeQpJacobian() override;
   virtual void computeOffDiagJacobianScalar(unsigned int jvar) override;
 
   const unsigned int _macro_gradient_num;
+
+  const VariableValue & _h;
 };
