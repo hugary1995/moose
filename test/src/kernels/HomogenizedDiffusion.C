@@ -14,13 +14,13 @@ registerMooseObject("TestMooseApp", HomogenizedDiffusion);
 InputParameters
 HomogenizedDiffusion::validParams()
 {
-  InputParameters params = Diffusion::validParams();
+  InputParameters params = MatDiffusion::validParams();
   params.addRequiredCoupledVar("scalar_variable", "Scalar variable providing the macro gradient");
   return params;
 }
 
 HomogenizedDiffusion::HomogenizedDiffusion(const InputParameters & parameters)
-  : Diffusion(parameters), _macro_gradient_num(coupledScalar("scalar_variable"))
+  : MatDiffusion(parameters), _macro_gradient_num(coupledScalar("scalar_variable"))
 {
 }
 
@@ -37,8 +37,8 @@ HomogenizedDiffusion::computeOffDiagJacobianScalar(unsigned int jvar)
       _j = _i;
       for (_qp = 0; _qp < _qrule->n_points(); _qp++)
       {
-        ken(_i, 0) += _grad_test[_i][_qp](0) * _JxW[_qp] * _coord[_qp];
-        kne(0, _i) += _grad_phi[_j][_qp](0) * _JxW[_qp] * _coord[_qp];
+        ken(_i, 0) += _grad_test[_i][_qp](0) * _D[_qp] * _JxW[_qp] * _coord[_qp];
+        kne(0, _i) += _grad_phi[_j][_qp](0) * _D[_qp] * _JxW[_qp] * _coord[_qp];
       }
     }
   }

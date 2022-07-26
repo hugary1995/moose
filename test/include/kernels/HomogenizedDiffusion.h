@@ -9,9 +9,9 @@
 
 #pragma once
 
-#include "Diffusion.h"
+#include "MatDiffusion.h"
 
-class HomogenizedDiffusion : public Diffusion
+class HomogenizedDiffusion : public MatDiffusion
 {
 public:
   static InputParameters validParams();
