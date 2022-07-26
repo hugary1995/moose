@@ -53,7 +53,7 @@ HomogenizedDiffusion::computeOffDiagJacobianScalar(unsigned int jvar)
       for (_qp = 0; _qp < _qrule->n_points(); _qp++)
       {
         ken(_i, 0) += _grad_test[_i][_qp](0) * _D[_qp] * _JxW[_qp] * _coord[_qp];
-        kne(0, _i) += _grad_phi[_j][_qp](0) * _D[_qp] * _JxW[_qp] * _coord[_qp];
+        kne(0, _i) += _grad_phi[_j][_qp](0) * _JxW[_qp] * _coord[_qp];
       }
     }
   }
