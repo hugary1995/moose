@@ -76,7 +76,7 @@
   [D_particle]
     type = GenericConstantMaterial
     prop_names = 'D'
-    prop_values = '10'
+    prop_values = '2'
     block = particle
   []
 []
