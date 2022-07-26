@@ -70,7 +70,7 @@
     secondary_boundary = left
     primary_subdomain = 12
     secondary_subdomain = 11
-    penalty_value = 10
+    penalty_value = 1000
   []
 []
 
