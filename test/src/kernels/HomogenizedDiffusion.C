@@ -29,9 +29,6 @@ HomogenizedDiffusion::HomogenizedDiffusion(const InputParameters & parameters)
 Real
 HomogenizedDiffusion::computeQpResidual()
 {
-  std::cout << "------------------------------------------\n";
-  std::cout << "Current element " << _current_elem->id() << ", qp = " << _qp << ", D = " << _D[_qp]
-            << std::endl;
   RealVectorValue macro_gradient(_h[0], 0, 0);
   return _D[_qp] * (_grad_u[_qp] + macro_gradient) * _grad_test[_i][_qp];
 }

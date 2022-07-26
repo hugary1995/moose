@@ -55,8 +55,9 @@
 
 [Kernels]
   [diffusion]
-    type = MatDiffusion
+    type = HomogenizedDiffusion
     variable = u
+    scalar_variable = h
     diffusivity = D
   []
   [body_force]
@@ -76,7 +77,7 @@
   [D_particle]
     type = GenericConstantMaterial
     prop_names = 'D'
-    prop_values = '2'
+    prop_values = '1'
     block = particle
   []
 []
