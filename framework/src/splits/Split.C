@@ -103,9 +103,9 @@ Split::setup(const std::string & prefix)
   {
     po.pairs.emplace_back(dmprefix + "vars", Moose::stringify(_vars));
 
-    for (const auto & var : _vars)
-      if (!_fe_problem.hasVariable(var))
-        mooseError("Variable '", var, "' specified in split '", name(), "' does not exist");
+    // for (const auto & var : _vars)
+    //   if (!_fe_problem.hasVariable(var))
+    //     mooseError("Variable '", var, "' specified in split '", name(), "' does not exist");
   }
 
   // block options

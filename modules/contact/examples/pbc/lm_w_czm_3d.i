@@ -164,6 +164,15 @@ p_eta = 1.0
     family = SCALAR
     order = NINTH
   []
+  [lm_x]
+    block = 'secondary_left secondary_bottom secondary_back'
+  []
+  [lm_y]
+    block = 'secondary_left secondary_bottom secondary_back'
+  []
+  [lm_z]
+    block = 'secondary_left secondary_bottom secondary_back'
+  []
 []
 
 [AuxVariables]
@@ -243,85 +252,85 @@ p_eta = 1.0
 
 [Constraints]
   [ev_xx]
-    type = PenaltyEqualValueConstraint
+    type = EqualValueConstraint
     primary_boundary = right
     secondary_boundary = left
     primary_subdomain = primary_right
     secondary_subdomain = secondary_left
     secondary_variable = disp_x
-    penalty_value = 1e10
+    variable = lm_x
   []
   [ev_xy]
-    type = PenaltyEqualValueConstraint
+    type = EqualValueConstraint
     primary_boundary = top
     secondary_boundary = bottom
     primary_subdomain = primary_top
     secondary_subdomain = secondary_bottom
     secondary_variable = disp_x
-    penalty_value = 1e10
+    variable = lm_x
   []
   [ev_xz]
-    type = PenaltyEqualValueConstraint
+    type = EqualValueConstraint
     primary_boundary = front
     secondary_boundary = back
     primary_subdomain = primary_front
     secondary_subdomain = secondary_back
     secondary_variable = disp_x
-    penalty_value = 1e10
+    variable = lm_x
   []
   [ev_yx]
-    type = PenaltyEqualValueConstraint
+    type = EqualValueConstraint
     primary_boundary = right
     secondary_boundary = left
     primary_subdomain = primary_right
     secondary_subdomain = secondary_left
     secondary_variable = disp_y
-    penalty_value = 1e10
+    variable = lm_y
   []
   [ev_yy]
-    type = PenaltyEqualValueConstraint
+    type = EqualValueConstraint
     primary_boundary = top
     secondary_boundary = bottom
     primary_subdomain = primary_top
     secondary_subdomain = secondary_bottom
     secondary_variable = disp_y
-    penalty_value = 1e10
+    variable = lm_y
   []
   [ev_yz]
-    type = PenaltyEqualValueConstraint
+    type = EqualValueConstraint
     primary_boundary = front
     secondary_boundary = back
     primary_subdomain = primary_front
     secondary_subdomain = secondary_back
     secondary_variable = disp_y
-    penalty_value = 1e10
+    variable = lm_y
   []
   [ev_zx]
-    type = PenaltyEqualValueConstraint
+    type = EqualValueConstraint
     primary_boundary = right
     secondary_boundary = left
     primary_subdomain = primary_right
     secondary_subdomain = secondary_left
     secondary_variable = disp_z
-    penalty_value = 1e10
+    variable = lm_z
   []
   [ev_zy]
-    type = PenaltyEqualValueConstraint
+    type = EqualValueConstraint
     primary_boundary = top
     secondary_boundary = bottom
     primary_subdomain = primary_top
     secondary_subdomain = secondary_bottom
     secondary_variable = disp_z
-    penalty_value = 1e10
+    variable = lm_z
   []
   [ev_zz]
-    type = PenaltyEqualValueConstraint
+    type = EqualValueConstraint
     primary_boundary = front
     secondary_boundary = back
     primary_subdomain = primary_front
     secondary_subdomain = secondary_back
     secondary_variable = disp_z
-    penalty_value = 1e10
+    variable = lm_z
   []
 []
 
@@ -376,9 +385,12 @@ p_eta = 1.0
   # petsc_options_value = 'asm      31                  preonly       lu           2               '
   #                       'NONZERO                   1e-10'
 
-  petsc_options_iname = '-pc_type -pc_factor_shift_type -pc_factor_shift_amout'
+  petsc_options_iname = '-pc_type -pc_factor_shift_type -pc_factor_shift_amount'
   petsc_options_value = 'lu      NONZERO               1e-10'
+  # petsc_options_iname = '-pc_type'
+  # petsc_options_value = 'lu'
 
+  automatic_scaling = false
   l_max_its = 150
   l_tol = 1e-6
   nl_max_its = 100
