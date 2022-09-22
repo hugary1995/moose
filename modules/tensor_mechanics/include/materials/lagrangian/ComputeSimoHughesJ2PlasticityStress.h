@@ -60,6 +60,8 @@ protected:
   const MaterialProperty<Real> & _dH;
   const MaterialProperty<Real> & _d2H;
 
+  MaterialProperty<Real> & _psie;
+
 private:
   /// @{ Helper (dummy) variables for iteratively updating the consistant tangent during return mapping
   RankFourTensor _d_be_d_F;

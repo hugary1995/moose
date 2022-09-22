@@ -46,7 +46,8 @@ ComputeSimoHughesJ2PlasticityStress::ComputeSimoHughesJ2PlasticityStress(
     _dH(getDefaultMaterialPropertyByName<Real, false>(
         derivativePropertyName(_flow_stress_name, {_ep_name}))),
     _d2H(getDefaultMaterialPropertyByName<Real, false>(
-        derivativePropertyName(_flow_stress_name, {_ep_name, _ep_name})))
+        derivativePropertyName(_flow_stress_name, {_ep_name, _ep_name}))),
+    _psie(declareProperty<Real>("elastic_energy"))
 {
 }
 
@@ -130,6 +131,9 @@ ComputeSimoHughesJ2PlasticityStress::computeQpPK1Stress()
   s = G * _be[_qp].deviatoric();
   RankTwoTensor tau = (K * (detJ * detJ - 1) / 2) * I + s;
   _pk1_stress[_qp] = tau * Fit;
+
+  _psie[_qp] =
+      0.5 * K * (0.5 * (detJ * detJ - 1) - std::log(detJ)) + 0.5 * G * (_be[_qp].trace() - 3);
 
   // Compute the consistent tangent, i.e. the derivative of the PK1 stress w.r.t. the deformation
   // gradient.
