@@ -69,5 +69,6 @@ private:
   RankTwoTensor _d_deltaep_d_betr;
   RankTwoTensor _d_R_d_betr;
   RankTwoTensor _d_J_d_betr;
+  RankTwoTensor _d_alpha_d_be;
   /// @}
 };

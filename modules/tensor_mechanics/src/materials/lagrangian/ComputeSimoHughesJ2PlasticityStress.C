@@ -128,6 +128,18 @@ ComputeSimoHughesJ2PlasticityStress::computeQpPK1Stress()
   // Update intermediate and current configurations
   _ep[_qp] = _ep_old[_qp] + delta_ep;
   _be[_qp] -= 2. / 3. * delta_ep * _be[_qp].trace() * _Np[_qp];
+
+  // Correction
+  RankTwoTensor A = _be[_qp].inverse().transpose();
+  Real b = _be[_qp].det();
+  Real alpha = (1 - b) / (b * A.trace());
+  _be[_qp].addIa(alpha);
+  if (_fe_problem.currentlyComputingJacobian())
+  {
+    _d_alpha_d_be = (1 / b - 1) * A * A / A.trace() / A.trace() - A / A.trace() / b;
+    _d_be_d_F += I.times<i, j, k, l>(_d_alpha_d_be.initialContraction(_d_be_d_F));
+  }
+
   s = G * _be[_qp].deviatoric();
   RankTwoTensor tau = (K * (detJ * detJ - 1) / 2) * I + s;
   _pk1_stress[_qp] = tau * Fit;
