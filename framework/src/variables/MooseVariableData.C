@@ -1821,15 +1821,13 @@ MooseVariableData<OutputType>::reinitNodes(const std::vector<dof_id_type> & node
   {
     std::cout << "trying to reinit node " << node_id << std::endl;
     auto && nd = _subproblem.mesh().getMesh().query_node_ptr(node_id);
-    if (nd && (_subproblem.mesh().isSemiLocal(const_cast<Node *>(nd))))
-    {
+    if (nd)
       if (nd->n_dofs(_sys.number(), _var_num) > 0)
       {
         dof_id_type dof = nd->dof_number(_sys.number(), _var_num, 0);
         _dof_indices.push_back(dof);
         std::cout << "success" << std::endl;
       }
-    }
   }
 
   if (_dof_indices.size() > 0)
