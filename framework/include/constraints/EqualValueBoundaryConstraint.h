@@ -18,17 +18,7 @@ public:
 
   EqualValueBoundaryConstraint(const InputParameters & parameters);
 
-  /**
-   * Called on this object when the mesh changes
-   */
-  virtual void meshChanged() override;
-
 protected:
-  /**
-   * Update the sets of nodes with constrained DOFs
-   */
-  void updateConstrainedNodes();
-
   /**
    * Computes the residual for the current secondary node
    */
@@ -39,12 +29,6 @@ protected:
    */
   virtual Real computeQpJacobian(Moose::ConstraintJacobianType type) override;
 
-  // Holds the primary node id
-  unsigned int _primary_node_id;
-  // Holds the list of secondary node ids
-  std::vector<unsigned int> _secondary_node_ids;
-  // Holds the secondary node set or side set
-  BoundaryName _secondary_node_set_id;
   // Penalty if constraint is not satisfied
   Real _penalty;
 };
