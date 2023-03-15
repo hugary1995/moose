@@ -53,16 +53,15 @@ void
 AugmentSparsityOnBoundary::internalInit()
 {
   if (_primary_node_id_in != std::numeric_limits<dof_id_type>::max())
-  {
     _primary_node_id = _primary_node_id_in;
-    return;
+  else
+  {
+    const auto secondary_node_ids =
+        _moose_mesh->getNodeList(_moose_mesh->getBoundaryID(_secondary_node_set_in));
+    const auto in = std::min_element(secondary_node_ids.begin(), secondary_node_ids.end());
+    _primary_node_id = (in == secondary_node_ids.end()) ? DofObject::invalid_id : *in;
+    _communicator.min(_primary_node_id);
   }
-
-  const auto secondary_node_ids =
-      _moose_mesh->getNodeList(_moose_mesh->getBoundaryID(_secondary_node_set_in));
-  const auto in = std::min_element(secondary_node_ids.begin(), secondary_node_ids.end());
-  _primary_node_id = (in == secondary_node_ids.end()) ? DofObject::invalid_id : *in;
-  _communicator.min(_primary_node_id);
 }
 
 bool
@@ -87,8 +86,8 @@ AugmentSparsityOnBoundary::getInfo() const
 }
 
 void
-AugmentSparsityOnBoundary::operator()(const MeshBase::const_element_iterator & range_begin,
-                                      const MeshBase::const_element_iterator & range_end,
+AugmentSparsityOnBoundary::operator()(const MeshBase::const_element_iterator & /*range_begin*/,
+                                      const MeshBase::const_element_iterator & /*range_end*/,
                                       const processor_id_type p,
                                       map_type & coupled_elements)
 {
@@ -96,22 +95,37 @@ AugmentSparsityOnBoundary::operator()(const MeshBase::const_element_iterator & r
   if (!_moose_mesh->getMeshPtr())
     return;
 
-  // If the range doesn't contain the primary node, there is no coupling
-  if (!containsNode(range_begin, range_end, _primary_node_id))
-    return;
-
   // Couple the elements that contain node(s) on the secondary node set
   const BoundaryInfo & binfo = _mesh->get_boundary_info();
   const auto secondary = _moose_mesh->getBoundaryID(_secondary_node_set_in);
   for (const auto elem : _mesh->active_element_ptr_range())
   {
+    std::cout << "on element " << elem->id() << " processor " << p << std::endl;
     // Don't bother adding elements already on processor p
     if (elem->processor_id() == p)
       continue;
 
     for (auto side : elem->side_index_range())
       if (binfo.has_boundary_id(elem, side, secondary))
+      {
         coupled_elements.insert(std::make_pair(elem, _null_mat));
+        std::cout << "secondary ghosted element " << elem->id() << " with nodes";
+        for (const auto & node : elem->node_ref_range())
+          std::cout << " " << node.id();
+        std::cout << std::endl;
+        break;
+      }
+
+    for (const auto & node : elem->node_ref_range())
+      if (node.id() == _primary_node_id)
+      {
+        coupled_elements.insert(std::make_pair(elem, _null_mat));
+        std::cout << "primary ghosted element " << elem->id() << " with nodes";
+        for (const auto & node : elem->node_ref_range())
+          std::cout << " " << node.id();
+        std::cout << std::endl;
+        break;
+      }
   }
 }
 

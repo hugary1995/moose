@@ -1010,6 +1010,13 @@ NonlinearSystemBase::enforceNodalConstraintsResidual(NumericVector<Number> & res
       std::vector<dof_id_type> & secondary_node_ids = nc->getSecondaryNodeId();
       std::vector<dof_id_type> & primary_node_ids = nc->getPrimaryNodeId();
 
+      std::cout << "In NonlinearSystemBase" << std::endl;
+      std::cout << "primary node: " << primary_node_ids[0] << std::endl;
+      std::cout << "secondary nodes:";
+      for (const auto nid : secondary_node_ids)
+        std::cout << " " << nid;
+      std::cout << std::endl;
+
       if ((secondary_node_ids.size() > 0) && (primary_node_ids.size() > 0))
       {
         _fe_problem.reinitNodes(primary_node_ids, tid);
@@ -3525,8 +3532,9 @@ NonlinearSystemBase::needInterfaceMaterialOnSide(BoundaryID bnd_id, THREAD_ID ti
   return _interface_kernels.hasActiveBoundaryObjects(bnd_id, tid);
 }
 
-bool NonlinearSystemBase::needSubdomainMaterialOnSide(SubdomainID /*subdomain_id*/,
-                                                      THREAD_ID /*tid*/) const
+bool
+NonlinearSystemBase::needSubdomainMaterialOnSide(SubdomainID /*subdomain_id*/,
+                                                 THREAD_ID /*tid*/) const
 {
   return _doing_dg;
 }

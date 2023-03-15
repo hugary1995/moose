@@ -6,9 +6,9 @@
   [base]
     type = GeneratedMeshGenerator
     dim = 3
-    nx = 10
-    ny = 10
-    nz = 10
+    nx = 4
+    ny = 4
+    nz = 4
   []
 []
 
@@ -18,24 +18,24 @@
 []
 
 [Kernels]
-  [diff_u]
+  [diff]
     type = Diffusion
     variable = u
   []
 []
 
 [BCs]
-  [left_u]
+  [left]
     type = DirichletBC
     variable = u
-    boundary = 'left'
+    boundary = left
     value = 0
   []
-  [right_u]
-    type = DirichletBC
+  [right]
+    type = FunctionNeumannBC
     variable = u
-    boundary = 'right'
-    value = 1
+    boundary = right
+    function = y
   []
 []
 
@@ -43,8 +43,8 @@
   [u]
     type = EqualValueBoundaryConstraint
     variable = u
-    secondary = 'top'
-    penalty = 1e3
+    secondary = right
+    penalty = 1000
   []
 []
 
@@ -54,5 +54,11 @@
   petsc_options_iname = '-pc_type'
   petsc_options_value = 'lu'
   num_steps = 1
+  automatic_scaling = false
+  line_search = none
+[]
+
+[Outputs]
+  exodus = true
 []
 
