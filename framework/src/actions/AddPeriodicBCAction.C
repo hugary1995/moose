@@ -60,6 +60,25 @@ void
 AddPeriodicBCAction::setPeriodicVars(PeriodicBoundaryBase & p,
                                      const std::vector<VariableName> & var_names)
 {
+  // Aggressive error checking: make sure the paired nodesets have one-to-one correspondance
+  auto pl = _mesh->getPointLocator();
+  const auto bnodes = _mesh->getBoundariesToNodes();
+  const auto & b1 = bnodes.at(p.myboundary);
+  const auto & b2 = bnodes.at(p.pairedboundary);
+  for (auto nid : b1)
+  {
+    auto p1 = _mesh->nodeRef(nid);
+    auto p2 = p.get_corresponding_pos(p1);
+    auto pc = pl->locate_node(p2);
+    if (!pc)
+      mooseWarning("Cannot locate the paired node for node ID ",
+                   nid,
+                   " on boundary ",
+                   p.myboundary,
+                   " named ",
+                   _mesh->getBoundaryName(p.myboundary));
+  }
+
   NonlinearSystemBase & nl = _problem->getNonlinearSystemBase(/*nl_sys_num=*/0);
   const std::vector<VariableName> * var_names_ptr;
 

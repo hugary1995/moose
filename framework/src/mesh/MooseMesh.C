@@ -1110,6 +1110,12 @@ MooseMesh::getBoundaryElementRange()
   return _bnd_elem_range.get();
 }
 
+const std::map<boundary_id_type, std::set<dof_id_type>> &
+MooseMesh::getBoundariesToNodes() const
+{
+  return _bnd_node_ids;
+}
+
 const std::unordered_map<boundary_id_type, std::unordered_set<dof_id_type>> &
 MooseMesh::getBoundariesToElems() const
 {

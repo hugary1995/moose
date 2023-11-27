@@ -432,6 +432,11 @@ public:
   ///@}
 
   /**
+   * Returns a map of boundaries to ids of nodes on the boundary.
+   */
+  const std::map<boundary_id_type, std::set<dof_id_type>> & getBoundariesToNodes() const;
+
+  /**
    * Returns a map of boundaries to ids of elements on the boundary.
    */
   const std::unordered_map<boundary_id_type, std::unordered_set<dof_id_type>> &
