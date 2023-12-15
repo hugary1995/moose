@@ -162,6 +162,16 @@ ElementSubdomainModifier::timestepSetup()
 {
   serializeSolutionOld(_nl_ndof, _nl_sys, _nl_sol_old);
   serializeSolutionOld(_aux_ndof, _aux_sys, _aux_sol_old);
+
+  // In the event of a solve failure, we need to restore the mesh to the old state
+  // Store the old mesh here so that we can change the moved elements back to their original
+  // subdomains
+  _old_mesh = _mesh.getMesh().clone();
+}
+
+void
+ElementSubdomainModifier::restoringProblem()
+{
 }
 
 void

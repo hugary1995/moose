@@ -27,6 +27,7 @@ public:
   virtual void threadJoin(const UserObject & /*uo*/) override;
   virtual void finalize() override;
   virtual void meshChanged() override;
+  virtual void restoringProblem() override;
 
 protected:
   /// Compute the subdomain ID of the current element
@@ -81,6 +82,9 @@ protected:
 
   /// Auxiliary system
   AuxiliarySystem & _aux_sys;
+
+  /// Old mesh to restore when a solve fails
+  std::unique_ptr<MeshBase> _old_mesh;
 
 private:
   /// Serialize the old solution
