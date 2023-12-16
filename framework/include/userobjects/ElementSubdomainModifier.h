@@ -33,6 +33,9 @@ protected:
   /// Compute the subdomain ID of the current element
   virtual SubdomainID computeSubdomainID() = 0;
 
+  /// Restore the mesh's boundary info
+  virtual void restoreBoundary(MooseMesh & mesh, const MooseMesh & old_mesh);
+
   /// The ID of the moving boundary that this object creates/modifies.
   BoundaryID movingBoundaryID() const
   {
@@ -84,7 +87,10 @@ protected:
   AuxiliarySystem & _aux_sys;
 
   /// Old mesh to restore when a solve fails
-  std::unique_ptr<MeshBase> _old_mesh;
+  std::unique_ptr<MooseMesh> _old_mesh;
+
+  /// Old displaced mesh to restore when a solve fails
+  std::unique_ptr<MooseMesh> _old_displaced_mesh;
 
 private:
   /// Serialize the old solution

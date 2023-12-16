@@ -166,12 +166,33 @@ ElementSubdomainModifier::timestepSetup()
   // In the event of a solve failure, we need to restore the mesh to the old state
   // Store the old mesh here so that we can change the moved elements back to their original
   // subdomains
-  _old_mesh = _mesh.getMesh().clone();
+  _old_mesh = _mesh.safeClone();
+  if (_displaced_problem)
+    _old_displaced_mesh = _displaced_problem->mesh().safeClone();
 }
 
 void
 ElementSubdomainModifier::restoringProblem()
 {
+  // Restore all the elements' subdomains
+  for (auto & e : *_mesh.getActiveLocalElementRange())
+    _mesh.elemPtr(e->id())->subdomain_id() = _old_mesh->elemPtr(e->id())->subdomain_id();
+
+  // Restore boundary info
+  restoreBoundary(_mesh, *_old_mesh);
+  if (_displaced_problem)
+    restoreBoundary(_displaced_problem->mesh(), *_old_displaced_mesh);
+
+  // Notify mesh changed
+  _fe_problem.meshChanged();
+}
+
+void
+ElementSubdomainModifier::restoreBoundary(MooseMesh & mesh, const MooseMesh & old_mesh)
+{
+  auto & bnd_info = mesh.getMesh().get_boundary_info();
+  const auto & old_bnd_info = old_mesh.getMesh().get_boundary_info();
+  bnd_info = old_bnd_info;
 }
 
 void
