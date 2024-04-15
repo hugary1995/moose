@@ -105,17 +105,6 @@ QuasiStaticSolidMechanicsPhysics::validParams()
                         "Collects all material eigenstrains and passes to required strain "
                         "calculator within TMA internally.");
 
-  // Homogenization system input
-  MultiMooseEnum constraintType("strain stress");
-  params.addParam<MultiMooseEnum>("constraint_types",
-                                  Homogenization::constraintType,
-                                  "Type of each constraint: "
-                                  "stress or strain.");
-  params.addParam<std::vector<FunctionName>>("targets",
-                                             {},
-                                             "Functions giving the target "
-                                             "values of each constraint.");
-
   return params;
 }
 
@@ -140,14 +129,7 @@ QuasiStaticSolidMechanicsPhysics::QuasiStaticSolidMechanicsPhysics(const InputPa
     _direction_valid(params.isParamSetByUser("direction")),
     _verbose(getParam<bool>("verbose")),
     _spherical_center_point_valid(params.isParamSetByUser("spherical_center_point")),
-    _auto_eigenstrain(getParam<bool>("automatic_eigenstrain_names")),
-    _lagrangian_kernels(getParam<bool>("new_system")),
-    _lk_large_kinematics(_strain == Strain::Finite),
-    _lk_formulation(getParam<MooseEnum>("formulation").getEnum<LKFormulation>()),
-    _lk_locking(getParam<bool>("volumetric_locking_correction")),
-    _lk_homogenization(false),
-    _constraint_types(getParam<MultiMooseEnum>("constraint_types")),
-    _targets(getParam<std::vector<FunctionName>>("targets"))
+    _auto_eigenstrain(getParam<bool>("automatic_eigenstrain_names"))
 {
   // determine if incremental strains are to be used
   if (isParamValid("incremental"))
@@ -183,7 +165,7 @@ QuasiStaticSolidMechanicsPhysics::QuasiStaticSolidMechanicsPhysics(const InputPa
 
   // determine if displaced mesh is to be used
   _use_displaced_mesh = (_strain == Strain::Finite);
-  if (params.isParamSetByUser("use_displaced_mesh") && !_lagrangian_kernels)
+  if (params.isParamSetByUser("use_displaced_mesh"))
   {
     bool use_displaced_mesh_param = getParam<bool>("use_displaced_mesh");
     if (use_displaced_mesh_param != _use_displaced_mesh && params.isParamSetByUser("strain"))
@@ -253,58 +235,6 @@ QuasiStaticSolidMechanicsPhysics::QuasiStaticSolidMechanicsPhysics(const InputPa
 
   // Get eigenstrain names if passed by user
   _eigenstrain_names = getParam<std::vector<MaterialPropertyName>>("eigenstrain_names");
-
-  // Determine if we're going to use the homogenization system for the new
-  // lagrangian kernels
-  bool ctype_set = params.isParamSetByUser("constraint_types");
-  bool targets_set = params.isParamSetByUser("targets");
-  if (ctype_set || targets_set)
-  {
-    if (!(ctype_set && targets_set))
-      mooseError("To use the Lagrangian kernel homogenization system you "
-                 "most provide both the constraint_types and the targets "
-                 "parameters");
-    _lk_homogenization = true;
-    // Do consistency checking on the kernel options
-    if (_lk_homogenization && (_lk_formulation == LKFormulation::Updated))
-      mooseError("The Lagrangian kernel homogenization system requires the "
-                 "use of formulation = TOTAL");
-  }
-
-  // Cross check options to weed out incompatible choices for the new lagrangian
-  // kernel system
-  if (_lagrangian_kernels)
-  {
-    if (_use_ad)
-      mooseError("The Lagrangian kernel system is not yet compatible with AD. "
-                 "Do not set the use_automatic_differentiation flag.");
-
-    if (params.isParamSetByUser("use_finite_deform_jacobian"))
-      mooseError("The Lagrangian kernel system always produces the exact "
-                 "Jacobian.  use_finite_deform_jacobian is redundant and "
-                 " should not be set");
-    if (params.isParamSetByUser("global_strain"))
-      mooseError("The Lagrangian kernel system is not compatible with "
-                 "the global_strain option.  Use the homogenization "
-                 " system instead");
-    if (params.isParamSetByUser("decomposition_method"))
-      mooseError("The decomposition_method parameter should not be used "
-                 " with the Lagrangian kernel system.  Similar options "
-                 " for native small deformation material models are "
-                 " available as part of the ComputeLagrangianStress "
-                 " material system.");
-  }
-  else
-  {
-    if (params.isParamSetByUser("formulation"))
-      mooseError("The StressDiveregenceTensor system always uses an "
-                 " updated Lagrangian formulation.  Do not set the "
-                 " formulation parameter, it is only used with the "
-                 " new Lagrangian kernel system.");
-    if (_lk_homogenization)
-      mooseError("The homogenization system can only be used with the "
-                 "new Lagrangian kernels");
-  }
 }
 
 void
@@ -328,9 +258,6 @@ QuasiStaticSolidMechanicsPhysics::act()
   {
     if (_planar_formulation == PlanarFormulation::GeneralizedPlaneStrain)
     {
-      if (_lagrangian_kernels)
-        paramError("Plane formulation not available with Lagrangian kernels");
-
       if (_use_ad)
         paramError("use_automatic_differentiation", "AD not setup for use with PlaneStrain");
       // Set the action parameters
@@ -390,19 +317,6 @@ QuasiStaticSolidMechanicsPhysics::act()
         _problem->addVariable("MooseVariable", disp, params);
       }
     }
-
-    // Homogenization scalar
-    if (_lk_homogenization)
-    {
-      InputParameters params = _factory.getValidParams("MooseVariable");
-      const std::map<bool, std::vector<unsigned int>> mg_order{{true, {1, 4, 9}},
-                                                               {false, {1, 3, 6}}};
-      params.set<MooseEnum>("family") = "SCALAR";
-      params.set<MooseEnum>("order") = mg_order.at(_lk_large_kinematics)[_ndisp - 1];
-      auto fe_type = AddVariableAction::feType(params);
-      auto var_type = AddVariableAction::variableType(fe_type);
-      _problem->addVariable(var_type, _hname, params);
-    }
   }
   // Add Materials
   else if (_current_task == "add_master_action_material")
@@ -413,10 +327,7 @@ QuasiStaticSolidMechanicsPhysics::act()
 
     // Easiest just to branch on type here, as the strain systems are completely
     // different
-    if (_lagrangian_kernels)
-      actLagrangianKernelStrain();
-    else
-      actStressDivergenceTensorsStrain();
+    actStressDivergenceTensorsStrain();
   }
 
   // Add Stress Divergence (and optionally WeakPlaneStress) Kernels
@@ -444,15 +355,9 @@ QuasiStaticSolidMechanicsPhysics::act()
         params.set<std::vector<AuxVariableName>>("save_in") = {_save_in[i]};
       if (_diag_save_in.size() == _ndisp)
         params.set<std::vector<AuxVariableName>>("diag_save_in") = {_diag_save_in[i]};
-      if (isParamValid("out_of_plane_strain") && !_lagrangian_kernels)
+      if (isParamValid("out_of_plane_strain"))
         params.set<std::vector<VariableName>>("out_of_plane_strain") = {
             getParam<VariableName>("out_of_plane_strain")};
-
-      if (_lk_homogenization)
-      {
-        params.set<std::vector<VariableName>>("macro_gradient") = {_hname};
-        params.set<UserObjectName>("homogenization_constraint") = _integrator_name;
-      }
 
       _problem->addKernel(ad_prepend + tensor_kernel_type, kernel_name, params);
     }
@@ -464,32 +369,6 @@ QuasiStaticSolidMechanicsPhysics::act()
       params.set<NonlinearVariableName>("variable") = getParam<VariableName>("out_of_plane_strain");
 
       _problem->addKernel(ad_prepend + "WeakPlaneStress", wps_kernel_name, params);
-    }
-  }
-  else if (_current_task == "add_scalar_kernel")
-  {
-    if (_lk_homogenization)
-    {
-      InputParameters params = _factory.getValidParams("HomogenizationConstraintScalarKernel");
-      params.set<NonlinearVariableName>("variable") = _hname;
-      params.set<UserObjectName>("homogenization_constraint") = _integrator_name;
-
-      _problem->addScalarKernel(
-          "HomogenizationConstraintScalarKernel", "HomogenizationConstraints", params);
-    }
-  }
-  else if (_current_task == "add_user_object")
-  {
-    if (_lk_homogenization)
-    {
-      InputParameters params = _factory.getValidParams("HomogenizationConstraint");
-      params.set<MultiMooseEnum>("constraint_types") = _constraint_types;
-      params.set<std::vector<FunctionName>>("targets") = _targets;
-      params.set<bool>("large_kinematics") = _lk_large_kinematics;
-      params.set<std::vector<SubdomainName>>("block") = _subdomain_names;
-      params.set<ExecFlagEnum>("execute_on") = {EXEC_INITIAL, EXEC_LINEAR, EXEC_NONLINEAR};
-
-      _problem->addUserObject("HomogenizationConstraint", _integrator_name, params);
     }
   }
 }
@@ -920,59 +799,7 @@ QuasiStaticSolidMechanicsPhysics::actGatherActionParameters()
 }
 
 void
-QuasiStaticSolidMechanicsPhysics::actLagrangianKernelStrain()
-{
-  std::string type;
-  if (_coord_system == Moose::COORD_XYZ)
-    type = "ComputeLagrangianStrain";
-  else if (_coord_system == Moose::COORD_RZ)
-    type = "ComputeLagrangianStrainAxisymmetricCylindrical";
-  else if (_coord_system == Moose::COORD_RSPHERICAL)
-    type = "ComputeLagrangianStrainCentrosymmetricSpherical";
-  else
-    mooseError("Unsupported coordinate system");
-
-  auto params = _factory.getValidParams(type);
-
-  if (isParamValid("strain_base_name"))
-    params.set<std::string>("base_name") = getParam<std::string>("strain_base_name");
-
-  params.set<std::vector<VariableName>>("displacements") = _coupled_displacements;
-  params.set<std::vector<MaterialPropertyName>>("eigenstrain_names") = _eigenstrain_names;
-  params.set<bool>("large_kinematics") = _lk_large_kinematics;
-  params.set<std::vector<SubdomainName>>("block") = _subdomain_names;
-
-  // Error if volumetric locking correction is on for higher-order elements
-  if (_problem->mesh().hasSecondOrderElements() && _lk_locking)
-    mooseError("Volumetric locking correction should not be used for "
-               "higher-order elements.");
-
-  params.set<bool>("stabilize_strain") = _lk_locking;
-
-  if (_lk_homogenization)
-  {
-    params.set<std::vector<MaterialPropertyName>>("homogenization_gradient_names") = {
-        _homogenization_strain_name};
-  }
-
-  _problem->addMaterial(type, name() + "_strain", params);
-
-  // Add the homogenization strain calculator
-  if (_lk_homogenization)
-  {
-    std::string type = "ComputeHomogenizedLagrangianStrain";
-    auto params = _factory.getValidParams(type);
-
-    params.set<MaterialPropertyName>("homogenization_gradient_name") = _homogenization_strain_name;
-    params.set<std::vector<VariableName>>("macro_gradient") = {_hname};
-    params.set<UserObjectName>("homogenization_constraint") = _integrator_name;
-
-    _problem->addMaterial(type, name() + "_compute_" + _homogenization_strain_name, params);
-  }
-}
-
-void
-QuasiStaticSolidMechanicsPhysics::actStressDivergenceTensorsStrain()
+QuasiStaticSolidMechanicsPhysics::actStrain()
 {
   std::string ad_prepend = _use_ad ? "AD" : "";
 
@@ -1059,81 +886,29 @@ QuasiStaticSolidMechanicsPhysics::actStressDivergenceTensorsStrain()
 std::string
 QuasiStaticSolidMechanicsPhysics::getKernelType()
 {
-  if (_lagrangian_kernels)
-  {
-    std::string type;
-    if (_coord_system == Moose::COORD_XYZ)
-    {
-      if (_lk_homogenization)
-        type = "HomogenizedTotalLagrangianStressDivergence";
-      else if (_lk_formulation == LKFormulation::Total)
-        type = "TotalLagrangianStressDivergence";
-      else if (_lk_formulation == LKFormulation::Updated)
-        type = "UpdatedLagrangianStressDivergence";
-      else
-        mooseError("Unknown formulation type");
-    }
-    else if (_coord_system == Moose::COORD_RZ)
-    {
-      if (_lk_homogenization)
-        mooseError("The Lagrangian mechanics kernels do not yet support homogenization in "
-                   "coordinate systems other than Cartesian.");
-      else if (_lk_formulation == LKFormulation::Total)
-        type = "TotalLagrangianStressDivergenceAxisymmetricCylindrical";
-      else if (_lk_formulation == LKFormulation::Updated)
-        mooseError("The Lagrangian mechanics kernels do not yet support the updated Lagrangian "
-                   "formulation in RZ coordinates.");
-    }
-    else if (_coord_system == Moose::COORD_RSPHERICAL)
-    {
-      if (_lk_homogenization)
-        mooseError("The Lagrangian mechanics kernels do not yet support homogenization in "
-                   "coordinate systems other than Cartesian.");
-      else if (_lk_formulation == LKFormulation::Total)
-        type = "TotalLagrangianStressDivergenceCentrosymmetricSpherical";
-      else if (_lk_formulation == LKFormulation::Updated)
-        mooseError("The Lagrangian mechanics kernels do not yet support the updated Lagrangian "
-                   "formulation in RZ coordinates.");
-    }
-    else
-      mooseError("Unsupported coordinate system");
-    return type;
-  }
-  else
-  {
-    std::map<Moose::CoordinateSystemType, std::string> type_map = {
-        {Moose::COORD_XYZ, "StressDivergenceTensors"},
-        {Moose::COORD_RZ, "StressDivergenceRZTensors"},
-        {Moose::COORD_RSPHERICAL, "StressDivergenceRSphericalTensors"}};
+  std::map<Moose::CoordinateSystemType, std::string> type_map = {
+      {Moose::COORD_XYZ, "StressDivergenceTensors"},
+      {Moose::COORD_RZ, "StressDivergenceRZTensors"},
+      {Moose::COORD_RSPHERICAL, "StressDivergenceRSphericalTensors"}};
 
-    // choose kernel type based on coordinate system
-    auto type_it = type_map.find(_coord_system);
-    if (type_it != type_map.end())
-      return type_it->second;
-    else
-      mooseError("Unsupported coordinate system");
-  }
+  // choose kernel type based on coordinate system
+  auto type_it = type_map.find(_coord_system);
+  if (type_it != type_map.end())
+    return type_it->second;
+  else
+    mooseError("Unsupported coordinate system");
 }
 
 InputParameters
 QuasiStaticSolidMechanicsPhysics::getKernelParameters(std::string type)
 {
   InputParameters params = _factory.getValidParams(type);
+
   params.applyParameters(
       parameters(),
       {"displacements", "use_displaced_mesh", "save_in", "diag_save_in", "out_of_plane_strain"});
-
   params.set<std::vector<VariableName>>("displacements") = _coupled_displacements;
-
-  if (_lagrangian_kernels)
-  {
-    params.set<bool>("use_displaced_mesh") =
-        (_lk_large_kinematics && (_lk_formulation == LKFormulation::Updated));
-    params.set<bool>("large_kinematics") = _lk_large_kinematics;
-    params.set<bool>("stabilize_strain") = _lk_locking;
-  }
-  else
-    params.set<bool>("use_displaced_mesh") = _use_displaced_mesh;
+  params.set<bool>("use_displaced_mesh") = _use_displaced_mesh;
 
   return params;
 }

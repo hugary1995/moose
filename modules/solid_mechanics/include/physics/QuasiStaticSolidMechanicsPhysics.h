@@ -28,8 +28,7 @@ protected:
   void actOutputMatProp();
   void actGatherActionParameters();
   void verifyOrderAndFamilyOutputs();
-  void actLagrangianKernelStrain();
-  void actStressDivergenceTensorsStrain();
+  void actStrain();
 
   virtual std::string getKernelType();
   virtual InputParameters getKernelParameters(std::string type);

@@ -42,4 +42,7 @@ protected:
   static std::map<std::string, std::string> _rank_two_cartesian_component_table;
 
   const bool _use_ad;
+
+  /// Whether to use the new system (Lagrangian kernels)
+  const bool _new_system;
 };

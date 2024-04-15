@@ -157,6 +157,7 @@ associateSyntaxInner(Syntax & syntax, ActionFactory & /*action_factory*/)
   registerSyntax("CommonSolidMechanicsAction", "Physics/SolidMechanics/Dynamic");
   registerSyntax("QuasiStaticSolidMechanicsPhysics", "Physics/SolidMechanics/QuasiStatic/*");
   registerSyntax("DynamicSolidMechanicsPhysics", "Physics/SolidMechanics/Dynamic/*");
+  registerSyntax("QuasiStaticSolidMechanicsPhysicsNew", "Physics/SolidMechanics/QuasiStatic/*");
 
   registerSyntax("CommonLineElementAction", "Physics/SolidMechanics/LineElement/QuasiStatic");
   registerSyntax("LineElementAction", "Physics/SolidMechanics/LineElement/QuasiStatic/*");

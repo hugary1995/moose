@@ -228,24 +228,23 @@ QuasiStaticSolidMechanicsPhysicsBase::validParams()
                               "Output");
   params.addParam<bool>("verbose", false, "Display extra information.");
 
-  params.addParam<bool>("new_system",
-                        false,
-                        "If true use the new "
-                        "LagrangianStressDiverence kernels.");
+  params.addParam<bool>(
+      "new_system", false, "If true use the new LagrangianStressDiverence kernels.");
 
   MooseEnum formulationType("TOTAL UPDATED", "TOTAL");
   params.addParam<MooseEnum>("formulation",
                              formulationType,
-                             "Select between the total Lagrangian (TOTAL) "
-                             "and updated Lagrangian (UPDATED) formulations "
-                             "for the new kernel system.");
+                             "Select between the total Lagrangian (TOTAL) and updated Lagrangian "
+                             "(UPDATED) formulations for the new kernel system.");
 
   return params;
 }
 
 QuasiStaticSolidMechanicsPhysicsBase::QuasiStaticSolidMechanicsPhysicsBase(
     const InputParameters & parameters)
-  : Action(parameters), _use_ad(getParam<bool>("use_automatic_differentiation"))
+  : Action(parameters),
+    _use_ad(getParam<bool>("use_automatic_differentiation")),
+    _new_system(getParam<bool>("new_system")),
 {
   const auto & params = _app.getInputParameterWarehouse().getInputParameters();
   InputParameters & pars(*(params.find(uniqueActionName())->second.get()));
