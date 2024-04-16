@@ -9,16 +9,17 @@
 
 #pragma once
 
-#include "QuasiStaticSolidMechanicsPhysicsBase.h"
+#include "Action.h"
 
-class QuasiStaticSolidMechanicsPhysicsNew : public QuasiStaticSolidMechanicsPhysicsBase
+/**
+ * Store common solid mechanics parameters
+ */
+class SolidMechanicsPhysicsCommon : public Action
 {
 public:
   static InputParameters validParams();
 
-  QuasiStaticSolidMechanicsPhysicsNew(const InputParameters & params);
+  SolidMechanicsPhysicsCommon(const InputParameters & parameters);
 
-  virtual void act();
-
-protected:
+  virtual void act() override;
 };

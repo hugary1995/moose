@@ -14,10 +14,7 @@
 #include "MooseObjectAction.h"
 #include "QuasiStaticSolidMechanicsPhysics.h"
 #include "Material.h"
-
 #include "BlockRestrictable.h"
-
-#include "HomogenizationConstraint.h"
 #include "AddVariableAction.h"
 
 #include "libmesh/string_to_enum.h"
@@ -52,7 +49,7 @@ registerMooseAction("SolidMechanicsApp", QuasiStaticSolidMechanicsPhysics, "add_
 InputParameters
 QuasiStaticSolidMechanicsPhysics::validParams()
 {
-  InputParameters params = QuasiStaticSolidMechanicsPhysicsBase::validParams();
+  InputParameters params = SolidMechanicsPhysicsBase::validParams();
   params.addClassDescription("Set up stress divergence kernels with coordinate system aware logic");
 
   // parameters specified here only appear in the input file sub-blocks of the
@@ -65,17 +62,17 @@ QuasiStaticSolidMechanicsPhysics::validParams()
   params.addParamNamesToGroup("block", "Advanced");
 
   params.addParam<MultiMooseEnum>("additional_generate_output",
-                                  QuasiStaticSolidMechanicsPhysicsBase::outputPropertiesType(),
+                                  SolidMechanicsPhysicsBase::outputProperties(),
                                   "Add scalar quantity output for stress and/or strain (will be "
                                   "appended to the list in `generate_output`)");
   params.addParam<MultiMooseEnum>(
       "additional_material_output_order",
-      QuasiStaticSolidMechanicsPhysicsBase::materialOutputOrders(),
+      SolidMechanicsPhysicsBase::materialOutputOrders(),
       "Specifies the order of the FE shape function to use for this variable.");
 
   params.addParam<MultiMooseEnum>(
       "additional_material_output_family",
-      QuasiStaticSolidMechanicsPhysicsBase::materialOutputFamilies(),
+      SolidMechanicsPhysicsBase::materialOutputFamilies(),
       "Specifies the family of FE shape functions to use for this variable.");
 
   params.addParamNamesToGroup("additional_generate_output additional_material_output_order "
@@ -109,7 +106,7 @@ QuasiStaticSolidMechanicsPhysics::validParams()
 }
 
 QuasiStaticSolidMechanicsPhysics::QuasiStaticSolidMechanicsPhysics(const InputParameters & params)
-  : QuasiStaticSolidMechanicsPhysicsBase(params),
+  : SolidMechanicsPhysicsBase(params),
     _displacements(getParam<std::vector<VariableName>>("displacements")),
     _ndisp(_displacements.size()),
     _coupled_displacements(_ndisp),
@@ -327,7 +324,7 @@ QuasiStaticSolidMechanicsPhysics::act()
 
     // Easiest just to branch on type here, as the strain systems are completely
     // different
-    actStressDivergenceTensorsStrain();
+    actStrain();
   }
 
   // Add Stress Divergence (and optionally WeakPlaneStress) Kernels
@@ -667,108 +664,34 @@ QuasiStaticSolidMechanicsPhysics::verifyOrderAndFamilyOutputs()
 void
 QuasiStaticSolidMechanicsPhysics::actOutputMatProp()
 {
-  std::string ad_prepend = _use_ad ? "AD" : "";
-
-  if (_current_task == "add_material")
+  for (const auto & out : _generate_output)
   {
-    // Add output Materials
-    for (auto out : _generate_output)
-    {
-      InputParameters params = emptyInputParameters();
-
-      // RankTwoCartesianComponent
-      if (
-          [&]()
-          {
-            for (const auto & r2q : _rank_two_cartesian_component_table)
-              for (unsigned int a = 0; a < 3; ++a)
-                for (unsigned int b = 0; b < 3; ++b)
-                  if (r2q.first + '_' + _component_table[a] + _component_table[b] == out)
-                  {
-                    auto type = ad_prepend + "RankTwoCartesianComponent";
-                    params = _factory.getValidParams(type);
-                    params.set<MaterialPropertyName>("rank_two_tensor") = _base_name + r2q.second;
-                    params.set<unsigned int>("index_i") = a;
-                    params.set<unsigned int>("index_j") = b;
-
-                    params.applyParameters(parameters());
-                    params.set<MaterialPropertyName>("property_name") = _base_name + out;
-                    _problem->addMaterial(type, _base_name + out + '_' + name(), params);
-                    return true;
-                  }
-            return false;
-          }())
-        continue;
-
-      // RankTwoDirectionalComponent
-      if (setupOutput(out,
-                      _rank_two_directional_component_table,
-                      [&](std::string prop_name, std::string invariant)
-                      {
-                        auto type = ad_prepend + "RankTwoDirectionalComponent";
-                        params = _factory.getValidParams(type);
-                        params.set<MaterialPropertyName>("rank_two_tensor") =
-                            _base_name + prop_name;
-                        params.set<MooseEnum>("invariant") = invariant;
-                        params.applyParameters(parameters());
-                        params.set<MaterialPropertyName>("property_name") = _base_name + out;
-                        _problem->addMaterial(type, _base_name + out + '_' + name(), params);
-                      }))
-        continue;
-
-      // RankTwoInvariant
-      if (setupOutput(out,
-                      _rank_two_invariant_table,
-                      [&](std::string prop_name, std::string invariant)
-                      {
-                        auto type = ad_prepend + "RankTwoInvariant";
-                        params = _factory.getValidParams(type);
-                        params.set<MaterialPropertyName>("rank_two_tensor") =
-                            _base_name + prop_name;
-                        params.set<MooseEnum>("invariant") = invariant;
-                        params.applyParameters(parameters());
-                        params.set<MaterialPropertyName>("property_name") = _base_name + out;
-                        _problem->addMaterial(type, _base_name + out + '_' + name(), params);
-                      }))
-        continue;
-
-      // RankTwoCylindricalComponent
-      if (setupOutput(
-              out,
-              _rank_two_cylindrical_component_table,
-              [&](std::string prop_name, std::string component)
-              {
-                if (_coord_system == Moose::COORD_RSPHERICAL)
-                  mooseError(
-                      "Cannot use cylindrical component output in a spherical coordinate system.");
-                auto type = ad_prepend + "RankTwoCylindricalComponent";
-                params = _factory.getValidParams(type);
-                params.set<MaterialPropertyName>("rank_two_tensor") = _base_name + prop_name;
-                params.set<MooseEnum>("cylindrical_component") = component;
-                params.applyParameters(parameters());
-                params.set<MaterialPropertyName>("property_name") = _base_name + out;
-                _problem->addMaterial(type, _base_name + out + '_' + name(), params);
-              }))
-        continue;
-
-      // RankTwoSphericalComponent
-      if (setupOutput(out,
-                      _rank_two_spherical_component_table,
-                      [&](std::string prop_name, std::string component)
-                      {
-                        auto type = ad_prepend + "RankTwoSphericalComponent";
-                        params = _factory.getValidParams(type);
-                        params.set<MaterialPropertyName>("rank_two_tensor") =
-                            _base_name + prop_name;
-                        params.set<MooseEnum>("spherical_component") = component;
-                        params.applyParameters(parameters());
-                        params.set<MaterialPropertyName>("property_name") = _base_name + out;
-                        _problem->addMaterial(type, _base_name + out + '_' + name(), params);
-                      }))
-        continue;
-
+    if (addOutputMatPropRankTwo(
+            out, "RankTwoInvariant", {"invariant"}, _output_r2_invariant_params, _base_name))
+      continue;
+    else if (addOutputMatPropRankTwo(
+                 out, "RankTwoDirectionalComponent", {}, _output_r2_directional_params, _base_name))
+      continue;
+    else if (addOutputMatPropRankTwo(out,
+                                     "RankTwoCylindricalComponent",
+                                     {"cylindrical_component"},
+                                     _output_r2_cylindrical_params,
+                                     _base_name))
+      continue;
+    else if (addOutputMatPropRankTwo(out,
+                                     "RankTwoSphericalComponent",
+                                     {"spherical_component"},
+                                     _output_r2_spherical_params,
+                                     _base_name))
+      continue;
+    else if (addOutputMatPropRankTwo(out,
+                                     "RankTwoCartesianComponent",
+                                     {"index_i", "index_j"},
+                                     _output_r2_cartesian_params,
+                                     _base_name))
+      continue;
+    else
       paramError("generate_output", "Unable to add output Material for '", out, "'");
-    }
   }
 }
 

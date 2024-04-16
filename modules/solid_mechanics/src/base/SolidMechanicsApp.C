@@ -100,12 +100,12 @@ associateSyntaxInner(Syntax & syntax, ActionFactory & /*action_factory*/)
                            "Modules/TensorMechanics/GlobalStrain/*",
                            "The 'Modules/TensorMechanics' syntax is deprecated. Please use "
                            "'Physics/SolidMechanics' instead.");
-  registerDeprecatedSyntax("CommonSolidMechanicsAction",
+  registerDeprecatedSyntax("SolidMechanicsPhysicsCommon",
                            "Modules/TensorMechanics/Master",
                            "The 'Modules/TensorMechanics/Master' syntax is deprecated. Please use "
                            "'Physics/SolidMechanics/QuasiStatic' instead.");
   registerDeprecatedSyntax(
-      "CommonSolidMechanicsAction",
+      "SolidMechanicsPhysicsCommon",
       "Modules/TensorMechanics/DynamicMaster",
       "The 'Modules/TensorMechanics/DynamicMaster' syntax is deprecated. Please use "
       "'Physics/SolidMechanics/Dynamic' instead.");
@@ -153,11 +153,10 @@ associateSyntaxInner(Syntax & syntax, ActionFactory & /*action_factory*/)
   // New Physics syntax
   registerSyntax("GeneralizedPlaneStrainAction", "Physics/SolidMechanics/GeneralizedPlaneStrain/*");
   registerSyntax("GlobalStrainAction", "Physics/SolidMechanics/GlobalStrain/*");
-  registerSyntax("CommonSolidMechanicsAction", "Physics/SolidMechanics/QuasiStatic");
-  registerSyntax("CommonSolidMechanicsAction", "Physics/SolidMechanics/Dynamic");
+  registerSyntax("SolidMechanicsPhysicsCommon", "Physics/SolidMechanics/QuasiStatic");
+  registerSyntax("SolidMechanicsPhysicsCommon", "Physics/SolidMechanics/Dynamic");
   registerSyntax("QuasiStaticSolidMechanicsPhysics", "Physics/SolidMechanics/QuasiStatic/*");
   registerSyntax("DynamicSolidMechanicsPhysics", "Physics/SolidMechanics/Dynamic/*");
-  registerSyntax("QuasiStaticSolidMechanicsPhysicsNew", "Physics/SolidMechanics/QuasiStatic/*");
 
   registerSyntax("CommonLineElementAction", "Physics/SolidMechanics/LineElement/QuasiStatic");
   registerSyntax("LineElementAction", "Physics/SolidMechanics/LineElement/QuasiStatic/*");

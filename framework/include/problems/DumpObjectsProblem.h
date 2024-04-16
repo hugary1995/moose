@@ -108,5 +108,5 @@ public:
   captureDump(addTransfer,            "Transfers")
   captureDump(addVariable,            "Variables")
   captureDump(addVectorPostprocessor, "VectorPostprocessors")
-  // clang-format off
+  // clang-format on
 };

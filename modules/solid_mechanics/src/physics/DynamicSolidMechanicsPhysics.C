@@ -103,7 +103,6 @@ DynamicSolidMechanicsPhysics::DynamicSolidMechanicsPhysics(const InputParameters
     _newmark_gamma(isParamValid("gamma") ? getParam<Real>("gamma")
                                          : getParam<Real>("newmark_gamma")),
     _hht_alpha(isParamValid("alpha") ? getParam<Real>("alpha") : getParam<Real>("hht_alpha"))
-
 {
 }
 
