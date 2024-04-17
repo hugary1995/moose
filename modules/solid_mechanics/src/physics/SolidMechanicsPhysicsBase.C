@@ -15,36 +15,37 @@
 #include "MooseApp.h"
 #include "InputParameterWarehouse.h"
 
-using namespace SolidMechanicsMaterialProperty;
+using namespace SolidMechanics;
 
 // Register material properties name for outputting purposes.
 // clang-format off
-std::vector<Registry> SolidMechanicsPhysicsBase::_output_properties = {
-  {"total_strain",             "strain",                   Rank::TWO,  Symmetry::SYMMETRIC,          Type::STRAIN_LIKE},
-  {"mechanical_strain",        "mechanical_strain",        Rank::TWO,  Symmetry::POSSIBLY_SYMMETRIC, Type::STRAIN_LIKE},
-  {"stress",                   "stress",                   Rank::TWO,  Symmetry::POSSIBLY_SYMMETRIC, Type::STRESS_LIKE},
-  {"cauchy_stress",            "cauchy_stress",            Rank::TWO,  Symmetry::POSSIBLY_SYMMETRIC, Type::STRESS_LIKE},
-  {"deformation_gradient",     "deformation_gradient",     Rank::TWO,  Symmetry::NONE,               Type::STRAIN_LIKE},
-  {"pk1_stress",               "pk1_stress",               Rank::TWO,  Symmetry::NONE,               Type::STRESS_LIKE},
-  {"pk2_stress",               "pk2_stress",               Rank::TWO,  Symmetry::POSSIBLY_SYMMETRIC, Type::STRESS_LIKE},
-  {"small_stress",             "small_stress",             Rank::TWO,  Symmetry::POSSIBLY_SYMMETRIC, Type::STRESS_LIKE},
-  {"elastic_strain",           "elastic_strain",           Rank::TWO,  Symmetry::POSSIBLY_SYMMETRIC, Type::STRAIN_LIKE},
-  {"plastic_strain",           "plastic_strain",           Rank::TWO,  Symmetry::POSSIBLY_SYMMETRIC, Type::STRAIN_LIKE},
-  {"creep_strain",             "creep_strain",             Rank::TWO,  Symmetry::POSSIBLY_SYMMETRIC, Type::STRAIN_LIKE},
-  {"effective_plastic_strain", "effective_plastic_strain", Rank::ZERO, Symmetry::NONE,               Type::STRAIN_LIKE},
-  {"effective_creep_strain",   "effective_creep_strain",   Rank::ZERO, Symmetry::NONE,               Type::STRAIN_LIKE}
-};
+const std::vector<PropertyRegistry>
+    SolidMechanicsPhysicsBase::_output_properties = {
+      {"total_strain",             "strain",                   Rank::TWO,  Symmetry::SYMMETRIC,          Type::STRAIN_LIKE},
+      {"mechanical_strain",        "mechanical_strain",        Rank::TWO,  Symmetry::POSSIBLY_SYMMETRIC, Type::STRAIN_LIKE},
+      {"stress",                   "stress",                   Rank::TWO,  Symmetry::POSSIBLY_SYMMETRIC, Type::STRESS_LIKE},
+      {"cauchy_stress",            "cauchy_stress",            Rank::TWO,  Symmetry::POSSIBLY_SYMMETRIC, Type::STRESS_LIKE},
+      {"deformation_gradient",     "deformation_gradient",     Rank::TWO,  Symmetry::NONE,               Type::STRAIN_LIKE},
+      {"pk1_stress",               "pk1_stress",               Rank::TWO,  Symmetry::NONE,               Type::STRESS_LIKE},
+      {"pk2_stress",               "pk2_stress",               Rank::TWO,  Symmetry::POSSIBLY_SYMMETRIC, Type::STRESS_LIKE},
+      {"small_stress",             "small_stress",             Rank::TWO,  Symmetry::POSSIBLY_SYMMETRIC, Type::STRESS_LIKE},
+      {"elastic_strain",           "elastic_strain",           Rank::TWO,  Symmetry::POSSIBLY_SYMMETRIC, Type::STRAIN_LIKE},
+      {"plastic_strain",           "plastic_strain",           Rank::TWO,  Symmetry::POSSIBLY_SYMMETRIC, Type::STRAIN_LIKE},
+      {"creep_strain",             "creep_strain",             Rank::TWO,  Symmetry::POSSIBLY_SYMMETRIC, Type::STRAIN_LIKE},
+      {"effective_plastic_strain", "effective_plastic_strain", Rank::ZERO, Symmetry::NONE,               Type::STRAIN_LIKE},
+      {"effective_creep_strain",   "effective_creep_strain",   Rank::ZERO, Symmetry::NONE,               Type::STRAIN_LIKE}
+    };
 // clang-format on
 
 // Map aux variable name prefixes to applicable tensor queries
 // clang-format off
-std::map<std::string, std::tuple<bool, Rank, Symmetry, Type>>
+const std::map<std::string, std::tuple<bool, Rank, Symmetry, Type>>
     SolidMechanicsPhysicsBase::_output_property_restriction = {
       // RankTwoInvariant
       {"vonmises",      {true,  Rank::TWO, Symmetry::ANY,                                      Type::STRESS_LIKE}},
       {"hydrostatic",   {true,  Rank::TWO, Symmetry::ANY,                                      Type::ANY}},
       {"l2norm",        {true,  Rank::TWO, Symmetry::ANY,                                      Type::ANY}},
-      {"volumetric",    {true,  Rank::TWO, Symmetry::ANY,                                      Type::ANY}},
+      {"volumetric",    {true,  Rank::TWO, Symmetry::ANY,                                      Type::STRAIN_LIKE}},
       {"firstinv",      {true,  Rank::TWO, Symmetry::ANY,                                      Type::ANY}},
       {"secondinv",     {true,  Rank::TWO, Symmetry::ANY,                                      Type::ANY}},
       {"thirdinv",      {true,  Rank::TWO, Symmetry::ANY,                                      Type::ANY}},
@@ -75,54 +76,59 @@ std::map<std::string, std::tuple<bool, Rank, Symmetry, Type>>
 
 // Map aux variable name prefixes to enum option used in RankTwoInvariant
 // clang-format off
-const std::map<std::string, std::tuple<MooseEnum>> SolidMechanicsPhysicsBase::_output_r2_invariant_params = {
-    {"vonmises",      {"VonMisesStress"}},
-    {"hydrostatic",   {"Hydrostatic"}},
-    {"l2norm",        {"L2norm"}},
-    {"volumetric",    {"VolumetricStrain"}},
-    {"firstinv",      {"FirstInvariant"}},
-    {"secondinv",     {"SecondInvariant"}},
-    {"thirdinv",      {"ThirdInvariant"}},
-    {"triaxiality",   {"TriaxialityStress"}},
-    {"maxshear",      {"MaxShear"}},
-    {"intensity",     {"StressIntensity"}},
-    {"max_principal", {"MaxPrincipal"}},
-    {"mid_principal", {"MidPrincipal"}},
-    {"min_principal", {"MinPrincipal"}}
-};
+const std::map<std::string, std::tuple<std::string>>
+    SolidMechanicsPhysicsBase::_output_r2_invariant_params = {
+        {"vonmises",      {"VonMisesStress"}},
+        {"hydrostatic",   {"Hydrostatic"}},
+        {"l2norm",        {"L2norm"}},
+        {"volumetric",    {"VolumetricStrain"}},
+        {"firstinv",      {"FirstInvariant"}},
+        {"secondinv",     {"SecondInvariant"}},
+        {"thirdinv",      {"ThirdInvariant"}},
+        {"triaxiality",   {"TriaxialityStress"}},
+        {"maxshear",      {"MaxShear"}},
+        {"intensity",     {"StressIntensity"}},
+        {"max_principal", {"MaxPrincipal"}},
+        {"mid_principal", {"MidPrincipal"}},
+        {"min_principal", {"MinPrincipal"}}
+    };
 // clang-format on
 
 // Map aux variable name prefixes to enum option used in RankTwoDirectionalComponent
 // clang-format off
-const std::map<std::string, std::tuple<MooseEnum>> SolidMechanicsPhysicsBase::_output_r2_directional_params = {
-    {"directional",  {}}
-};
+const std::map<std::string, std::tuple<>>
+    SolidMechanicsPhysicsBase::_output_r2_directional_params = {
+        {"directional",  {}}
+    };
 // clang-format on
 
 // Map aux variable name prefixes to enum option used in RankTwoCylindricalComponent
 // clang-format off
-const std::map<std::string, std::tuple<MooseEnum>> SolidMechanicsPhysicsBase::_output_r2_cylindrical_params = {
-    {"axial",  {"AxialStress"}},
-    {"hoop",   {"HoopStress"}},
-    {"radial", {"RadialStress"}}
-};
+const std::map<std::string, std::tuple<std::string>>
+    SolidMechanicsPhysicsBase::_output_r2_cylindrical_params = {
+        {"axial",  {"AxialStress"}},
+        {"hoop",   {"HoopStress"}},
+        {"radial", {"RadialStress"}}
+    };
 // clang-format on
 
 // Map aux variable name prefixes to enum option used in RankTwoSphericalComponent
 // clang-format off
-const std::map<std::string, std::tuple<MooseEnum>> SolidMechanicsPhysicsBase::_output_r2_spherical_params = {
-    {"hoop",   {"HoopStress"}},
-    {"radial", {"RadialStress"}}
-};
+const std::map<std::string, std::tuple<std::string>>
+    SolidMechanicsPhysicsBase::_output_r2_spherical_params = {
+        {"hoop",   {"HoopStress"}},
+        {"radial", {"RadialStress"}}
+    };
 // clang-format on
 
 // Map aux variable name suffixes to indices used in RankTwoCartesianComponent
 // clang-format off
-const std::map<std::string, std::tuple<unsigned int, unsigned int>> SolidMechanicsPhysicsBase::_output_cartesian_params = {
-    {"xx", {0, 0}}, {"xy", {0, 1}}, {"xz", {0, 2}},
-    {"yx", {1, 0}}, {"yy", {1, 1}}, {"yz", {1, 2}},
-    {"zx", {2, 0}}, {"zy", {2, 1}}, {"zz", {2, 2}}
-};
+const std::map<std::string, std::tuple<unsigned int, unsigned int>>
+    SolidMechanicsPhysicsBase::_output_r2_cartesian_params = {
+        {"xx", {0, 0}}, {"xy", {0, 1}}, {"xz", {0, 2}},
+        {"yx", {1, 0}}, {"yy", {1, 1}}, {"yz", {1, 2}},
+        {"zx", {2, 0}}, {"zy", {2, 1}}, {"zz", {2, 2}}
+    };
 // clang-format on
 
 InputParameters
@@ -157,8 +163,8 @@ SolidMechanicsPhysicsBase::validParams()
   params.addParamNamesToGroup("save_in diag_save_in", "Advanced");
 
   // Planar Formulation
-  MooseEnum planarFormulationType(
-      "Symmetry::NONE WEAK_PLANE_STRESS PLANE_STRAIN GENERALIZED_PLANE_STRAIN", "Symmetry::NONE");
+  MooseEnum planarFormulationType("NONE WEAK_PLANE_STRESS PLANE_STRAIN GENERALIZED_PLANE_STRAIN",
+                                  "NONE");
   params.addParam<MooseEnum>(
       "planar_formulation", planarFormulationType, "Out-of-plane stress/strain formulation");
   params.addParam<VariableName>("scalar_out_of_plane_strain",
@@ -278,7 +284,7 @@ SolidMechanicsPhysicsBase::outputProperties()
 
   // Rank-0 (scalar-valued) properties
   for (auto prop : query(_output_properties).rank(Rank::ZERO).get())
-    options += prop.alias;
+    options += prop.alias + ' ';
 
   // Higher rank properties will need one additional layer of postprocessing so that we can write
   // them into scalar-valued aux variables.
@@ -287,40 +293,39 @@ SolidMechanicsPhysicsBase::outputProperties()
   {
     auto [prefix, rank, symmetry, type] = restriction;
     for (auto prop : query(_output_properties).rank(rank).symmetry(symmetry).type(type).get())
-      options += prefix ? key + '_' + prop.alias : prop.alias + '_' + key;
+      options += prefix ? key + '_' + prop.alias + ' ' : prop.alias + '_' + key + ' ';
   }
 
-  return options;
+  return MultiMooseEnum(options, "", /*allow_out_of_range=*/true);
 }
 
 MultiMooseEnum
 SolidMechanicsPhysicsBase::materialOutputOrders()
 {
-  return AddAuxVariableAction::getAuxVariableOrders();
+  return AddAuxVariableAction::getAuxVariableOrders().getRawNames();
 }
 
 MultiMooseEnum
 SolidMechanicsPhysicsBase::materialOutputFamilies()
 {
-  return "MONOMIAL LAGRANGE";
+  return MultiMooseEnum("MONOMIAL LAGRANGE");
 }
 
 std::string
-SolidMechanicsMaterialProperty::getOutputPropertyName(const std::string & out,
-                                                      const std::string & key) const
+SolidMechanicsPhysicsBase::getOutputPropertyName(const std::string & out,
+                                                 const std::string & key) const
 {
-  auto [prefix, rank, symmetry, type] = _output_property_restriction[key];
-  auto alias = prefix ? out.substr(key.length() + 1) : out.substr(out.length() - key.length() - 1);
+  auto [prefix, rank, symmetry, type] = _output_property_restriction.at(key);
+  auto alias = prefix ? out.substr(key.length() + 1)                    // remove prefix
+                      : out.substr(0, out.length() - key.length() - 1); // remove suffix
   auto candidates =
-      query(_output_properties).alias(alias).rank(q_rank).symmetry(q_symmetry).type(q_type).get();
+      query(_output_properties).alias(alias).rank(rank).symmetry(symmetry).type(type).get();
 
   // If no candidate is found, treat the alias as the name of a custom tensor property
   if (candidates.empty())
-    prop_name = q_alias;
-  else
-  {
-    mooseAssert(candidates.size() == 1,
-                "Internal error: Requested output yields multiple candidates.");
-    prop_name = candidates[0].name;
-  }
+    return alias;
+
+  mooseAssert(candidates.size() == 1,
+              "Internal error: Requested output yields multiple candidates.");
+  return candidates[0].name;
 }

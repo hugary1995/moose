@@ -11,7 +11,7 @@
 
 #include <vector>
 
-namespace SolidMechanicsMaterialProperty
+namespace SolidMechanics
 {
 enum class Rank : int
 {
@@ -43,7 +43,7 @@ Rank operator|(Rank a, Rank b);
 Symmetry operator|(Symmetry a, Symmetry b);
 Type operator|(Type a, Type b);
 
-struct Registry
+struct PropertyRegistry
 {
   /// The material property name declared inside the material object
   const std::string name;
@@ -64,7 +64,7 @@ struct Registry
 class QueryResult
 {
 public:
-  QueryResult(const std::vector<Registry> & candidates) : _candidates(candidates) {}
+  QueryResult(const std::vector<PropertyRegistry> & candidates) : _candidates(candidates) {}
 
   QueryResult name(const std::string &);
   QueryResult alias(const std::string &);
@@ -72,7 +72,7 @@ public:
   QueryResult symmetry(const Symmetry);
   QueryResult type(const Type);
 
-  std::vector<Registry> get() const;
+  std::vector<PropertyRegistry> get() const;
 
 protected:
   /// @{ Query criteria
@@ -84,8 +84,8 @@ protected:
   /// @}
 
 private:
-  const std::vector<Registry> & _candidates;
+  const std::vector<PropertyRegistry> & _candidates;
 };
 
-QueryResult query(const std::vector<Registry> & candidates);
+QueryResult query(const std::vector<PropertyRegistry> & candidates);
 }

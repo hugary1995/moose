@@ -40,7 +40,7 @@
   [all]
     add_variables = true
     strain = FINITE
-    generate_output = 'vonmises_stress effective_alt_total_strain'
+    generate_output = 'vonmises_stress hydrostatic_alt_total_strain'
   []
 []
 

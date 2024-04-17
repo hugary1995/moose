@@ -99,7 +99,8 @@ RankTwoInvariantTempl<is_ad>::computeQpProperties()
     }
 
     default:
-      mooseError("Not a recognized invariant for RankTwoInvariant");
+      mooseError("Not a recognized invariant for RankTwoInvariant: ",
+                 getParam<MooseEnum>("invariant"));
   }
 }
 

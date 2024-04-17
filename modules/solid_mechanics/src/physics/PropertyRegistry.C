@@ -7,10 +7,10 @@
 //* Licensed under LGPL 2.1, please see LICENSE for details
 //* https://www.gnu.org/licenses/lgpl-2.1.html
 
-#include "SolidMechanicsMaterialProperty.h"
+#include "PropertyRegistry.h"
 
-using namespace SolidMechanicsMaterialProperty;
-
+namespace SolidMechanics
+{
 Rank
 operator|(Rank a, Rank b)
 {
@@ -69,10 +69,10 @@ QueryResult::type(const Type t)
   return new_query;
 }
 
-std::vector<Registry>
+std::vector<PropertyRegistry>
 QueryResult::get() const
 {
-  std::vector<Registry> result;
+  std::vector<PropertyRegistry> result;
 
   for (const auto & candidate : _candidates)
   {
@@ -80,11 +80,11 @@ QueryResult::get() const
       continue;
     if (!_alias.empty() && candidate.alias != _alias)
       continue;
-    if (_rank | candidate.rank != _rank)
+    if ((_rank | candidate.rank) != _rank)
       continue;
-    if (_symmetry | candidate.symmetry != _symmetry)
+    if ((_symmetry | candidate.symmetry) != _symmetry)
       continue;
-    if (_type | candidate.type != _type)
+    if ((_type | candidate.type) != _type)
       continue;
     result.push_back(candidate);
   }
@@ -93,7 +93,8 @@ QueryResult::get() const
 }
 
 QueryResult
-query(const std::vector<Registry> & candidates)
+query(const std::vector<PropertyRegistry> & candidates)
 {
   return QueryResult(candidates);
+}
 }

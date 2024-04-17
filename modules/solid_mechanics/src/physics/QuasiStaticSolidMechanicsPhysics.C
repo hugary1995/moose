@@ -666,29 +666,29 @@ QuasiStaticSolidMechanicsPhysics::actOutputMatProp()
 {
   for (const auto & out : _generate_output)
   {
-    if (addOutputMatPropRankTwo(
+    if (addOutputMatPropRankTwo<MooseEnum>(
             out, "RankTwoInvariant", {"invariant"}, _output_r2_invariant_params, _base_name))
       continue;
     else if (addOutputMatPropRankTwo(
                  out, "RankTwoDirectionalComponent", {}, _output_r2_directional_params, _base_name))
       continue;
-    else if (addOutputMatPropRankTwo(out,
-                                     "RankTwoCylindricalComponent",
-                                     {"cylindrical_component"},
-                                     _output_r2_cylindrical_params,
-                                     _base_name))
+    else if (addOutputMatPropRankTwo<MooseEnum>(out,
+                                                "RankTwoCylindricalComponent",
+                                                {"cylindrical_component"},
+                                                _output_r2_cylindrical_params,
+                                                _base_name))
       continue;
-    else if (addOutputMatPropRankTwo(out,
-                                     "RankTwoSphericalComponent",
-                                     {"spherical_component"},
-                                     _output_r2_spherical_params,
-                                     _base_name))
+    else if (addOutputMatPropRankTwo<MooseEnum>(out,
+                                                "RankTwoSphericalComponent",
+                                                {"spherical_component"},
+                                                _output_r2_spherical_params,
+                                                _base_name))
       continue;
-    else if (addOutputMatPropRankTwo(out,
-                                     "RankTwoCartesianComponent",
-                                     {"index_i", "index_j"},
-                                     _output_r2_cartesian_params,
-                                     _base_name))
+    else if (addOutputMatPropRankTwo<unsigned int, unsigned int>(out,
+                                                                 "RankTwoCartesianComponent",
+                                                                 {"index_i", "index_j"},
+                                                                 _output_r2_cartesian_params,
+                                                                 _base_name))
       continue;
     else
       paramError("generate_output", "Unable to add output Material for '", out, "'");
