@@ -14,6 +14,7 @@
 #include "RankFourTensor.h"
 #include "RotationTensor.h"
 #include "DerivativeMaterialInterface.h"
+#include "SolidMechanicsPropertyRegistry.h"
 
 /**
  * ComputeStrainBase is the base class for strain tensors

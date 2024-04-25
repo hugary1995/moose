@@ -18,6 +18,11 @@
 
 registerMooseObject("SolidMechanicsApp", ComputeMultiPlasticityStress);
 
+registerSolidMechanicsProperty(plastic_strain,
+                               SolidMechanics::Rank::TWO,
+                               SolidMechanics::Symmetry::POSSIBLY_SYMMETRIC,
+                               SolidMechanics::Type::STRAIN_LIKE);
+
 InputParameters
 ComputeMultiPlasticityStress::validParams()
 {

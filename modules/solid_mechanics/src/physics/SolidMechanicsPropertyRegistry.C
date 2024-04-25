@@ -7,7 +7,7 @@
 //* Licensed under LGPL 2.1, please see LICENSE for details
 //* https://www.gnu.org/licenses/lgpl-2.1.html
 
-#include "PropertyRegistry.h"
+#include "SolidMechanicsPropertyRegistry.h"
 
 namespace SolidMechanics
 {
@@ -29,52 +29,89 @@ operator|(Symmetry a, Symmetry b)
   return static_cast<Symmetry>(static_cast<int>(a) | static_cast<int>(b));
 }
 
-QueryResult
-QueryResult::name(const std::string & n)
+PropertyRegistry &
+PropertyRegistry::get()
+{
+  static PropertyRegistry property_registry_singleton;
+  return property_registry_singleton;
+}
+
+char
+PropertyRegistry::add(const PropertyRegistryEntry & entry)
+{
+  get()._data.push_back(entry);
+  return 0;
+}
+
+std::vector<PropertyRegistryEntry>
+PropertyRegistry::data()
+{
+  return get()._data;
+}
+
+PropertyQuery
+PropertyRegistry::query()
+{
+  return PropertyQuery();
+}
+
+PropertyQuery
+PropertyQuery::filter(const PropertyRegistryEntry & e)
+{
+  return this->name(e.name).alias(e.alias).rank(e.rank).symmetry(e.symmetry).type(e.type);
+}
+
+PropertyQuery
+PropertyQuery::name(const std::string & n)
 {
   auto new_query = *this;
-  new_query._name = n;
+  if (!n.empty())
+    new_query._name = n;
   return new_query;
 }
 
-QueryResult
-QueryResult::alias(const std::string & a)
+PropertyQuery
+PropertyQuery::alias(const std::string & a)
 {
   auto new_query = *this;
-  new_query._alias = a;
+  if (!a.empty())
+    new_query._alias = a;
   return new_query;
 }
 
-QueryResult
-QueryResult::rank(const Rank r)
+PropertyQuery
+PropertyQuery::rank(const Rank r)
 {
   auto new_query = *this;
-  new_query._rank = r;
+  if (r != Rank::ANY)
+    new_query._rank = r;
   return new_query;
 }
 
-QueryResult
-QueryResult::symmetry(const Symmetry s)
+PropertyQuery
+PropertyQuery::symmetry(const Symmetry s)
 {
   auto new_query = *this;
-  new_query._symmetry = s;
+  if (s != Symmetry::ANY)
+    new_query._symmetry = s;
   return new_query;
 }
 
-QueryResult
-QueryResult::type(const Type t)
+PropertyQuery
+PropertyQuery::type(const Type t)
 {
   auto new_query = *this;
-  new_query._type = t;
+  if (t != Type::ANY)
+    new_query._type = t;
   return new_query;
 }
 
-std::vector<PropertyRegistry>
-QueryResult::get() const
+std::vector<PropertyRegistryEntry>
+PropertyQuery::get() const
 {
-  std::vector<PropertyRegistry> result;
+  std::vector<PropertyRegistryEntry> result;
 
-  for (const auto & candidate : _candidates)
+  for (const auto & candidate : PropertyRegistry::data())
   {
     if (!_name.empty() && candidate.name != _name)
       continue;
@@ -86,15 +123,10 @@ QueryResult::get() const
       continue;
     if ((_type | candidate.type) != _type)
       continue;
+
     result.push_back(candidate);
   }
 
   return result;
-}
-
-QueryResult
-query(const std::vector<PropertyRegistry> & candidates)
-{
-  return QueryResult(candidates);
 }
 }

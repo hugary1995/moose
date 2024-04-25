@@ -8,7 +8,7 @@
 //* https://www.gnu.org/licenses/lgpl-2.1.html
 
 #include "SolidMechanicsPhysicsCommon.h"
-#include "SolidMechanicsPhysicsBase.h"
+#include "SolidMechanicsPhysicsSubBlock.h"
 #include "ActionWarehouse.h"
 
 registerMooseAction("SolidMechanicsApp", SolidMechanicsPhysicsCommon, "meta_action");
@@ -16,8 +16,9 @@ registerMooseAction("SolidMechanicsApp", SolidMechanicsPhysicsCommon, "meta_acti
 InputParameters
 SolidMechanicsPhysicsCommon::validParams()
 {
-  InputParameters params = SolidMechanicsPhysicsBase::validParams();
-  params.addClassDescription("Store common solid mechanics parameters");
+  InputParameters params = Action::validParams();
+  params += SolidMechanicsPhysicsCommonParameters::validParams();
+  params.suppressParameter<bool>("use_displaced_mesh");
   return params;
 }
 
@@ -29,8 +30,8 @@ SolidMechanicsPhysicsCommon::SolidMechanicsPhysicsCommon(const InputParameters &
 void
 SolidMechanicsPhysicsCommon::act()
 {
-  // Check if sub-blocks block are found which will use the common parameters.
-  auto actions = _awh.getActions<SolidMechanicsPhysicsBase>();
+  // Check if sub-blocks are found which will use the common parameters.
+  auto actions = _awh.getActions<SolidMechanicsPhysicsSubBlock>();
   if (actions.empty())
     mooseWarning("Common parameters for the solid mechanics physics are supplied, but not used in ",
                  parameters().blockLocation());

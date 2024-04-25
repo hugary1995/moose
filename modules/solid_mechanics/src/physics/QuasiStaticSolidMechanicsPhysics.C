@@ -12,7 +12,7 @@
 #include "Factory.h"
 #include "MooseMesh.h"
 #include "MooseObjectAction.h"
-#include "QuasiStaticSolidMechanicsPhysics.h"
+#include "QuasiStaticSolidMechanicsPhysicsBase.h"
 #include "Material.h"
 #include "BlockRestrictable.h"
 #include "AddVariableAction.h"
@@ -47,20 +47,22 @@ registerMooseAction("SolidMechanicsApp", QuasiStaticSolidMechanicsPhysics, "add_
 registerMooseAction("SolidMechanicsApp", QuasiStaticSolidMechanicsPhysics, "add_user_object");
 
 InputParameters
-QuasiStaticSolidMechanicsPhysics::validParams()
+QuasiStaticSolidMechanicsPhysicsBase::validParams()
 {
   InputParameters params = SolidMechanicsPhysicsBase::validParams();
-  params.addClassDescription("Set up stress divergence kernels with coordinate system aware logic");
 
-  // parameters specified here only appear in the input file sub-blocks of the
-  // Master action, not in the common parameters area
+  /////////////////////////////////////////////////////////////////////////////
+  // Parameters common to the old and the new systems
+  /////////////////////////////////////////////////////////////////////////////
+
+  // Block restriction
   params.addParam<std::vector<SubdomainName>>("block",
                                               {},
-                                              "The list of ids of the blocks (subdomain) "
-                                              "that the stress divergence kernels will be "
-                                              "applied to");
+                                              "The list of ids of the blocks (subdomain) that the "
+                                              "stress divergence kernels will be applied to");
   params.addParamNamesToGroup("block", "Advanced");
 
+  // Output
   params.addParam<MultiMooseEnum>("additional_generate_output",
                                   SolidMechanicsPhysicsBase::outputProperties(),
                                   "Add scalar quantity output for stress and/or strain (will be "
@@ -69,173 +71,58 @@ QuasiStaticSolidMechanicsPhysics::validParams()
       "additional_material_output_order",
       SolidMechanicsPhysicsBase::materialOutputOrders(),
       "Specifies the order of the FE shape function to use for this variable.");
-
   params.addParam<MultiMooseEnum>(
       "additional_material_output_family",
       SolidMechanicsPhysicsBase::materialOutputFamilies(),
       "Specifies the family of FE shape functions to use for this variable.");
-
   params.addParamNamesToGroup("additional_generate_output additional_material_output_order "
                               "additional_material_output_family",
                               "Output");
-  params.addParam<std::string>(
-      "strain_base_name",
-      "The base name used for the strain. If not provided, it will be set equal to base_name");
-  params.addParam<std::vector<TagName>>(
-      "extra_vector_tags",
-      "The tag names for extra vectors that residual data should be saved into");
-  params.addParam<std::vector<TagName>>("absolute_value_vector_tags",
-                                        "The tag names for extra vectors that the absolute value "
-                                        "of the residual should be accumulated into");
-  params.addParam<Real>("scaling", "The scaling to apply to the displacement variables");
-  params.addParam<Point>(
-      "cylindrical_axis_point1",
-      "Starting point for direction of axis of rotation for cylindrical stress/strain.");
-  params.addParam<Point>(
-      "cylindrical_axis_point2",
-      "Ending point for direction of axis of rotation for cylindrical stress/strain.");
-  params.addParam<Point>("spherical_center_point",
-                         "Center point of the spherical coordinate system.");
-  params.addParam<Point>("direction", "Direction stress/strain is calculated in");
-  params.addParam<bool>("automatic_eigenstrain_names",
-                        false,
-                        "Collects all material eigenstrains and passes to required strain "
-                        "calculator within TMA internally.");
+
+  /////////////////////////////////////////////////////////////////////////////
+  // Parameters specific to the old system
+  /////////////////////////////////////////////////////////////////////////////
+
+  /////////////////////////////////////////////////////////////////////////////
+  // Parameters specific to the new system
+  /////////////////////////////////////////////////////////////////////////////
 
   return params;
 }
 
-QuasiStaticSolidMechanicsPhysics::QuasiStaticSolidMechanicsPhysics(const InputParameters & params)
+QuasiStaticSolidMechanicsPhysicsBase::QuasiStaticSolidMechanicsPhysicsBase(
+    const InputParameters & params)
   : SolidMechanicsPhysicsBase(params),
-    _displacements(getParam<std::vector<VariableName>>("displacements")),
-    _ndisp(_displacements.size()),
-    _coupled_displacements(_ndisp),
-    _save_in(getParam<std::vector<AuxVariableName>>("save_in")),
-    _diag_save_in(getParam<std::vector<AuxVariableName>>("diag_save_in")),
     _subdomain_names(getParam<std::vector<SubdomainName>>("block")),
-    _subdomain_ids(),
-    _strain(getParam<MooseEnum>("strain").getEnum<Strain>()),
-    _planar_formulation(getParam<MooseEnum>("planar_formulation").getEnum<PlanarFormulation>()),
-    _out_of_plane_direction(
-        getParam<MooseEnum>("out_of_plane_direction").getEnum<OutOfPlaneDirection>()),
-    _base_name(isParamValid("base_name") ? getParam<std::string>("base_name") + "_" : ""),
-    _material_output_order(getParam<MultiMooseEnum>("material_output_order")),
-    _material_output_family(getParam<MultiMooseEnum>("material_output_family")),
-    _cylindrical_axis_point1_valid(params.isParamSetByUser("cylindrical_axis_point1")),
-    _cylindrical_axis_point2_valid(params.isParamSetByUser("cylindrical_axis_point2")),
-    _direction_valid(params.isParamSetByUser("direction")),
-    _verbose(getParam<bool>("verbose")),
-    _spherical_center_point_valid(params.isParamSetByUser("spherical_center_point")),
-    _auto_eigenstrain(getParam<bool>("automatic_eigenstrain_names"))
+    _subdomain_ids()
 {
-  // determine if incremental strains are to be used
-  if (isParamValid("incremental"))
-  {
-    const bool incremental = getParam<bool>("incremental");
-    if (!incremental && _strain == Strain::Small)
-      _strain_and_increment = StrainAndIncrement::SmallTotal;
-    else if (!incremental && _strain == Strain::Finite)
-      _strain_and_increment = StrainAndIncrement::FiniteTotal;
-    else if (incremental && _strain == Strain::Small)
-      _strain_and_increment = StrainAndIncrement::SmallIncremental;
-    else if (incremental && _strain == Strain::Finite)
-      _strain_and_increment = StrainAndIncrement::FiniteIncremental;
-    else
-      mooseError("Internal error");
-  }
-  else
-  {
-    if (_strain == Strain::Small)
-    {
-      _strain_and_increment = StrainAndIncrement::SmallTotal;
-      mooseInfo("SolidMechanics Action: selecting 'total small strain' formulation. Use "
-                "`incremental = true` to select 'incremental small strain' instead.");
-    }
-    else if (_strain == Strain::Finite)
-    {
-      _strain_and_increment = StrainAndIncrement::FiniteIncremental;
-      mooseInfo("SolidMechanics Action: selecting 'incremental finite strain' formulation.");
-    }
-    else
-      mooseError("Internal error");
-  }
-
-  // determine if displaced mesh is to be used
-  _use_displaced_mesh = (_strain == Strain::Finite);
-  if (params.isParamSetByUser("use_displaced_mesh"))
-  {
-    bool use_displaced_mesh_param = getParam<bool>("use_displaced_mesh");
-    if (use_displaced_mesh_param != _use_displaced_mesh && params.isParamSetByUser("strain"))
-      mooseError("Wrong combination of use displaced mesh and strain model");
-    _use_displaced_mesh = use_displaced_mesh_param;
-  }
-
-  // convert vector of VariableName to vector of VariableName
-  for (unsigned int i = 0; i < _ndisp; ++i)
-    _coupled_displacements[i] = _displacements[i];
-
-  if (_save_in.size() != 0 && _save_in.size() != _ndisp)
-    mooseError("Number of save_in variables should equal to the number of displacement variables ",
-               _ndisp);
-
-  if (_diag_save_in.size() != 0 && _diag_save_in.size() != _ndisp)
-    mooseError(
-        "Number of diag_save_in variables should equal to the number of displacement variables ",
-        _ndisp);
-
-  // plane strain consistency check
-  if (_planar_formulation != PlanarFormulation::None)
-  {
-    if (params.isParamSetByUser("out_of_plane_strain") &&
-        _planar_formulation != PlanarFormulation::WeakPlaneStress)
-      mooseError(
-          "out_of_plane_strain should only be specified with planar_formulation=WEAK_PLANE_STRESS");
-    else if (!params.isParamSetByUser("out_of_plane_strain") &&
-             _planar_formulation == PlanarFormulation::WeakPlaneStress)
-      mooseError("out_of_plane_strain must be specified with planar_formulation=WEAK_PLANE_STRESS");
-  }
-
-  // convert output variable names to lower case
-  for (const auto & out : getParam<MultiMooseEnum>("generate_output"))
-  {
-    std::string lower(out);
-    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-    _generate_output.push_back(lower);
-  }
-
-  if (!_generate_output.empty())
-    verifyOrderAndFamilyOutputs();
-
-  // Error if volumetric locking correction is true for 1D problems
-  if (_ndisp == 1 && getParam<bool>("volumetric_locking_correction"))
-    mooseError("Volumetric locking correction should be set to false for 1D problems.");
-
-  if (!getParam<bool>("add_variables") && params.isParamSetByUser("scaling"))
-    paramError("scaling",
-               "The scaling parameter has no effect unless add_variables is set to true. Did you "
-               "mean to set 'add_variables = true'?");
-
-  // Get cylindrical axis points if set by user
-  if (_cylindrical_axis_point1_valid && _cylindrical_axis_point2_valid)
-  {
-    _cylindrical_axis_point1 = getParam<Point>("cylindrical_axis_point1");
-    _cylindrical_axis_point2 = getParam<Point>("cylindrical_axis_point2");
-  }
-
-  // Get spherical center point if set by user
-  if (_spherical_center_point_valid)
-    _spherical_center_point = getParam<Point>("spherical_center_point");
-
-  // Get direction for tensor component if set by user
-  if (_direction_valid)
-    _direction = getParam<Point>("direction");
-
-  // Get eigenstrain names if passed by user
-  _eigenstrain_names = getParam<std::vector<MaterialPropertyName>>("eigenstrain_names");
 }
 
 void
-QuasiStaticSolidMechanicsPhysics::act()
+QuasiStaticSolidMechanicsPhysicsBase::modifyParameters()
+{
+  SolidMechanicsPhysicsBase::modifyParameters();
+
+  // Append additional output parameters
+  mergeMultiMooseEnum("generate_output", "additional_generate_output");
+  mergeMultiMooseEnum("material_output_order", "additional_material_output_order");
+  mergeMultiMooseEnum("material_output_family", "additional_material_output_family");
+}
+
+void
+QuasiStaticSolidMechanicsPhysicsBase::mergeMultiMooseEnum(const std::string & dest,
+                                                          const std::string & src)
+{
+  if (!isParamValid(src))
+    return;
+
+  auto dest_enum = getParam<MultiMooseEnum>(dest);
+  dest_enum.push_back(getParam<MultiMooseEnum>(src));
+  const_cast<InputParameters *>(&parameters())->set<MultiMooseEnum>(dest) = dest_enum;
+}
+
+void
+QuasiStaticSolidMechanicsPhysicsBase::act()
 {
   std::string ad_prepend = "";
   if (_use_ad)
@@ -244,7 +131,7 @@ QuasiStaticSolidMechanicsPhysics::act()
   // Consistency checks across subdomains
   actSubdomainChecks();
 
-  // Gather info from all other QuasiStaticSolidMechanicsPhysics
+  // Gather info from all other QuasiStaticSolidMechanicsPhysicsBase
   actGatherActionParameters();
 
   // Deal with the optional AuxVariable based tensor quantity output
@@ -371,7 +258,7 @@ QuasiStaticSolidMechanicsPhysics::act()
 }
 
 void
-QuasiStaticSolidMechanicsPhysics::actSubdomainChecks()
+QuasiStaticSolidMechanicsPhysicsBase::actSubdomainChecks()
 {
   // Do the coordinate system check only once the problem is created
   if (_current_task == "setup_mesh_complete")
@@ -414,7 +301,7 @@ QuasiStaticSolidMechanicsPhysics::actSubdomainChecks()
 }
 
 void
-QuasiStaticSolidMechanicsPhysics::actOutputGeneration()
+QuasiStaticSolidMechanicsPhysicsBase::actOutputGeneration()
 {
   if (_current_task == "add_material")
     actOutputMatProp();
@@ -495,7 +382,7 @@ QuasiStaticSolidMechanicsPhysics::actOutputGeneration()
 }
 
 void
-QuasiStaticSolidMechanicsPhysics::actEigenstrainNames()
+QuasiStaticSolidMechanicsPhysicsBase::actEigenstrainNames()
 {
   // Create containers for collecting blockIDs and eigenstrain names from materials
   std::map<std::string, std::set<SubdomainID>> material_eigenstrain_map;
@@ -612,57 +499,7 @@ QuasiStaticSolidMechanicsPhysics::actEigenstrainNames()
 }
 
 void
-QuasiStaticSolidMechanicsPhysics::verifyOrderAndFamilyOutputs()
-{
-  // Ensure material output order and family vectors are same size as generate output
-
-  // check number of supplied orders and families
-  if (_material_output_order.size() > 1 && _material_output_order.size() < _generate_output.size())
-    paramError("material_output_order",
-               "The number of orders assigned to material outputs must be: 0 to be assigned "
-               "CONSTANT; 1 to assign all outputs the same value, or the same size as the number "
-               "of generate outputs listed.");
-
-  if (_material_output_family.size() > 1 &&
-      _material_output_family.size() < _generate_output.size())
-    paramError("material_output_family",
-               "The number of families assigned to material outputs must be: 0 to be assigned "
-               "MONOMIAL; 1 to assign all outputs the same value, or the same size as the number "
-               "of generate outputs listed.");
-
-  // if no value was provided, chose the default CONSTANT
-  if (_material_output_order.size() == 0)
-    _material_output_order.push_back("CONSTANT");
-
-  // For only one order, make all orders the same magnitude
-  if (_material_output_order.size() == 1)
-    _material_output_order =
-        std::vector<std::string>(_generate_output.size(), _material_output_order[0]);
-
-  if (_verbose)
-    Moose::out << COLOR_CYAN << "*** Automatic applied material output orders ***"
-               << "\n"
-               << _name << ": " << Moose::stringify(_material_output_order) << "\n"
-               << COLOR_DEFAULT << std::flush;
-
-  // if no value was provided, chose the default MONOMIAL
-  if (_material_output_family.size() == 0)
-    _material_output_family.push_back("MONOMIAL");
-
-  // For only one family, make all families that value
-  if (_material_output_family.size() == 1)
-    _material_output_family =
-        std::vector<std::string>(_generate_output.size(), _material_output_family[0]);
-
-  if (_verbose)
-    Moose::out << COLOR_CYAN << "*** Automatic applied material output families ***"
-               << "\n"
-               << _name << ": " << Moose::stringify(_material_output_family) << "\n"
-               << COLOR_DEFAULT << std::flush;
-}
-
-void
-QuasiStaticSolidMechanicsPhysics::actOutputMatProp()
+QuasiStaticSolidMechanicsPhysicsBase::actOutputMatProp()
 {
   for (const auto & out : _generate_output)
   {
@@ -696,12 +533,12 @@ QuasiStaticSolidMechanicsPhysics::actOutputMatProp()
 }
 
 void
-QuasiStaticSolidMechanicsPhysics::actGatherActionParameters()
+QuasiStaticSolidMechanicsPhysicsBase::actGatherActionParameters()
 {
   // Gather info about all other solid mechanics physics when we add variables
   if (_current_task == "validate_coordinate_systems" && getParam<bool>("add_variables"))
   {
-    auto actions = _awh.getActions<QuasiStaticSolidMechanicsPhysics>();
+    auto actions = _awh.getActions<QuasiStaticSolidMechanicsPhysicsBase>();
     for (const auto & action : actions)
     {
       const auto size_before = _subdomain_id_union.size();
@@ -722,7 +559,7 @@ QuasiStaticSolidMechanicsPhysics::actGatherActionParameters()
 }
 
 void
-QuasiStaticSolidMechanicsPhysics::actStrain()
+QuasiStaticSolidMechanicsPhysicsBase::actStrain()
 {
   std::string ad_prepend = _use_ad ? "AD" : "";
 
@@ -787,9 +624,6 @@ QuasiStaticSolidMechanicsPhysics::actStrain()
       parameters(),
       {"displacements", "use_displaced_mesh", "out_of_plane_strain", "scalar_out_of_plane_strain"});
 
-  if (isParamValid("strain_base_name"))
-    params.set<std::string>("base_name") = getParam<std::string>("strain_base_name");
-
   params.set<std::vector<VariableName>>("displacements") = _coupled_displacements;
   params.set<bool>("use_displaced_mesh") = false;
 
@@ -807,7 +641,7 @@ QuasiStaticSolidMechanicsPhysics::actStrain()
 }
 
 std::string
-QuasiStaticSolidMechanicsPhysics::getKernelType()
+QuasiStaticSolidMechanicsPhysicsBase::getKernelType()
 {
   std::map<Moose::CoordinateSystemType, std::string> type_map = {
       {Moose::COORD_XYZ, "StressDivergenceTensors"},
@@ -823,7 +657,7 @@ QuasiStaticSolidMechanicsPhysics::getKernelType()
 }
 
 InputParameters
-QuasiStaticSolidMechanicsPhysics::getKernelParameters(std::string type)
+QuasiStaticSolidMechanicsPhysicsBase::getKernelParameters(std::string type)
 {
   InputParameters params = _factory.getValidParams(type);
 

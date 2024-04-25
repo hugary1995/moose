@@ -14,6 +14,11 @@
 #include "DamageBase.h"
 #include "libmesh/int_range.h"
 
+registerSolidMechanicsProperty(combined_inelastic_strain,
+                               SolidMechanics::Rank::TWO,
+                               SolidMechanics::Symmetry::POSSIBLY_SYMMETRIC,
+                               SolidMechanics::Type::STRAIN_LIKE);
+
 InputParameters
 ComputeMultipleInelasticStressBase::validParams()
 {

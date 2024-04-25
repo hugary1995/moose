@@ -9,6 +9,16 @@
 
 #include "ComputeLagrangianStressBase.h"
 
+registerSolidMechanicsProperty(cauchy_stress,
+                               SolidMechanics::Rank::TWO,
+                               SolidMechanics::Symmetry::POSSIBLY_SYMMETRIC,
+                               SolidMechanics::Type::STRESS_LIKE);
+
+registerSolidMechanicsProperty(pk1_stress,
+                               SolidMechanics::Rank::TWO,
+                               SolidMechanics::Symmetry::NONE,
+                               SolidMechanics::Type::STRESS_LIKE);
+
 InputParameters
 ComputeLagrangianStressBase::validParams()
 {

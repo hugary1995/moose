@@ -9,6 +9,16 @@
 
 #include "RadialReturnCreepStressUpdateBase.h"
 
+registerSolidMechanicsProperty(creep_strain,
+                               SolidMechanics::Rank::TWO,
+                               SolidMechanics::Symmetry::POSSIBLY_SYMMETRIC,
+                               SolidMechanics::Type::STRAIN_LIKE);
+
+registerSolidMechanicsProperty(effective_creep_strain,
+                               SolidMechanics::Rank::ZERO,
+                               SolidMechanics::Symmetry::NONE,
+                               SolidMechanics::Type::STRAIN_LIKE);
+
 template <bool is_ad>
 InputParameters
 RadialReturnCreepStressUpdateBaseTempl<is_ad>::validParams()

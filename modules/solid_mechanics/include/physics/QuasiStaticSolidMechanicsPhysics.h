@@ -12,41 +12,31 @@
 #include "SolidMechanicsPhysicsBase.h"
 #include "libmesh/point.h"
 
+/**
+ * The action associated with [Physics/SolidMechanics/QuasiStatic/*]
+ */
 class QuasiStaticSolidMechanicsPhysics : public SolidMechanicsPhysicsBase
 {
 public:
   static InputParameters validParams();
 
-  QuasiStaticSolidMechanicsPhysics(const InputParameters & params);
+  QuasiStaticSolidMechanicsPhysicsBase(const InputParameters & params);
 
   virtual void act();
 
 protected:
+  virtual void modifyParameters() override;
+  void mergeMultiMooseEnum(const std::string & dest, const std::string & src);
+
   void actSubdomainChecks();
   void actOutputGeneration();
   void actEigenstrainNames();
   void actOutputMatProp();
   void actGatherActionParameters();
-  void verifyOrderAndFamilyOutputs();
   void actStrain();
 
   virtual std::string getKernelType();
   virtual InputParameters getKernelParameters(std::string type);
-
-  ///@{ displacement variables
-  std::vector<VariableName> _displacements;
-
-  /// Number of displacement variables
-  unsigned int _ndisp;
-
-  /// Coupled displacement variables
-  std::vector<VariableName> _coupled_displacements;
-  ///@}
-
-  ///@{ residual debugging
-  std::vector<AuxVariableName> _save_in;
-  std::vector<AuxVariableName> _diag_save_in;
-  ///@}
 
   Moose::CoordinateSystemType _coord_system;
 
@@ -58,71 +48,4 @@ protected:
 
   /// set generated from the combined block restrictions of all SolidMechanics/Master action blocks
   std::set<SubdomainID> _subdomain_id_union;
-
-  /// strain formulation
-  enum class Strain
-  {
-    Small,
-    Finite
-  } _strain;
-
-  /// strain formulation
-  enum class StrainAndIncrement
-  {
-    SmallTotal,
-    FiniteTotal,
-    SmallIncremental,
-    FiniteIncremental
-  } _strain_and_increment;
-
-  /// use an out of plane stress/strain formulation
-  enum class PlanarFormulation
-  {
-    None,
-    WeakPlaneStress,
-    PlaneStrain,
-    GeneralizedPlaneStrain,
-  } _planar_formulation;
-
-  enum class OutOfPlaneDirection
-  {
-    x,
-    y,
-    z
-  };
-
-  const OutOfPlaneDirection _out_of_plane_direction;
-
-  /// base name for the current master action block
-  const std::string _base_name;
-
-  /// use displaced mesh (true unless _strain is SMALL)
-  bool _use_displaced_mesh;
-
-  /// output materials to generate scalar stress/strain tensor quantities
-  std::vector<std::string> _generate_output;
-  MultiMooseEnum _material_output_order;
-  MultiMooseEnum _material_output_family;
-
-  /// booleans used to determine if cylindrical axis points are passed
-  bool _cylindrical_axis_point1_valid;
-  bool _cylindrical_axis_point2_valid;
-  bool _direction_valid;
-  bool _verbose;
-
-  /// points used to determine axis of rotation for cylindrical stress/strain quantities
-  Point _cylindrical_axis_point1;
-  Point _cylindrical_axis_point2;
-  Point _direction;
-
-  /// booleans used to determine if spherical center point is passed
-  bool _spherical_center_point_valid;
-
-  /// center point for spherical stress/strain quantities
-  Point _spherical_center_point;
-
-  /// automatically gather names of eigenstrain tensors provided by simulation objects
-  const bool _auto_eigenstrain;
-
-  std::vector<MaterialPropertyName> _eigenstrain_names;
 };

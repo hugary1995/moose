@@ -14,6 +14,7 @@
 #include "RankTwoTensorForward.h"
 #include "StabilizationUtils.h"
 #include "GradientOperator.h"
+#include "SolidMechanicsPropertyRegistry.h"
 
 /// Calculate strains to use the MOOSE materials with the Lagrangian kernels
 ///

@@ -11,6 +11,16 @@
 #include "ComputeElasticityTensorBase.h"
 #include "Function.h"
 
+registerSolidMechanicsProperty(stress,
+                               SolidMechanics::Rank::TWO,
+                               SolidMechanics::Symmetry::POSSIBLY_SYMMETRIC,
+                               SolidMechanics::Type::STRESS_LIKE);
+
+registerSolidMechanicsProperty(elastic_strain,
+                               SolidMechanics::Rank::TWO,
+                               SolidMechanics::Symmetry::POSSIBLY_SYMMETRIC,
+                               SolidMechanics::Type::STRAIN_LIKE);
+
 InputParameters
 ComputeGeneralStressBase::validParams()
 {

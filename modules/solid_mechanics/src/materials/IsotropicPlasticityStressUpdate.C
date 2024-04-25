@@ -15,6 +15,11 @@
 registerMooseObject("SolidMechanicsApp", ADIsotropicPlasticityStressUpdate);
 registerMooseObject("SolidMechanicsApp", IsotropicPlasticityStressUpdate);
 
+registerSolidMechanicsProperty(effective_plastic_strain,
+                               SolidMechanics::Rank::ZERO,
+                               SolidMechanics::Symmetry::NONE,
+                               SolidMechanics::Type::STRAIN_LIKE);
+
 template <bool is_ad>
 InputParameters
 IsotropicPlasticityStressUpdateTempl<is_ad>::validParams()

@@ -14,6 +14,7 @@
 #include "RankFourTensor.h"
 #include "RotationTensor.h"
 #include "DerivativeMaterialInterface.h"
+#include "SolidMechanicsPropertyRegistry.h"
 
 /**
  * ComputeGeneralStressBase is the direct base class for stress calculator materials that may

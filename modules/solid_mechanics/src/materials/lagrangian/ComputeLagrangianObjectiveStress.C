@@ -11,6 +11,11 @@
 
 #include "FactorizedRankTwoTensor.h"
 
+registerSolidMechanicsProperty(small_stress,
+                               SolidMechanics::Rank::TWO,
+                               SolidMechanics::Symmetry::SYMMETRIC,
+                               SolidMechanics::Type::STRESS_LIKE);
+
 InputParameters
 ComputeLagrangianObjectiveStress::validParams()
 {

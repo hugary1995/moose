@@ -9,6 +9,11 @@
 
 #include "ComputeLagrangianStressPK2.h"
 
+registerSolidMechanicsProperty(pk2_stress,
+                               SolidMechanics::Rank::TWO,
+                               SolidMechanics::Symmetry::POSSIBLY_SYMMETRIC,
+                               SolidMechanics::Type::STRESS_LIKE);
+
 InputParameters
 ComputeLagrangianStressPK2::validParams()
 {

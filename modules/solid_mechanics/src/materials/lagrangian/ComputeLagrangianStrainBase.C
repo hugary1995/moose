@@ -9,6 +9,22 @@
 
 #include "ComputeLagrangianStrain.h"
 
+registerSolidMechanicsPropertyAlias(total_strain,
+                                    strain,
+                                    SolidMechanics::Rank::TWO,
+                                    SolidMechanics::Symmetry::SYMMETRIC,
+                                    SolidMechanics::Type::STRAIN_LIKE);
+
+registerSolidMechanicsProperty(mechanical_strain,
+                               SolidMechanics::Rank::TWO,
+                               SolidMechanics::Symmetry::POSSIBLY_SYMMETRIC,
+                               SolidMechanics::Type::STRAIN_LIKE);
+
+registerSolidMechanicsProperty(deformation_gradient,
+                               SolidMechanics::Rank::TWO,
+                               SolidMechanics::Symmetry::NONE,
+                               SolidMechanics::Type::STRAIN_LIKE);
+
 template <class G>
 InputParameters
 ComputeLagrangianStrainBase<G>::baseParams()

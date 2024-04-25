@@ -12,6 +12,7 @@
 #include "Material.h"
 #include "RankTwoTensorForward.h"
 #include "RankFourTensorForward.h"
+#include "SolidMechanicsPropertyRegistry.h"
 
 /// Provide stresses in the form required for the Lagrangian kernels
 ///
