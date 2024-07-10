@@ -67,6 +67,7 @@
   [model]
     type = ExecuteNEML2Model
     model = model
+    inference_mode = false
     gather_uos = 'gather_a gather_b'
     execute_on = 'INITIAL TIMESTEP_BEGIN'
   []

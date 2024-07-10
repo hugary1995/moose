@@ -54,6 +54,11 @@ NEML2Action::validParams()
       "Device on which to evaluate the NEML2 model. The string supplied must follow the following "
       "schema: (cpu|cuda)[:<device-index>] where cpu or cuda specifies the device type, and "
       ":<device-index> optionally specifies a device index.");
+  params.addParam<bool>(
+      "inference_mode",
+      true,
+      "In inference mode, no function graph or gradient is computed, which speeds up model "
+      "evaluation. To use PyTorch AD, inference mode must be disabled.");
   return params;
 }
 
@@ -77,7 +82,8 @@ NEML2Action::NEML2Action(const InputParameters & parameters)
     _mname(getParam<std::string>("model")),
     _verbose(getParam<bool>("verbose")),
     _mode(getParam<MooseEnum>("mode")),
-    _device(getParam<std::string>("device"))
+    _device(getParam<std::string>("device")),
+    _inference_mode(getParam<bool>("inference_mode"))
 {
 }
 
@@ -93,7 +99,7 @@ NEML2Action::act()
 
     if (_verbose)
     {
-      auto & model = neml2::Factory::get_object<neml2::Model>("Models", _mname);
+      auto & model = neml2::get_model(_mname, _inference_mode, /*force_create=*/true);
 
       _console << COLOR_YELLOW << "*** BEGIN NEML2 INFO ***" << std::endl;
       _console << model << std::endl;

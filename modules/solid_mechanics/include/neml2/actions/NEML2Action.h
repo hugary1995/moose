@@ -44,5 +44,8 @@ protected:
 
   /// The device on which to evaluate the NEML2 model
   const torch::Device _device;
+
+  /// Inference mode
+  const bool _inference_mode;
 #endif
 };

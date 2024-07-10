@@ -59,6 +59,9 @@ protected:
   neml2::VariableName getNEML2VariableName(const std::string & raw_str) const;
 
 private:
+  /// Inference mode
+  const bool _inference_mode;
+
   /// The NEML2 material model
   neml2::Model & _model;
 
@@ -85,6 +88,11 @@ NEML2ModelInterface<T>::validParams()
       ":<device-index> optionally specifies a device index. For example, device='cpu' sets the "
       "target compute device to be CPU, and device='cuda:1' sets the target compute device to be "
       "CUDA with device ID 1.");
+  params.addParam<bool>(
+      "inference_mode",
+      true,
+      "In inference mode, no function graph or gradient is computed, which speeds up model "
+      "evaluation. To use PyTorch AD, inference mode must be disabled.");
   return params;
 }
 
@@ -104,7 +112,10 @@ template <class T>
 template <typename... P>
 NEML2ModelInterface<T>::NEML2ModelInterface(const InputParameters & params, P &&... args)
   : T(params, args...),
-    _model(neml2::Factory::get_object<neml2::Model>("Models", params.get<std::string>("model"))),
+    _inference_mode(params.get<bool>("inference_mode")),
+    _model(neml2::get_model(params.get<std::string>("model"),
+                            /*inference_mode=*/_inference_mode,
+                            /*force_create=*/true)),
     _device(params.get<std::string>("device"))
 {
 }

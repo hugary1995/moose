@@ -84,6 +84,10 @@ ExecuteNEML2Model::ExecuteNEML2Model(const InputParameters & params)
 void
 ExecuteNEML2Model::initialSetup()
 {
+  // Initialize the model with a dummy batch shape of 1
+  initModel(1);
+  _in = neml2::LabeledVector::zeros(1, {&model().input_axis()});
+
   // deal with the (old) time input
   if (model().input_axis().has_variable(_neml2_time))
     _provided_inputs.insert(_neml2_time);
@@ -208,11 +212,14 @@ ExecuteNEML2Model::finalize()
 
   try
   {
-    initModel(_batch_index);
+    auto batch_shape = neml2::TorchShape{neml2::TorchSize(_batch_index)};
 
-    // Reallocate the input only when the batch size has changed
-    if (_in.batch_sizes() != neml2::TorchShapeRef{neml2::TorchSize(_batch_index)})
-      _in = neml2::LabeledVector::zeros(_batch_index, {&model().input_axis()});
+    // Reallocate the variable storage only when the batch shape has changed
+    if (batch_shape != model().batch_sizes())
+    {
+      initModel(batch_shape);
+      _in = neml2::LabeledVector::zeros(batch_shape, {&model().input_axis()});
+    }
 
     // Steps before stress update
     // preCompute();
