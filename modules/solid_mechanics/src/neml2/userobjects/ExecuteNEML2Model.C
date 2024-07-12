@@ -220,7 +220,7 @@ ExecuteNEML2Model::finalize()
     auto batch_shape = neml2::TorchShape{neml2::TorchSize(_batch_index)};
 
     // Reallocate the variable storage only when the batch shape has changed
-    if (batch_shape != model().batch_sizes())
+    if (neml2::TorchShapeRef(batch_shape) != model().batch_sizes())
     {
       initModel(batch_shape);
       _in = neml2::LabeledVector::zeros(batch_shape, {&model().input_axis()});
