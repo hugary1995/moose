@@ -127,15 +127,15 @@ ExecuteNEML2Model::initialSetup()
   // if a variable is stateful, then it'd better been retrieved by someone! In theory that's not
   // sufficient for stateful data management, but that's the best we can do here without being toooo
   // restrictive.
-  for (const auto & input : required_inputs)
-    if (input.start_with("old_state") && !_retrieved_outputs.count(input.slice(1).on("state")))
-      mooseError(
-          "The NEML2 model requires a stateful input variable `",
-          input,
-          "`, but its state counterpart on the output axis has not been retrieved by any object. "
-          "Therefore, there is no way to properly propagate the corresponding stateful data in "
-          "time. The common solution to this problem is to add a NEML2-to-MOOSE transfer material "
-          "such as those called `NEML2ToXXXMOOSEMaterialProperty`.");
+  // for (const auto & input : required_inputs)
+  //   if (input.start_with("old_state") && !_retrieved_outputs.count(input.slice(1).on("state")))
+  //     mooseError(
+  //         "The NEML2 model requires a stateful input variable `",
+  //         input,
+  //         "`, but its state counterpart on the output axis has not been retrieved by any object.
+  //         " "Therefore, there is no way to properly propagate the corresponding stateful data in
+  //         " "time. The common solution to this problem is to add a NEML2-to-MOOSE transfer
+  //         material " "such as those called `NEML2ToXXXMOOSEMaterialProperty`.");
 }
 
 void
@@ -316,6 +316,11 @@ ExecuteNEML2Model::threadJoin(const UserObject & uo)
     _elem_to_batch_index[elem_id] = _batch_index + batch_index;
 
   _batch_index += m2n._batch_index;
+
+  // merge retrieved outputs and derivatives
+  _retrieved_outputs.insert(m2n._retrieved_outputs.begin(), m2n._retrieved_outputs.end());
+  _retrieved_derivatives.insert(m2n._retrieved_derivatives.begin(),
+                                m2n._retrieved_derivatives.end());
 }
 
 std::size_t
