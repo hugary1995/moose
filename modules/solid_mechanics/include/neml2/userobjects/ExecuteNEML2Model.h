@@ -40,6 +40,7 @@ public:
   ExecuteNEML2Model(const InputParameters & params);
 
   virtual void initialSetup() override;
+  virtual void meshChanged() override;
 
   virtual void initialize() override;
   virtual void execute() override;

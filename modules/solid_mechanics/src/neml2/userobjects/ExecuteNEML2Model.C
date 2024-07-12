@@ -139,6 +139,12 @@ ExecuteNEML2Model::initialSetup()
 }
 
 void
+ExecuteNEML2Model::meshChanged()
+{
+  _output_ready = false;
+}
+
+void
 ExecuteNEML2Model::addUOVariable(const UserObjectName & uo_name, const neml2::VariableName & uo_var)
 {
   // check if the model actually has an input corresponding to this UO
@@ -187,8 +193,7 @@ ExecuteNEML2Model::initialize()
   _elem_to_batch_index_cache = {libMesh::invalid_uint, 0};
   _batch_index = 0;
 
-  if (shouldCompute())
-    _output_ready = false;
+  _output_ready = false;
 }
 
 void
