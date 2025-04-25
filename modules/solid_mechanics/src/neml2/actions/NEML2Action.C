@@ -202,6 +202,12 @@ NEML2Action::act()
                    input.moose.name);
     }
 
+    // Additional NEML2Kernels that provide input data
+    {
+      auto kernels = getParam<std::vector<std::string>>("moose_input_kernels");
+      gatherers.insert(gatherers.end(), kernels.begin(), kernels.end());
+    }
+
     // MOOSEToNEML2 parameter gatherers
     std::vector<UserObjectName> param_gatherers;
     for (const auto & param : _params)
@@ -249,6 +255,12 @@ NEML2Action::act()
         paramError("moose_parameter_types",
                    "Unsupported type corresponding to the moose parameter ",
                    param.moose.name);
+    }
+
+    // Additional NEML2Kernels that provide parameters
+    {
+      auto kernels = getParam<std::vector<std::string>>("moose_parameter_kernels");
+      param_gatherers.insert(gatherers.end(), kernels.begin(), kernels.end());
     }
 
     // The index generator UO

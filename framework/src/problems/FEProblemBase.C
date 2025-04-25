@@ -873,7 +873,7 @@ FEProblemBase::initialSetup()
       TIME_SECTION("computingMaxDofs", 3, "Computing Max Dofs Per Element");
 
       MaxVarNDofsPerElem mvndpe(*this, sys);
-      Threads::parallel_reduce(*_mesh.getActiveLocalElementRange(), mvndpe);
+      Threads::parallel_reduce(getCurrentAlgebraicElementRange(), mvndpe);
       max_var_n_dofs_per_elem = mvndpe.max();
       _communicator.max(max_var_n_dofs_per_elem);
 
@@ -1103,7 +1103,7 @@ FEProblemBase::initialSetup()
     {
       TIME_SECTION("computingInitialStatefulProps", 3, "Computing Initial Material Values");
 
-      initElementStatefulProps(*_mesh.getActiveLocalElementRange(), true);
+      initElementStatefulProps(getCurrentAlgebraicElementRange(), true);
 
       if (_material_props.hasStatefulProperties() || _bnd_material_props.hasStatefulProperties() ||
           _neighbor_material_props.hasStatefulProperties())
@@ -1397,7 +1397,7 @@ FEProblemBase::initialSetup()
   {
     TIME_SECTION("computeMaterials", 2, "Computing Initial Material Properties");
 
-    initElementStatefulProps(*_mesh.getActiveLocalElementRange(), true);
+    initElementStatefulProps(getCurrentAlgebraicElementRange(), true);
   }
 
   // Control Logic
@@ -3587,9 +3587,8 @@ FEProblemBase::projectSolution()
 
   FloatingPointExceptionGuard fpe_guard(_app);
 
-  ConstElemRange & elem_range = *_mesh.getActiveLocalElementRange();
   ComputeInitialConditionThread cic(*this);
-  Threads::parallel_reduce(elem_range, cic);
+  Threads::parallel_reduce(getCurrentAlgebraicElementRange(), cic);
 
   if (haveFV())
   {
@@ -4460,12 +4459,12 @@ FEProblemBase::computeIndicators()
 
     // compute Indicators
     ComputeIndicatorThread cit(*this);
-    Threads::parallel_reduce(*_mesh.getActiveLocalElementRange(), cit);
+    Threads::parallel_reduce(getCurrentAlgebraicElementRange(), cit);
     _aux->solution().close();
     _aux->update();
 
     ComputeIndicatorThread finalize_cit(*this, true);
-    Threads::parallel_reduce(*_mesh.getActiveLocalElementRange(), finalize_cit);
+    Threads::parallel_reduce(getCurrentAlgebraicElementRange(), finalize_cit);
     _aux->solution().close();
     _aux->update();
 
@@ -4499,7 +4498,7 @@ FEProblemBase::computeMarkers()
     }
 
     ComputeMarkerThread cmt(*this);
-    Threads::parallel_reduce(*_mesh.getActiveLocalElementRange(), cmt);
+    Threads::parallel_reduce(getCurrentAlgebraicElementRange(), cmt);
 
     _aux->solution().close();
     _aux->update();
@@ -4835,7 +4834,7 @@ FEProblemBase::computeUserObjectsInternal(const ExecFlagType & type,
         // because some nodal user objects (NodalNormal related) depend on elemental user objects
         // :-(
         ComputeUserObjectsThread cppt(*this, query);
-        Threads::parallel_reduce(*_mesh.getActiveLocalElementRange(), cppt);
+        Threads::parallel_reduce(getCurrentAlgebraicElementRange(), cppt);
 
         // There is one instance in rattlesnake where an elemental user object's finalize depends
         // on a side user object having been finalized first :-(
@@ -5901,7 +5900,7 @@ FEProblemBase::updateMaxQps()
   // Find the maximum number of quadrature points
   {
     MaxQpsThread mqt(*this);
-    Threads::parallel_reduce(*_mesh.getActiveLocalElementRange(), mqt);
+    Threads::parallel_reduce(getCurrentAlgebraicElementRange(), mqt);
     _max_qps = mqt.max();
 
     // If we have more shape functions or more quadrature points on
