@@ -11,6 +11,9 @@ else
   MOOSE_HEADER_SYMLINKS ?= true
 endif
 
+# Whether or not to use precompiled headers
+MOOSE_PCH ?= false
+
 # We ignore this in the contrib folder because we will set up the include
 # directories manually later
 IGNORE_CONTRIB_INC ?= libtorch mfem neml2 kokkos
@@ -419,6 +422,36 @@ moose_srcfiles    := $(app_unity_srcfiles) $(app_nonunity_srcfiles)
 
 else # Non-Unity
 moose_srcfiles    := $(shell find $(moose_SRC_DIRS) -regex "[^\#~]*\.C")
+endif
+
+
+#
+# Precompiled headers
+#
+ifeq ($(MOOSE_PCH),true)
+
+pch_header := $(FRAMEWORK_DIR)/include/pch.h
+pch_out    := $(FRAMEWORK_DIR)/include/pch.pch
+
+# Base flags for PCH: take normal flags but strip stuff that causes extra outputs
+$(pch_out): $(pch_header) | $$(prebuild)
+	@echo "Precompiling headers "$<"..."
+	@$(libmesh_CXX) \
+		$(libmesh_CPPFLAGS) \
+	  $(filter-out -include $(pch_header) -include-pch $(pch_out) -Winvalid-pch,$(CXXFLAGS) $(libmesh_CXXFLAGS) $(ADDITIONAL_CPPFLAGS)) \
+	  $(app_INCLUDES) $(libmesh_INCLUDE) \
+		-Wno-pch-date-time -fPIC -DPIC \
+	  -Xclang -emit-pch -x c++-header -c $< -o $@
+
+ifeq ($(MOOSE_HEADER_SYMLINKS),true)
+$(pch_out): $(moose_config_symlink) | moose_header_symlinks
+else
+$(pch_out): $(moose_config)
+endif
+
+ADDITIONAL_SRC_DEPS += $(pch_out)
+PCH_FLAGS += -include-pch $(pch_out) -Winvalid-pch
+
 endif
 
 # source files

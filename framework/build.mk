@@ -153,14 +153,14 @@ gtest%.$(no-method-obj-suffix) : gtest%.cc | $$(prebuild)
           $(libmesh_CXX) $(libmesh_CPPFLAGS) $(CXXFLAGS) $(libmesh_CXXFLAGS) $(ADDITIONAL_CPPFLAGS) $(app_INCLUDES) $(libmesh_INCLUDE) -DHAVE_CONFIG_H -MMD -MP -MF $@.d -MT $@ -c $< -o $@
 
 define CXX_RULE_TEMPLATE
-%$(1).$(obj-suffix) : %.C $(ADDITIONAL_SRC_DEPS) | $$(prebuild)
+%$(1).$(obj-suffix) : %.C $$$$(ADDITIONAL_SRC_DEPS) | $$(prebuild)
 ifeq ($(1),)
 	@echo "Compiling C++ (in "$$(METHOD)" mode) "$$<"..."
 else
 	@echo "Compiling C++ with suffix (in "$$(METHOD)" mode) "$$<"..."
 endif
 	@$$(libmesh_LIBTOOL) --tag=CXX $$(LIBTOOLFLAGS) --mode=compile --quiet \
-	  $$(libmesh_CXX) $$(libmesh_CPPFLAGS) $$(CXXFLAGS) $$(libmesh_CXXFLAGS) $$(ADDITIONAL_CPPFLAGS) $$(app_INCLUDES) $$(libmesh_INCLUDE) -MMD -MP -MF $$@.d -MT $$@ -c $$< -o $$@
+	  $$(libmesh_CXX) $$(libmesh_CPPFLAGS) $$(PCH_FLAGS) $$(CXXFLAGS) $$(libmesh_CXXFLAGS) $$(ADDITIONAL_CPPFLAGS) $$(app_INCLUDES) $$(libmesh_INCLUDE) -MMD -MP -MF $$@.d -MT $$@ -c $$< -o $$@
 endef
 # Instantiate Rules
 $(eval $(call CXX_RULE_TEMPLATE,))
