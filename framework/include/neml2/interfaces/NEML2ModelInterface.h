@@ -16,13 +16,8 @@
 #include "InputParameters.h"
 
 #ifdef NEML2_ENABLED
-#include <ATen/Parallel.h>
-#include "neml2/neml2.h"
-#include "neml2/models/Model.h"
-#include "neml2/dispatchers/WorkScheduler.h"
-#include "neml2/dispatchers/WorkDispatcher.h"
-#include "neml2/dispatchers/valuemap_helpers.h"
-#include "neml2/dispatchers/derivmap_helpers.h"
+#include "neml2/csrc/eager/Model.h"
+#include "neml2/csrc/eager/load_model.h"
 #endif
 
 /**
@@ -47,42 +42,23 @@ protected:
    */
   virtual void validateModel() const;
 
-  /// Get the NEML2 model
-  neml2::Model & model() const { return *_model; }
+  /// Get the NEML2 model (eager runtime)
+  const neml2::eager::Model & model() const { return _model; }
 
   /// Get the target compute device
-  const neml2::Device & device() const { return _device; }
+  const at::Device & device() const { return _device; }
 
   /// Get the target output device
-  const neml2::Device & output_device() const { return _output_device; }
-
-  using RJType = std::tuple<neml2::ValueMap, neml2::DerivMap>;
-  using DispatcherType =
-      neml2::WorkDispatcher<neml2::ValueMap, RJType, RJType, neml2::ValueMap, RJType>;
-
-  /// Get the work scheduler
-  neml2::WorkScheduler * scheduler() { return _scheduler.get(); }
-  /// Get the work dispatcher
-  const std::unique_ptr<DispatcherType> & dispatcher() const { return _dispatcher; }
+  const at::Device & output_device() const { return _output_device; }
 
 private:
   /// The device on which to evaluate the NEML2 model
-  const neml2::Device _device;
+  const at::Device _device;
   /// The device on which to store the outputs
-  const neml2::Device _output_device;
-  /// The NEML2 factory
-  std::unique_ptr<neml2::Factory> _factory;
-  /// The NEML2 material model
-  std::shared_ptr<neml2::Model> _model;
-
-  /// The work scheduler to use
-  std::shared_ptr<neml2::WorkScheduler> _scheduler;
-  /// Work dispatcher
-  std::unique_ptr<DispatcherType> _dispatcher;
-  /// Whether to dispatch work asynchronously
-  const bool _async_dispatch;
-  /// Models for each thread
-  std::unordered_map<std::thread::id, std::shared_ptr<neml2::Model>> _model_pool;
+  const at::Device _output_device;
+  /// The NEML2 material model. The eager runtime embeds a CPython interpreter and loads the
+  /// model directly from the input file -- no ahead-of-time compilation required.
+  neml2::eager::Model _model;
 
 #endif // NEML2_ENABLED
 };
@@ -116,13 +92,6 @@ NEML2ModelInterface<T>::validParams()
       "Similar to the 'device' parameter, this parameter specifies the device on which to store "
       "the outputs. Default to be the same as 'device'.");
 
-  params.addParam<std::string>(
-      "scheduler",
-      "NEML2 scheduler to use to run the model.  If not specified no scheduler is used and MOOSE "
-      "will pass all the constitutive updates to the provided device at once.");
-
-  params.addParam<bool>("async_dispatch", true, "Whether to use asynchronous dispatch.");
-
   return params;
 }
 
@@ -141,87 +110,26 @@ template <class T>
 template <typename... P>
 NEML2ModelInterface<T>::NEML2ModelInterface(const InputParameters & params, P &&... args)
   : T(params, args...),
-    _device(params.isParamValid("device") ? neml2::Device(params.get<std::string>("device"))
+    _device(params.isParamValid("device") ? at::Device(params.get<std::string>("device"))
                                           : this->getMooseApp().getLibtorchDevice()),
     _output_device(params.isParamValid("output_device")
-                       ? neml2::Device(params.get<std::string>("output_device"))
+                       ? at::Device(params.get<std::string>("output_device"))
                        : _device),
-    _scheduler(nullptr),
-    _async_dispatch(params.get<bool>("async_dispatch"))
+    // The eager runtime loads the model directly from the .i file (embedding CPython) and pins
+    // it to the requested device. The 'cli_args' parameter is currently not forwarded (NEML2 v3's
+    // eager load_model takes no extra parse arguments).
+    _model(std::string(params.get<DataFileName>("input")),
+           params.get<std::string>("model"),
+           _device)
 {
-  // Load model
-  const auto & fname = params.get<DataFileName>("input");
-  const auto & cli_args = params.get<std::vector<std::string>>("cli_args");
-  _factory = neml2::load_input(std::string(fname), neml2::utils::join(cli_args, " "));
-  _model = NEML2Utils::getModel(*_factory, params.get<std::string>("model"));
-  _model->to(_device);
-
-  // Load scheduler if specified
-  if (params.isParamValid("scheduler"))
-    _scheduler = _factory->get_scheduler(params.get<std::string>("scheduler"));
-
-  if (_scheduler)
-  {
-    auto red = [](std::vector<RJType> && results) -> RJType
-    {
-      // Split into two separate vectors
-      std::vector<neml2::ValueMap> vms;
-      std::vector<neml2::DerivMap> dms;
-      for (auto && [vm, dm] : results)
-      {
-        vms.push_back(std::move(vm));
-        dms.push_back(std::move(dm));
-      }
-      return std::make_tuple(neml2::valuemap_cat_reduce(std::move(vms), 0),
-                             neml2::derivmap_cat_reduce(std::move(dms), 0));
-    };
-
-    auto post = [this](RJType && x) -> RJType
-    {
-      return std::make_tuple(neml2::valuemap_move_device(std::move(std::get<0>(x)), _device),
-                             neml2::derivmap_move_device(std::move(std::get<1>(x)), _device));
-    };
-
-    auto thread_init = [this](neml2::Device device) -> void
-    {
-      mooseAssert(libMesh::cast_int<unsigned int>(at::get_num_threads()) == libMesh::n_threads(),
-                  "Inconsistent number of threads");
-      mooseAssert(libMesh::cast_int<unsigned int>(at::get_num_interop_threads()) ==
-                      libMesh::n_threads(),
-                  "Inconsistent number of interop threads");
-      auto model = NEML2Utils::getModel(*_factory, _model->name());
-      model->to(device);
-      _model_pool[std::this_thread::get_id()] = std::move(model);
-    };
-
-    _dispatcher = std::make_unique<DispatcherType>(
-        *_scheduler,
-        _async_dispatch,
-        [&](neml2::ValueMap && x, neml2::Device device) -> RJType
-        {
-          auto & model =
-              _async_dispatch ? libmesh_map_find(_model_pool, std::this_thread::get_id()) : _model;
-
-          // If this is not an async dispatch, we need to move the model to the target device
-          // _every_ time before evaluation
-          if (!_async_dispatch)
-            model->to(device);
-
-          return model->value_and_dvalue(std::move(x));
-        },
-        red,
-        &neml2::valuemap_move_device,
-        post,
-        _async_dispatch ? thread_init : std::function<void(neml2::Device)>());
-  }
 }
 
 template <class T>
 void
 NEML2ModelInterface<T>::validateModel() const
 {
-  mooseAssert(_model != nullptr, "_model must be initialized");
-  neml2::diagnose(*_model);
+  // NEML2 v3 provides no C++ diagnose() equivalent; constructing the eager model above already
+  // parses and validates it. Kept as a hook for derived classes.
 }
 
 #endif // NEML2_ENABLED

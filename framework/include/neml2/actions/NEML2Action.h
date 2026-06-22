@@ -12,7 +12,8 @@
 #include <memory>
 
 #ifdef NEML2_ENABLED
-#include "neml2/models/Model.h"
+#include "neml2/csrc/eager/Model.h"
+#include "neml2/csrc/eager/load_model.h"
 #endif
 
 #include "Action.h"
@@ -42,17 +43,10 @@ protected:
 
   struct VariableMapping
   {
-    std::string name;
+    std::string name;              ///< MOOSE quantity name (base name, no ~N lag suffix)
     NEML2Utils::MOOSEIOType moose_type;
-    neml2::TensorType neml2_type;
+    std::string moose_tensor_type; ///< MOOSE C++ tensor type string (e.g. SymmetricRankTwoTensor)
     std::size_t history_order;
-  };
-
-  struct ParameterMapping
-  {
-    std::string name;
-    NEML2Utils::MOOSEIOType moose_type;
-    neml2::TensorType neml2_type;
   };
 
   struct DerivativeMapping
@@ -60,26 +54,21 @@ protected:
     std::string name;
     std::string y;
     std::string x;
+    std::string moose_tensor_type; ///< MOOSE C++ tensor type string of the derivative block
   };
 
   /// Set up MOOSE-NEML2 input variable mappings
-  void setupInputMappings(const neml2::Model &);
+  void setupInputMappings(const neml2::eager::Model &);
 
   /// Set up MOOSE-NEML2 output variable mappings
-  void setupOutputMappings(const neml2::Model &);
-
-  /// Set up MOOSE-NEML2 model parameter mappings
-  void setupParameterMappings(const neml2::Model &);
+  void setupOutputMappings(const neml2::eager::Model &);
 
   /// Set up MOOSE-NEML2 derivative mappings
-  void setupDerivativeMappings(const neml2::Model &);
+  void setupDerivativeMappings(const neml2::eager::Model &);
 
-  /// Set up MOOSE-NEML2 parameter derivative mappings
-  void setupParameterDerivativeMappings(const neml2::Model &);
-
-  /// Infer the MOOSE IO type from the variable name and type
-  NEML2Utils::MOOSEIOType inferMOOSEIOType(const neml2::VariableName & name,
-                                           const neml2::TensorType & type) const;
+  /// Infer the MOOSE IO type from the variable name (only scalar-typed variables can map to
+  /// time/scalar/function/field quantities; everything else is a material property)
+  NEML2Utils::MOOSEIOType inferMOOSEIOType(const std::string & name, bool is_scalar) const;
 
   /// Name of the NEML2 input file
   FileName _fname;
@@ -87,23 +76,17 @@ protected:
   /// List of cli-args
   std::vector<std::string> _cli_args;
 
-  /// The neml2 model
-  std::shared_ptr<neml2::Model> _model;
+  /// The neml2 model (eager runtime, used here only for introspection during setup)
+  std::unique_ptr<neml2::eager::Model> _model;
 
   /// MOOSE-NEML2 input variable mappings
   std::vector<VariableMapping> _inputs;
-
-  /// MOOSE-NEML2 model parameter mappings
-  std::vector<ParameterMapping> _params;
 
   /// MOOSE-NEML2 output variable mappings
   std::vector<VariableMapping> _outputs;
 
   /// MOOSE-NEML2 derivative mappings
   std::vector<DerivativeMapping> _derivs;
-
-  /// MOOSE-NEML2 parameter derivative mappings
-  std::vector<DerivativeMapping> _param_derivs;
 
 #endif
   /// Name of the NEML2Executor user object
