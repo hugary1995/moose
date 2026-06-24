@@ -6,7 +6,7 @@
 //*
 //* Licensed under LGPL 2.1, please see LICENSE for details
 //* https://www.gnu.org/licenses/lgpl-2.1.html
-#if 0 // NEML2 v2->v3 migration: DEFERRED (FEM/discretization/typed-tensor path has no v3 C++ equivalent yet)
+#if 0 // NEML2 v2->v3 migration: superseded by the Python model modules/solid_mechanics/data/neml2/R2IncrementToRate.py (loaded via the NEML2Action 'load' parameter)
 
 #include "R2IncrementToRate.h"
 
