@@ -71,6 +71,10 @@
 
 [NEML2]
   input = 'models/laromance_matl_radial_return.i'
+  # LAROMANCE6DInterpolation is a NEML2 model shipped by solid_mechanics (data/laromance/);
+  # importing it registers the type with the embedded (cpp-eager) interpreter. Resolved on
+  # the data search path.
+  load = 'laromance/LAROMANCE6DInterpolation.py'
   [all]
     model = 'model'
     verbose = true
