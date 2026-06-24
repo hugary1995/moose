@@ -57,6 +57,14 @@ protected:
     std::string moose_tensor_type; ///< MOOSE C++ tensor type string of the derivative block
   };
 
+  struct ParameterMapping
+  {
+    std::string moose_name;        ///< MOOSE quantity name (from_moose source)
+    std::string neml2_name;        ///< fully-qualified NEML2 parameter name (set target)
+    NEML2Utils::MOOSEIOType moose_type;
+    std::string moose_tensor_type; ///< MOOSE C++ tensor type string
+  };
+
   /// Set up MOOSE-NEML2 input variable mappings
   void setupInputMappings(const neml2::eager::Model &);
 
@@ -65,6 +73,17 @@ protected:
 
   /// Set up MOOSE-NEML2 derivative mappings
   void setupDerivativeMappings(const neml2::eager::Model &);
+
+  /// Set up MOOSE-NEML2 model parameter (value) mappings
+  void setupParameterMappings(const neml2::eager::Model &);
+
+  /// Set up MOOSE-NEML2 output-parameter-derivative mappings
+  void setupParameterDerivativeMappings(const neml2::eager::Model &);
+
+  /// Resolve a user-written parameter name to a fully-qualified NEML2 parameter name. Accepts an
+  /// exact match or an unambiguous trailing ".<name>" suffix of a registered parameter.
+  std::string resolveParameterName(const std::string & user_name,
+                                   const std::vector<std::string> & param_names) const;
 
   /// Infer the MOOSE IO type from the variable name (only scalar-typed variables can map to
   /// time/scalar/function/field quantities; everything else is a material property)
@@ -87,6 +106,12 @@ protected:
 
   /// MOOSE-NEML2 derivative mappings
   std::vector<DerivativeMapping> _derivs;
+
+  /// MOOSE-NEML2 model parameter (value) mappings
+  std::vector<ParameterMapping> _params;
+
+  /// MOOSE-NEML2 output-parameter-derivative mappings
+  std::vector<DerivativeMapping> _param_derivs;
 
 #endif
   /// Name of the NEML2Executor user object

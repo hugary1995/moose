@@ -123,9 +123,13 @@ NEML2Action::NEML2Action(const InputParameters & params)
   _fname = getParam<DataFileName>("input");
   _cli_args = getParam<std::vector<std::string>>("cli_args");
 
-  // Load the model via the eager runtime, used here only for introspection during setup. The
-  // 'cli_args' parameter is currently not forwarded (NEML2 v3's eager load_model takes none).
-  _model = std::make_unique<neml2::eager::Model>(std::string(_fname), getParam<std::string>("model"));
+  // Load the model via the eager runtime, used here only for introspection during setup. 'load'
+  // imports any external Python-authored model types first so the model resolves; the 'cli_args'
+  // parameter is currently not forwarded (NEML2 v3's eager load_model takes none).
+  _model = std::make_unique<neml2::eager::Model>(std::string(_fname),
+                                                 getParam<std::string>("model"),
+                                                 std::nullopt,
+                                                 getParam<std::vector<std::string>>("load"));
 #endif
 }
 
@@ -171,6 +175,8 @@ NEML2Action::act()
     setupInputMappings(*_model);
     setupOutputMappings(*_model);
     setupDerivativeMappings(*_model);
+    setupParameterMappings(*_model);
+    setupParameterDerivativeMappings(*_model);
 
     printSummary();
 
@@ -216,6 +222,16 @@ NEML2Action::act()
       gatherers.push_back(kernel_name);
     }
 
+    // MOOSEToNEML2 model-parameter gatherers (MOOSE data fed in as NEML2 model parameters). The
+    // NEML2 target is the fully-qualified parameter name; the MOOSE source is the user-written name.
+    std::vector<UserObjectName> param_gatherers;
+    for (const auto & param : _params)
+      param_gatherers.push_back(addGatherer(param.moose_name,
+                                            param.neml2_name,
+                                            param.moose_type,
+                                            param.moose_tensor_type,
+                                            "param"));
+
     // The index generator UO
     {
       auto type = "NEML2BatchIndexGenerator";
@@ -231,6 +247,7 @@ NEML2Action::act()
       params.applyParameters(parameters());
       params.set<UserObjectName>("batch_index_generator") = _idx_generator_name;
       params.set<std::vector<UserObjectName>>("gatherers") = gatherers;
+      params.set<std::vector<UserObjectName>>("param_gatherers") = param_gatherers;
       _problem->addUserObject(type, _executor_name, params);
     }
   }
@@ -282,6 +299,14 @@ NEML2Action::act()
                    deriv.moose_tensor_type,
                    [&](InputParameters & p)
                    { p.set<std::string>("neml2_input_derivative") = deriv.x; });
+
+    // NEML2ToMOOSE parameter-derivative retrievers
+    for (const auto & deriv : _param_derivs)
+      addRetriever(deriv.name,
+                   deriv.y,
+                   deriv.moose_tensor_type,
+                   [&](InputParameters & p)
+                   { p.set<std::string>("neml2_parameter_derivative") = deriv.x; });
   }
 }
 
@@ -448,6 +473,100 @@ NEML2Action::setupDerivativeMappings(const neml2::eager::Model & model)
 
     const auto deriv_name = derivativePropertyNameFirst(y, x);
     _derivs.push_back({deriv_name, y, x, mtype});
+  }
+}
+
+std::string
+NEML2Action::resolveParameterName(const std::string & user_name,
+                                  const std::vector<std::string> & param_names) const
+{
+  if (contains(param_names, user_name))
+    return user_name;
+
+  // Accept an unambiguous trailing ".<user_name>" suffix (e.g. "E" -> "model.E").
+  std::vector<std::string> matches;
+  const std::string suffix = "." + user_name;
+  for (const auto & p : param_names)
+    if (p.size() > suffix.size() && p.compare(p.size() - suffix.size(), suffix.size(), suffix) == 0)
+      matches.push_back(p);
+
+  if (matches.size() == 1)
+    return matches[0];
+
+  std::string available;
+  for (const auto & p : param_names)
+    available += (available.empty() ? "" : ", ") + p;
+  if (matches.size() > 1)
+  {
+    std::string m;
+    for (const auto & x : matches)
+      m += (m.empty() ? "" : ", ") + x;
+    mooseError("The NEML2 model parameter name '",
+               user_name,
+               "' is ambiguous; it matches multiple registered parameters: ",
+               m,
+               ". Use the fully-qualified name.");
+  }
+  mooseError("The NEML2 model parameter '",
+             user_name,
+             "' does not exist. Available model parameters: ",
+             available);
+}
+
+void
+NEML2Action::setupParameterMappings(const neml2::eager::Model & model)
+{
+  const auto [param_types, params] = getInputParameterMapping<NEML2Utils::MOOSEIOType, std::string>(
+      "parameter_types", "parameters");
+  const auto pshapes = shapeMap(model.param_names(), model.param_base_shapes());
+
+  for (auto i : index_range(params))
+  {
+    const auto qn = resolveParameterName(params[i], model.param_names());
+    const auto mtype = shapeToMooseType(pshapes.at(qn));
+    if (mtype.empty())
+      mooseError(
+          "The NEML2 model parameter ", qn, " has a base shape not yet mapped to a MOOSE type.");
+    _params.push_back({params[i], qn, param_types[i], mtype});
+  }
+}
+
+void
+NEML2Action::setupParameterDerivativeMappings(const neml2::eager::Model & model)
+{
+  const auto derivs = getParam<std::vector<std::vector<std::string>>>("parameter_derivatives");
+  const auto out_shapes = shapeMap(model.output_names(), model.output_base_shapes());
+  const auto pshapes = shapeMap(model.param_names(), model.param_base_shapes());
+
+  for (auto i : index_range(derivs))
+  {
+    if (derivs[i].size() != 2)
+      paramError("parameter_derivatives",
+                 "The length of each pair in parameter_derivatives must be 2.");
+
+    const auto & y = derivs[i][0];
+    const auto & x_user = derivs[i][1];
+    if (!contains(model.output_names(), y))
+      paramError("parameter_derivatives", "The NEML2 output variable ", y, " does not exist.");
+    const auto x = resolveParameterName(x_user, model.param_names());
+
+    // The derivative block's base shape is the concatenation of the output and parameter base
+    // shapes.
+    std::vector<int64_t> dshape = out_shapes.at(y);
+    const auto & xs = pshapes.at(x);
+    dshape.insert(dshape.end(), xs.begin(), xs.end());
+    const auto mtype = shapeToMooseType(dshape);
+    if (mtype.empty())
+      mooseError("The NEML2 derivative of ",
+                 y,
+                 " with respect to model parameter ",
+                 x,
+                 " has a base shape not yet mapped to a MOOSE type.");
+
+    // The material-property name uses the user-written parameter name; the qualified name drives
+    // the NEML2-side parameter derivative.
+    const auto deriv_name = derivativePropertyNameFirst(y, x_user);
+    _param_derivs.push_back({deriv_name, y, x, mtype});
   }
 }
 

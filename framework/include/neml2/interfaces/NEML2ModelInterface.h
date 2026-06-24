@@ -45,6 +45,9 @@ protected:
   /// Get the NEML2 model (eager runtime)
   const neml2::eager::Model & model() const { return _model; }
 
+  /// Non-const access to the NEML2 model, for runtime parameter writes (set_parameter)
+  neml2::eager::Model & model() { return _model; }
+
   /// Get the target compute device
   const at::Device & device() const { return _device; }
 
@@ -74,6 +77,14 @@ NEML2ModelInterface<T>::validParams()
       "cli_args",
       {},
       "Additional command line arguments to use when parsing the NEML2 input file.");
+  params.addParam<std::vector<std::string>>(
+      "load",
+      {},
+      "External Python extension modules imported (into the embedded interpreter) before the NEML2 "
+      "model is built: file paths to .py files or package directories, or importable dotted module "
+      "names. Importing them registers any @register_neml2_object types they define -- e.g. NEML2 "
+      "models hosted inside a MOOSE app -- so the NEML2 input file can reference them. Mirrors the "
+      "neml2 CLI --load flag.");
   params.addParam<std::string>(
       "model",
       "",
@@ -120,7 +131,8 @@ NEML2ModelInterface<T>::NEML2ModelInterface(const InputParameters & params, P &&
     // eager load_model takes no extra parse arguments).
     _model(std::string(params.get<DataFileName>("input")),
            params.get<std::string>("model"),
-           _device)
+           _device,
+           params.get<std::vector<std::string>>("load"))
 {
 }
 

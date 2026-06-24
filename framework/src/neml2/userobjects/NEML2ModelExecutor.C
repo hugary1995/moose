@@ -91,6 +91,8 @@ NEML2ModelExecutor::NEML2ModelExecutor(const InputParameters & params)
   // add user object dependencies by name (the UOs do not need to exist yet for this)
   for (const auto & gatherer_name : getParam<std::vector<UserObjectName>>("gatherers"))
     _depend_uo.insert(gatherer_name);
+  for (const auto & gatherer_name : getParam<std::vector<UserObjectName>>("param_gatherers"))
+    _depend_uo.insert(gatherer_name);
 #endif
 }
 
@@ -98,13 +100,6 @@ NEML2ModelExecutor::NEML2ModelExecutor(const InputParameters & params)
 void
 NEML2ModelExecutor::initialSetup()
 {
-  // Model parameters gathered from MOOSE are not yet supported with the NEML2 v3 eager runtime
-  // (eager exposes no C++ parameter interface).
-  if (!getParam<std::vector<UserObjectName>>("param_gatherers").empty())
-    paramError("param_gatherers",
-               "Driving NEML2 model parameters from MOOSE is not yet supported with the NEML2 v3 "
-               "eager runtime.");
-
   // deal with user object provided inputs
   for (const auto & gatherer_name : getParam<std::vector<UserObjectName>>("gatherers"))
   {
@@ -122,6 +117,14 @@ NEML2ModelExecutor::initialSetup()
 
     addGatheredVariable(gatherer_name, uo.NEML2Name());
     _gatherers.push_back(&uo);
+  }
+
+  // deal with user object provided model parameters
+  for (const auto & gatherer_name : getParam<std::vector<UserObjectName>>("param_gatherers"))
+  {
+    const auto & uo = getUserObjectByName<MOOSEToNEML2>(gatherer_name, /*is_dependency=*/false);
+    addGatheredParameter(gatherer_name, uo.NEML2Name());
+    _param_gatherers.push_back(&uo);
   }
 
   // iterate over set of required inputs and error out if we find one that is not provided
@@ -168,6 +171,20 @@ NEML2ModelExecutor::addGatheredVariable(const UserObjectName & gatherer_name,
                gatherer_name,
                "' is already gathered by another gatherer.");
   _gathered_variable_names.insert(var);
+}
+
+void
+NEML2ModelExecutor::addGatheredParameter(const UserObjectName & gatherer_name,
+                                         const std::string & param)
+{
+  if (_gathered_parameter_names.count(param))
+    paramError("param_gatherers",
+               "The NEML2 model parameter `",
+               param,
+               "` gathered by UO '",
+               gatherer_name,
+               "' is already gathered by another gatherer.");
+  _gathered_parameter_names.insert(param);
 }
 
 void
@@ -228,6 +245,8 @@ NEML2ModelExecutor::fillInputs()
   {
     for (const auto & uo : _gatherers)
       uo->insertInto(_in);
+    for (const auto & uo : _param_gatherers)
+      uo->insertInto(_model_params);
 
     if (_manage_state_advance && _t_step > 0)
       for (const auto & [name, val] : _state_vars)
@@ -237,6 +256,12 @@ NEML2ModelExecutor::fillInputs()
     // Send input variables to the compute device
     for (auto & [var, val] : _in)
       val = val.to(device());
+
+    // Push the gathered model parameters into the NEML2 model (on the compute device) so the
+    // subsequent evaluation and its parameter Jacobian use the MOOSE-provided values.
+    for (auto & [pname, pval] : _model_params)
+      model().set_parameter(pname, pval.to(device()));
+    _model_params.clear();
   }
   catch (std::exception & e)
   {
@@ -279,6 +304,17 @@ NEML2ModelExecutor::solve()
     auto [out, dout_din] = model().jacobian(_in);
     _out = std::move(out);
     _dout_din = std::move(dout_din);
+
+    // Parameter Jacobian d(output)/d(parameter), only when some object requested it.
+    // param_jacobian recomputes the (identical) outputs via reverse-mode AD over the model
+    // parameters; the input chain rule above is independent of it.
+    if (!_retrieved_parameter_derivatives.empty())
+    {
+      // .first repeats the (identical) outputs already obtained from jacobian(); keep only the
+      // parameter-derivative blocks.
+      auto param_jac = model().param_jacobian(_in);
+      _dout_dparam = std::move(param_jac.second);
+    }
 
     if (!_manage_state_advance)
       _in.clear();
@@ -361,8 +397,18 @@ NEML2ModelExecutor::extractOutputs()
           target = source.to(output_device());
       }
 
+    // retrieve parameter derivatives P[y][p]
+    for (auto & [y, dy] : _retrieved_parameter_derivatives)
+      for (auto & [p, target] : dy)
+      {
+        const auto & source = _dout_dparam[y][p];
+        if (source.defined())
+          target = source.to(output_device());
+      }
+
     // clear derivatives
     _dout_din.clear();
+    _dout_dparam.clear();
   }
   catch (std::exception & e)
   {
@@ -442,6 +488,29 @@ NEML2ModelExecutor::getOutputDerivative(const std::string & output_name,
                "', but the NEML2 input variable does not exist.");
 
   return _retrieved_derivatives[output_name][input_name];
+}
+
+const at::Tensor &
+NEML2ModelExecutor::getOutputParameterDerivative(const std::string & output_name,
+                                                 const std::string & parameter_name) const
+{
+  checkExecutionStage();
+
+  if (!contains(model().output_names(), output_name))
+    mooseError("Trying to retrieve the derivative of NEML2 output variable '",
+               output_name,
+               "' with respect to NEML2 model parameter '",
+               parameter_name,
+               "', but the NEML2 output variable does not exist.");
+
+  if (!contains(model().param_names(), parameter_name))
+    mooseError("Trying to retrieve the derivative of NEML2 output variable '",
+               output_name,
+               "' with respect to NEML2 model parameter '",
+               parameter_name,
+               "', but the NEML2 model parameter does not exist.");
+
+  return _retrieved_parameter_derivatives[output_name][parameter_name];
 }
 
 #endif

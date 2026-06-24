@@ -52,12 +52,19 @@ public:
   const at::Tensor & getOutputDerivative(const std::string & output_name,
                                          const std::string & input_name) const;
 
+  /// Get a reference(!) to the requested output-parameter-derivative view
+  const at::Tensor & getOutputParameterDerivative(const std::string & output_name,
+                                                  const std::string & parameter_name) const;
+
   /// check if the output is fully computed and ready to be fetched
   bool outputReady() const { return _output_ready; }
 
 protected:
   /// Register a NEML2 input variable gathered by a gatherer
   virtual void addGatheredVariable(const UserObjectName &, const std::string &);
+
+  /// Register a NEML2 model parameter gathered by a gatherer
+  virtual void addGatheredParameter(const UserObjectName &, const std::string &);
 
   /// Prevent output and derivative retrieval after construction
   virtual void checkExecutionStage() const final;
@@ -89,6 +96,10 @@ protected:
   /// The input variables of the material model (name -> (batch, *base_shape) tensor)
   std::map<std::string, at::Tensor> _in;
 
+  /// Model parameter values gathered from MOOSE (qualified name -> tensor), set on the model
+  /// before each evaluation
+  std::map<std::string, at::Tensor> _model_params;
+
   /// The output variables of the material model
   std::map<std::string, at::Tensor> _out;
 
@@ -98,17 +109,29 @@ protected:
   /// The derivative of the output variables w.r.t. the input variables: J[output][input]
   std::map<std::string, std::map<std::string, at::Tensor>> _dout_din;
 
+  /// The derivative of the output variables w.r.t. the model parameters: P[output][parameter]
+  std::map<std::string, std::map<std::string, at::Tensor>> _dout_dparam;
+
   // set of gathered NEML2 input variables
   std::set<std::string> _gathered_variable_names;
 
-  /// MOOSE data gathering user objects
+  // set of gathered NEML2 model parameters
+  std::set<std::string> _gathered_parameter_names;
+
+  /// MOOSE data gathering user objects (input variables)
   std::vector<const MOOSEToNEML2 *> _gatherers;
+
+  /// MOOSE data gathering user objects (model parameters)
+  std::vector<const MOOSEToNEML2 *> _param_gatherers;
 
   /// set of output variables that were retrieved (by other objects)
   mutable std::map<std::string, at::Tensor> _retrieved_outputs;
 
   /// set of derivatives that were retrieved (by other objects)
   mutable std::map<std::string, std::map<std::string, at::Tensor>> _retrieved_derivatives;
+
+  /// set of output-parameter-derivatives that were retrieved (by other objects)
+  mutable std::map<std::string, std::map<std::string, at::Tensor>> _retrieved_parameter_derivatives;
 
 private:
   /// Whether an error was encountered
