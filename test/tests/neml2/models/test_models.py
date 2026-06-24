@@ -25,7 +25,7 @@ from __future__ import annotations
 from neml2.factory import register_neml2_object
 from neml2.models.chain_rule import ChainRuleDict
 from neml2.models.model import Model
-from neml2.schema import HitSchema, input, output, parameter
+from neml2.schema import HitSchema, input, option, output, parameter
 from neml2.types import Scalar
 
 
@@ -38,6 +38,12 @@ class NEML2TestModel(Model):
     input chain rule is a constant scaling per input; parameter derivatives are
     obtained from reverse-mode AD via ``param_jacobian`` and need no hand-coded
     action here.
+
+    ``ad`` is accepted for compatibility with the v2 model variants but is a
+    no-op: the analytic chain rule below is always used (NEML2 v3 forbids
+    ``torch.autograd`` inside a native ``forward`` since it does not survive
+    export). ``error`` makes the forward raise, to exercise MOOSE's handling of a
+    failed NEML2 evaluation (cpp-eager only).
     """
 
     hit = HitSchema(
@@ -47,11 +53,17 @@ class NEML2TestModel(Model):
         output("product", Scalar, "Output variable product"),
         parameter("p1", Scalar, "Parameter p1", default="1", allow_nonlinear=True),
         parameter("p2", Scalar, "Parameter p2", default="1", allow_nonlinear=True),
+        option("ad", bool, "Accepted for v2 compatibility; the analytic chain rule is always used",
+               default=True, attr="ad"),
+        option("error", bool, "Raise during evaluation, to test error handling", default=False,
+               attr="error"),
     )
 
     # Auto-declared by ``from_hit`` -- no __init__ needed.
     p1: Scalar
     p2: Scalar
+    ad: bool
+    error: bool
 
     def forward(  # type: ignore[override]
         self,
@@ -60,6 +72,9 @@ class NEML2TestModel(Model):
         *nl_params: Scalar,
         v: ChainRuleDict | None = None,
     ):
+        if self.error:
+            raise RuntimeError("NEML2TestModel error flag is set")
+
         p1 = self._get_param("p1", nl_params, Scalar)
         p2 = self._get_param("p2", nl_params, Scalar)
 

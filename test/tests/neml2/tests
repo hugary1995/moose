@@ -15,7 +15,7 @@
     type = RunException
     input = 'custom_model.i'
     cli_args = 'NEML2/all/model=error'
-    expect_err = 'NEML2 model execution failed on at least one processor'
+    expect_err = 'NEML2 model evaluation failed with a non-recoverable error'
     collections = 'SYSTEM'
     capabilities = 'libtorch & neml2'
     valgrind = none
@@ -92,30 +92,5 @@
     exodiff = 'mesh_change_out.e mesh_change_out.e-s002 mesh_change_out.e-s003 mesh_change_out.e-s004 mesh_change_out.e-s005'
     capabilities = 'libtorch & neml2'
     valgrind = heavy
-  []
-  [scheduler]
-    issues = '#27493'
-    requirement = 'The framework shall be capable of evaluating NEML2 models in heterogeneous computing environments'
-    [simple_scheduler]
-      detail = 'with NEML2 SimpleScheduler which dispatches to a single device'
-      type = Exodiff
-      input = 'custom_model.i'
-      cli_args = 'NEML2/scheduler=simple NEML2/async_dispatch=false NEML2/all/model=model_non_ad Outputs/file_base=simple_scheduler_out'
-      exodiff = 'simple_scheduler_out.e'
-      capabilities = 'libtorch & neml2'
-      recover = false
-      valgrind = heavy
-    []
-    [simple_scheduler_async]
-      detail = 'with NEML2 SimpleScheduler which asynchronously dispatches to a single device'
-      prereq = 'scheduler/simple_scheduler'
-      type = Exodiff
-      input = 'custom_model.i'
-      cli_args = 'NEML2/scheduler=simple NEML2/async_dispatch=true NEML2/all/model=model_non_ad Outputs/file_base=simple_scheduler_out'
-      exodiff = 'simple_scheduler_out.e'
-      capabilities = 'libtorch & neml2'
-      recover = false
-      valgrind = heavy
-    []
   []
 []

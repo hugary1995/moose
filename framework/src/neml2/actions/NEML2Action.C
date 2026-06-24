@@ -126,10 +126,12 @@ NEML2Action::NEML2Action(const InputParameters & params)
   // Load the model via the eager runtime, used here only for introspection during setup. 'load'
   // imports any external Python-authored model types first so the model resolves; the 'cli_args'
   // parameter is currently not forwarded (NEML2 v3's eager load_model takes none).
-  _model = std::make_unique<neml2::eager::Model>(std::string(_fname),
-                                                 getParam<std::string>("model"),
-                                                 std::nullopt,
-                                                 getParam<std::vector<std::string>>("load"));
+  const auto load_files = getParam<std::vector<DataFileName>>("load");
+  _model = std::make_unique<neml2::eager::Model>(
+      std::string(_fname),
+      getParam<std::string>("model"),
+      std::nullopt,
+      std::vector<std::string>(load_files.begin(), load_files.end()));
 #endif
 }
 

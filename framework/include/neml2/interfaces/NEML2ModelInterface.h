@@ -55,6 +55,15 @@ protected:
   const at::Device & output_device() const { return _output_device; }
 
 private:
+  /// Resolve the 'load' DataFileName list (whose relative paths InputParameters has already
+  /// resolved against the input file + data search path) to plain path strings for the eager
+  /// runtime's external-extension loader.
+  static std::vector<std::string> loadExtensionPaths(const InputParameters & params)
+  {
+    const auto files = params.get<std::vector<DataFileName>>("load");
+    return std::vector<std::string>(files.begin(), files.end());
+  }
+
   /// The device on which to evaluate the NEML2 model
   const at::Device _device;
   /// The device on which to store the outputs
@@ -77,14 +86,14 @@ NEML2ModelInterface<T>::validParams()
       "cli_args",
       {},
       "Additional command line arguments to use when parsing the NEML2 input file.");
-  params.addParam<std::vector<std::string>>(
+  params.addParam<std::vector<DataFileName>>(
       "load",
       {},
-      "External Python extension modules imported (into the embedded interpreter) before the NEML2 "
-      "model is built: file paths to .py files or package directories, or importable dotted module "
-      "names. Importing them registers any @register_neml2_object types they define -- e.g. NEML2 "
-      "models hosted inside a MOOSE app -- so the NEML2 input file can reference them. Mirrors the "
-      "neml2 CLI --load flag.");
+      "External Python extension files (paths to .py files or package directories, resolved "
+      "relative to the input file and the application's data search path) imported into the "
+      "embedded interpreter before the NEML2 model is built. Importing them registers any "
+      "@register_neml2_object types they define -- e.g. NEML2 models hosted inside a MOOSE app -- "
+      "so the NEML2 input file can reference them. Mirrors the neml2 CLI --load flag.");
   params.addParam<std::string>(
       "model",
       "",
@@ -132,7 +141,7 @@ NEML2ModelInterface<T>::NEML2ModelInterface(const InputParameters & params, P &&
     _model(std::string(params.get<DataFileName>("input")),
            params.get<std::string>("model"),
            _device,
-           params.get<std::vector<std::string>>("load"))
+           loadExtensionPaths(params))
 {
 }
 
