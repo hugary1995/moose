@@ -119,19 +119,31 @@ NEML2Action::NEML2Action(const InputParameters & params)
     _export_output_targets[outputs[i]] = output_targets[i];
 
 #ifdef NEML2_ENABLED
-  // File name and CLI args
-  _fname = getParam<DataFileName>("input");
   _cli_args = getParam<std::vector<std::string>>("cli_args");
 
-  // Load the model via the eager runtime, used here only for introspection during setup. 'load'
-  // imports any external Python-authored model types first so the model resolves; the 'cli_args'
-  // parameter is currently not forwarded (NEML2 v3's eager load_model takes none).
+  // Build a model handle for setup-time introspection only (reading I/O names + base shapes to
+  // wire the MOOSE<->NEML2 transfers). cpp-eager reads the source 'input' (importing any 'load'
+  // Python extensions); cpp-aoti reads the compiled-artifact stub 'input'. 'cli_args' is currently
+  // not forwarded (NEML2 v3's load takes no extra parse arguments).
+  const bool eager = getParam<bool>("eager");
   const auto load_files = getParam<std::vector<DataFileName>>("load");
-  _model = std::make_unique<neml2::eager::Model>(
-      std::string(_fname),
-      getParam<std::string>("model"),
-      std::nullopt,
-      std::vector<std::string>(load_files.begin(), load_files.end()));
+
+  if (!isParamValid("input"))
+    paramError("input", "'input' (the NEML2 source or AOTI stub '.i') is required.");
+  if (!eager && !load_files.empty())
+    paramError("load",
+               "The 'load' parameter is only valid with the cpp-eager runtime (eager=true).");
+
+  // cpp-aoti dispatches the artifact to this device (it must name an artifact subfolder); mirrors
+  // NEML2ModelInterface's device resolution.
+  const at::Device device = isParamValid("device") ? at::Device(getParam<std::string>("device"))
+                                                   : _app.getLibtorchDevice();
+  _fname = getParam<DataFileName>("input");
+  _model = makeNEML2ModelHandle(eager,
+                                std::string(_fname),
+                                getParam<std::string>("model"),
+                                device,
+                                std::vector<std::string>(load_files.begin(), load_files.end()));
 #endif
 }
 
@@ -349,7 +361,7 @@ NEML2Action::inferMOOSEIOType(const std::string & name, bool is_scalar) const
 }
 
 void
-NEML2Action::setupInputMappings(const neml2::eager::Model & model)
+NEML2Action::setupInputMappings(const NEML2ModelHandle & model)
 {
   const auto & kernels = getParam<std::vector<std::string>>("input_kernels");
   const auto in_shapes = shapeMap(model.input_names(), model.input_base_shapes());
@@ -426,7 +438,7 @@ NEML2Action::setupInputMappings(const neml2::eager::Model & model)
 }
 
 void
-NEML2Action::setupOutputMappings(const neml2::eager::Model & model)
+NEML2Action::setupOutputMappings(const NEML2ModelHandle & model)
 {
   if (!getParam<bool>("auto_output"))
     return;
@@ -443,7 +455,7 @@ NEML2Action::setupOutputMappings(const neml2::eager::Model & model)
 }
 
 void
-NEML2Action::setupDerivativeMappings(const neml2::eager::Model & model)
+NEML2Action::setupDerivativeMappings(const NEML2ModelHandle & model)
 {
   const auto derivs = getParam<std::vector<std::vector<std::string>>>("derivatives");
   const auto in_shapes = shapeMap(model.input_names(), model.input_base_shapes());
@@ -479,9 +491,14 @@ NEML2Action::setupDerivativeMappings(const neml2::eager::Model & model)
 }
 
 std::string
-NEML2Action::resolveParameterName(const std::string & user_name,
-                                  const std::vector<std::string> & param_names) const
+NEML2Action::resolveParameterName(
+    const std::string & user_name,
+    const std::map<std::string, std::vector<int64_t>> & param_shapes) const
 {
+  std::vector<std::string> param_names;
+  for (const auto & [p, s] : param_shapes)
+    param_names.push_back(p);
+
   if (contains(param_names, user_name))
     return user_name;
 
@@ -516,15 +533,15 @@ NEML2Action::resolveParameterName(const std::string & user_name,
 }
 
 void
-NEML2Action::setupParameterMappings(const neml2::eager::Model & model)
+NEML2Action::setupParameterMappings(const NEML2ModelHandle & model)
 {
   const auto [param_types, params] = getInputParameterMapping<NEML2Utils::MOOSEIOType, std::string>(
       "parameter_types", "parameters");
-  const auto pshapes = shapeMap(model.param_names(), model.param_base_shapes());
+  const auto & pshapes = model.parameter_base_shapes();
 
   for (auto i : index_range(params))
   {
-    const auto qn = resolveParameterName(params[i], model.param_names());
+    const auto qn = resolveParameterName(params[i], pshapes);
     const auto mtype = shapeToMooseType(pshapes.at(qn));
     if (mtype.empty())
       mooseError(
@@ -534,11 +551,11 @@ NEML2Action::setupParameterMappings(const neml2::eager::Model & model)
 }
 
 void
-NEML2Action::setupParameterDerivativeMappings(const neml2::eager::Model & model)
+NEML2Action::setupParameterDerivativeMappings(const NEML2ModelHandle & model)
 {
   const auto derivs = getParam<std::vector<std::vector<std::string>>>("parameter_derivatives");
   const auto out_shapes = shapeMap(model.output_names(), model.output_base_shapes());
-  const auto pshapes = shapeMap(model.param_names(), model.param_base_shapes());
+  const auto & pshapes = model.parameter_base_shapes();
 
   for (auto i : index_range(derivs))
   {
@@ -550,7 +567,7 @@ NEML2Action::setupParameterDerivativeMappings(const neml2::eager::Model & model)
     const auto & x_user = derivs[i][1];
     if (!contains(model.output_names(), y))
       paramError("parameter_derivatives", "The NEML2 output variable ", y, " does not exist.");
-    const auto x = resolveParameterName(x_user, model.param_names());
+    const auto x = resolveParameterName(x_user, pshapes);
 
     // The derivative block's base shape is the concatenation of the output and parameter base
     // shapes.

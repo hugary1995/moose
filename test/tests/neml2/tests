@@ -10,6 +10,26 @@
     capabilities = 'libtorch & neml2'
     valgrind = heavy
   []
+  # cpp-aoti compile-then-run pipeline: compile the NEML2TestModel to an AOTI artifact, then
+  # evaluate it through the cpp-aoti runtime and check it reproduces the cpp-eager result (the
+  # run loads the artifact, so it implicitly verifies the compile produced it). Requires the
+  # activated neml2 conda environment (neml2-compile on PATH).
+  [aoti_compile]
+    requirement = 'The framework shall compile a NEML2 model to ahead-of-time (AOTI) artifacts.'
+    type = RunCommand
+    command = 'neml2-compile --model model models/custom_model.i --device cpu --output-dir aoti_artifacts --load models/test_models.py -d product:A'
+    capabilities = 'libtorch & neml2'
+    valgrind = none
+  []
+  [aoti_run]
+    requirement = 'The framework shall evaluate a NEML2 model through the cpp-aoti runtime, reproducing the cpp-eager result.'
+    type = Exodiff
+    prereq = 'aoti_compile'
+    input = 'custom_model_aoti.i'
+    exodiff = 'custom_model_aoti_out.e'
+    capabilities = 'libtorch & neml2'
+    valgrind = none
+  []
   [neml2_error]
     requirement = 'The framework shall be capable of capturing errors that occur during the evaluation of a NEML2 model.'
     type = RunException

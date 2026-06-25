@@ -503,7 +503,7 @@ NEML2ModelExecutor::getOutputParameterDerivative(const std::string & output_name
                parameter_name,
                "', but the NEML2 output variable does not exist.");
 
-  if (!contains(model().param_names(), parameter_name))
+  if (!model().parameter_base_shapes().count(parameter_name))
     mooseError("Trying to retrieve the derivative of NEML2 output variable '",
                output_name,
                "' with respect to NEML2 model parameter '",

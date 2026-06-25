@@ -1,3 +1,7 @@
+# cpp-aoti counterpart of custom_model.i: the same NEML2TestModel is evaluated through the
+# ahead-of-time-compiled artifact instead of the embedded (cpp-eager) interpreter. The artifact
+# is produced by the 'aoti_compile' test (neml2-compile), so this input has no source '.i', no
+# Python 'load', and no 'eager' flag (cpp-aoti is the default).
 [Mesh]
   [gmg]
     type = GeneratedMeshGenerator
@@ -8,20 +12,14 @@
 []
 
 [NEML2]
-  eager = true
-  input = 'models/custom_model.i'
+  # cpp-aoti runtime (default): load the compiled-artifact stub produced by neml2-compile (the
+  # 'aoti_compile' test). Both the setup-time introspection and the runtime evaluation read it via
+  # neml2::aoti::load_model -- no source .i, no Python at runtime.
+  input = 'aoti_artifacts/model_aoti.i'
   [all]
     model = 'model'
     verbose = true
     device = 'cpu'
-
-    # NEML2TestModel is hosted inside MOOSE as a Python module; importing it registers the type
-    # with the embedded (cpp-eager) interpreter so the input file can reference it.
-    load = 'models/test_models.py'
-
-    # use moose data as model parameters
-    parameter_types = 'MATERIAL VARIABLE'
-    parameters = '     p1       p2'
 
     # request derivatives (must be pairs of two)
     # derivative name follow moose convention, e.g., 'doutput/dinput'
@@ -63,9 +61,6 @@
 [AuxVariables]
   [A]
   []
-  [p2]
-    initial_condition = 2
-  []
 []
 
 [ICs]
@@ -82,11 +77,6 @@
     prop_names = 'B'
     prop_values = 'y+t'
     outputs = 'exodus'
-  []
-  [p1]
-    type = GenericConstantMaterial
-    prop_names = 'p1'
-    prop_values = 3
   []
 []
 

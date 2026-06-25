@@ -35,6 +35,7 @@
 []
 
 [NEML2]
+  eager = true
   input = 'models/custom_model.i'
   load = 'models/test_models.py'
   verbose = true

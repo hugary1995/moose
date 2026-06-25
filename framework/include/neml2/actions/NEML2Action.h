@@ -12,8 +12,7 @@
 #include <memory>
 
 #ifdef NEML2_ENABLED
-#include "neml2/csrc/eager/Model.h"
-#include "neml2/csrc/eager/load_model.h"
+#include "NEML2ModelHandle.h"
 #endif
 
 #include "Action.h"
@@ -66,24 +65,26 @@ protected:
   };
 
   /// Set up MOOSE-NEML2 input variable mappings
-  void setupInputMappings(const neml2::eager::Model &);
+  void setupInputMappings(const NEML2ModelHandle &);
 
   /// Set up MOOSE-NEML2 output variable mappings
-  void setupOutputMappings(const neml2::eager::Model &);
+  void setupOutputMappings(const NEML2ModelHandle &);
 
   /// Set up MOOSE-NEML2 derivative mappings
-  void setupDerivativeMappings(const neml2::eager::Model &);
+  void setupDerivativeMappings(const NEML2ModelHandle &);
 
   /// Set up MOOSE-NEML2 model parameter (value) mappings
-  void setupParameterMappings(const neml2::eager::Model &);
+  void setupParameterMappings(const NEML2ModelHandle &);
 
   /// Set up MOOSE-NEML2 output-parameter-derivative mappings
-  void setupParameterDerivativeMappings(const neml2::eager::Model &);
+  void setupParameterDerivativeMappings(const NEML2ModelHandle &);
 
   /// Resolve a user-written parameter name to a fully-qualified NEML2 parameter name. Accepts an
-  /// exact match or an unambiguous trailing ".<name>" suffix of a registered parameter.
-  std::string resolveParameterName(const std::string & user_name,
-                                   const std::vector<std::string> & param_names) const;
+  /// exact match or an unambiguous trailing ".<name>" suffix of a registered parameter. The
+  /// candidates are the keys of the model's parameter_base_shapes() map.
+  std::string
+  resolveParameterName(const std::string & user_name,
+                       const std::map<std::string, std::vector<int64_t>> & param_shapes) const;
 
   /// Infer the MOOSE IO type from the variable name (only scalar-typed variables can map to
   /// time/scalar/function/field quantities; everything else is a material property)
@@ -95,8 +96,9 @@ protected:
   /// List of cli-args
   std::vector<std::string> _cli_args;
 
-  /// The neml2 model (eager runtime, used here only for introspection during setup)
-  std::unique_ptr<neml2::eager::Model> _model;
+  /// The neml2 model handle, used here only for introspection during setup. Built from the
+  /// cpp-eager source ('input') or the cpp-aoti artifact ('meta') depending on 'eager'.
+  std::unique_ptr<NEML2ModelHandle> _model;
 
   /// MOOSE-NEML2 input variable mappings
   std::vector<VariableMapping> _inputs;

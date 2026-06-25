@@ -16,8 +16,7 @@
 #include "InputParameters.h"
 
 #ifdef NEML2_ENABLED
-#include "neml2/csrc/eager/Model.h"
-#include "neml2/csrc/eager/load_model.h"
+#include "NEML2ModelHandle.h"
 #endif
 
 /**
@@ -42,11 +41,11 @@ protected:
    */
   virtual void validateModel() const;
 
-  /// Get the NEML2 model (eager runtime)
-  const neml2::eager::Model & model() const { return _model; }
+  /// Get the NEML2 model handle (cpp-aoti by default, cpp-eager when eager=true)
+  const NEML2ModelHandle & model() const { return *_model; }
 
-  /// Non-const access to the NEML2 model, for runtime parameter writes (set_parameter)
-  neml2::eager::Model & model() { return _model; }
+  /// Non-const access to the NEML2 model handle, for runtime parameter writes (set_parameter)
+  NEML2ModelHandle & model() { return *_model; }
 
   /// Get the target compute device
   const at::Device & device() const { return _device; }
@@ -68,9 +67,10 @@ private:
   const at::Device _device;
   /// The device on which to store the outputs
   const at::Device _output_device;
-  /// The NEML2 material model. The eager runtime embeds a CPython interpreter and loads the
-  /// model directly from the input file -- no ahead-of-time compilation required.
-  neml2::eager::Model _model;
+  /// The NEML2 material model handle. Defaults to the cpp-aoti runtime (loads an ahead-of-time-
+  /// compiled artifact specified by 'meta'); the cpp-eager runtime (embeds a CPython interpreter
+  /// and loads the model from the source 'input' file) is opt-in via the 'eager' parameter.
+  std::unique_ptr<NEML2ModelHandle> _model;
 
 #endif // NEML2_ENABLED
 };
@@ -80,8 +80,17 @@ InputParameters
 NEML2ModelInterface<T>::validParams()
 {
   InputParameters params = T::validParams();
-  params.addParam<DataFileName>("input",
-                                "Path to the NEML2 input file containing the NEML2 model(s).");
+  params.addParam<bool>(
+      "eager",
+      false,
+      "Use the cpp-eager NEML2 runtime, which embeds a Python interpreter and loads the model "
+      "from the source 'input' file at runtime. Default false -- use the cpp-aoti runtime, which "
+      "loads an ahead-of-time-compiled artifact (no Python at runtime) from the compile stub "
+      "given by 'input'. The 'load' parameter is only valid with eager=true.");
+  params.addParam<DataFileName>(
+      "input",
+      "Path to the NEML2 '.i' file: the source model file for the cpp-eager runtime, or the "
+      "'<model>_aoti.i' stub produced by neml2-compile for the cpp-aoti runtime.");
   params.addParam<std::vector<std::string>>(
       "cli_args",
       {},
@@ -93,7 +102,8 @@ NEML2ModelInterface<T>::validParams()
       "relative to the input file and the application's data search path) imported into the "
       "embedded interpreter before the NEML2 model is built. Importing them registers any "
       "@register_neml2_object types they define -- e.g. NEML2 models hosted inside a MOOSE app -- "
-      "so the NEML2 input file can reference them. Mirrors the neml2 CLI --load flag.");
+      "so the NEML2 input file can reference them. Mirrors the neml2 CLI --load flag. Only valid "
+      "with the cpp-eager runtime (eager=true).");
   params.addParam<std::string>(
       "model",
       "",
@@ -134,15 +144,30 @@ NEML2ModelInterface<T>::NEML2ModelInterface(const InputParameters & params, P &&
                                           : this->getMooseApp().getLibtorchDevice()),
     _output_device(params.isParamValid("output_device")
                        ? at::Device(params.get<std::string>("output_device"))
-                       : _device),
-    // The eager runtime loads the model directly from the .i file (embedding CPython) and pins
-    // it to the requested device. The 'cli_args' parameter is currently not forwarded (NEML2 v3's
-    // eager load_model takes no extra parse arguments).
-    _model(std::string(params.get<DataFileName>("input")),
-           params.get<std::string>("model"),
-           _device,
-           loadExtensionPaths(params))
+                       : _device)
 {
+  // The cpp-eager runtime loads the model from the source .i (embedding CPython); the cpp-aoti
+  // runtime (default) loads the ahead-of-time-compiled artifact named by 'meta'. The 'cli_args'
+  // parameter is currently not forwarded (NEML2 v3's load takes no extra parse arguments).
+  const bool eager = params.get<bool>("eager");
+  const auto load = loadExtensionPaths(params);
+
+  // 'load' imports Python extensions into the embedded interpreter -- meaningful only for cpp-eager.
+  if (!eager && !load.empty())
+    this->paramError("load",
+                     "The 'load' parameter imports Python extensions into the embedded "
+                     "interpreter and is only valid with the cpp-eager runtime. Set eager=true to "
+                     "use it, or remove it for the cpp-aoti runtime.");
+
+  // 'input' is the source .i (cpp-eager) or the compiled-artifact stub .i (cpp-aoti).
+  if (!params.isParamValid("input"))
+    this->paramError("input", "'input' (the NEML2 source or AOTI stub '.i') is required.");
+
+  _model = makeNEML2ModelHandle(eager,
+                                std::string(params.get<DataFileName>("input")),
+                                params.get<std::string>("model"),
+                                _device,
+                                load);
 }
 
 template <class T>

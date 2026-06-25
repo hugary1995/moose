@@ -15,6 +15,7 @@
 []
 
 [NEML2]
+  eager = true
   input = 'model.i'
   [all]
     model = 'model'

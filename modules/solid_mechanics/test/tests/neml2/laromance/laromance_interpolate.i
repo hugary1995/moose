@@ -82,6 +82,7 @@ sample_file = "models/sampled_combinations.csv"
 []
 
 [NEML2]
+  eager = true
   input = 'models/laromance_matl_interp.i'
   # LAROMANCE6DInterpolation is a NEML2 model shipped by solid_mechanics (data/laromance/);
   # importing it registers the type with the embedded (cpp-eager) interpreter. Resolved on
