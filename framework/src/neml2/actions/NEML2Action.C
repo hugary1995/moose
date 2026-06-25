@@ -134,15 +134,29 @@ NEML2Action::NEML2Action(const InputParameters & params)
     paramError("load",
                "The 'load' parameter is only valid with the cpp-eager runtime (eager=true).");
 
-  // cpp-aoti dispatches the artifact to this device (it must name an artifact subfolder); mirrors
-  // NEML2ModelInterface's device resolution.
-  const at::Device device = isParamValid("device") ? at::Device(getParam<std::string>("device"))
-                                                   : _app.getLibtorchDevice();
+  // Device list (default app device) + per-device chunk sizes; mirrors NEML2ModelInterface so the
+  // introspection handle and the runtime executor resolve devices identically.
+  auto devices = getParam<std::vector<std::string>>("device");
+  if (devices.empty())
+    devices = {at::Device(_app.getLibtorchDevice()).str()};
+  auto db = getParam<std::vector<unsigned int>>("device_batch");
+  if (db.empty())
+    db = {0};
+  if (db.size() != 1 && db.size() != devices.size())
+    paramError("device_batch",
+               "'device_batch' must have length 1 or the same length as 'device'.");
+  const std::vector<std::size_t> batch_sizes(db.begin(), db.end());
+
+  // Host MPI communicator for the cpp-aoti CUDA scheduler (read at construction only).
+  const auto mpi_comm = comm().get();
+
   _fname = getParam<DataFileName>("input");
   _model = makeNEML2ModelHandle(eager,
                                 std::string(_fname),
                                 getParam<std::string>("model"),
-                                device,
+                                devices,
+                                batch_sizes,
+                                &mpi_comm,
                                 std::vector<std::string>(load_files.begin(), load_files.end()));
 #endif
 }

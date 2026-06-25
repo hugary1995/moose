@@ -32,6 +32,7 @@ function configure_neml2()
     -DCMAKE_BUILD_TYPE=Release \
     -DBUILD_TESTING=OFF \
     -DNEML2_CONTRIB_PREFIX="$2/contrib" \
+    -DNEML2_MPI=ON \
     -DPython3_EXECUTABLE="$(command -v python3)" \
     -Dtorch_SEARCH_SITE_PACKAGES=ON \
     -G "Unix Makefiles" \

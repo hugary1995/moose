@@ -63,14 +63,60 @@ private:
     return std::vector<std::string>(files.begin(), files.end());
   }
 
-  /// The device on which to evaluate the NEML2 model
+  /// Parse the runtime parameters and build the model handle. Static so it can run in the member
+  /// initializer list (before _device, which is read back from the handle). `self` supplies the
+  /// MooseObject services (paramError, comm, app) once the T base is constructed.
+  static std::unique_ptr<NEML2ModelHandle> makeModelHandle(const InputParameters & params,
+                                                           NEML2ModelInterface<T> & self)
+  {
+    const bool eager = params.get<bool>("eager");
+    const auto load = loadExtensionPaths(params);
+
+    // 'load' imports Python extensions into the embedded interpreter -- cpp-eager only.
+    if (!eager && !load.empty())
+      self.paramError("load",
+                      "The 'load' parameter imports Python extensions into the embedded "
+                      "interpreter and is only valid with the cpp-eager runtime. Set eager=true to "
+                      "use it, or remove it for the cpp-aoti runtime.");
+    // 'input' is the source .i (cpp-eager) or the compiled-artifact stub .i (cpp-aoti).
+    if (!params.isParamValid("input"))
+      self.paramError("input", "'input' (the NEML2 source or AOTI stub '.i') is required.");
+
+    // Device list (default: the app's libtorch compute device).
+    auto devices = params.get<std::vector<std::string>>("device");
+    if (devices.empty())
+      devices = {at::Device(self.getMooseApp().getLibtorchDevice()).str()};
+
+    // Per-device chunk sizes (default 0 = whole batch); length 1 broadcasts, else matches 'device'.
+    auto db = params.get<std::vector<unsigned int>>("device_batch");
+    if (db.empty())
+      db = {0};
+    if (db.size() != 1 && db.size() != devices.size())
+      self.paramError("device_batch",
+                      "'device_batch' must have length 1 or the same length as 'device'.");
+    const std::vector<std::size_t> batch_sizes(db.begin(), db.end());
+
+    // Host MPI communicator for the cpp-aoti CUDA scheduler (read at construction only; unused for
+    // cpp-eager and for CPU dispatch).
+    const auto mpi_comm = self.comm().get();
+
+    return makeNEML2ModelHandle(eager,
+                                std::string(params.get<DataFileName>("input")),
+                                params.get<std::string>("model"),
+                                devices,
+                                batch_sizes,
+                                &mpi_comm,
+                                load);
+  }
+
+  /// The NEML2 material model handle. Defaults to the cpp-aoti runtime (loads an ahead-of-time-
+  /// compiled artifact from the 'input' stub); the cpp-eager runtime (embeds a CPython interpreter
+  /// and loads the model from the source 'input' file) is opt-in via the 'eager' parameter.
+  std::unique_ptr<NEML2ModelHandle> _model;
+  /// The device on which to evaluate the NEML2 model (this rank's scheduler-assigned device)
   const at::Device _device;
   /// The device on which to store the outputs
   const at::Device _output_device;
-  /// The NEML2 material model handle. Defaults to the cpp-aoti runtime (loads an ahead-of-time-
-  /// compiled artifact specified by 'meta'); the cpp-eager runtime (embeds a CPython interpreter
-  /// and loads the model from the source 'input' file) is opt-in via the 'eager' parameter.
-  std::unique_ptr<NEML2ModelHandle> _model;
 
 #endif // NEML2_ENABLED
 };
@@ -109,18 +155,25 @@ NEML2ModelInterface<T>::validParams()
       "",
       "Name of the NEML2 model, i.e., the string inside the brackets [] in the NEML2 input file "
       "that corresponds to the model you want to use.");
-  params.addParam<std::string>(
+  params.addParam<std::vector<std::string>>(
       "device",
-      "Device on which to evaluate the NEML2 model. The string supplied must follow the following "
-      "schema: (cpu|cuda)[:<device-index>] where cpu or cuda specifies the device type, and "
-      ":<device-index> optionally specifies a device index. For example, device='cpu' sets the "
-      "target compute device to be CPU, and device='cuda:1' sets the target compute device to be "
-      "CUDA with device ID 1. If not specified, default to the compute device specified via the "
-      "command line argument --compute-device.");
+      {},
+      "Compute device(s) for the NEML2 model, each following the schema (cpu|cuda)[:<device-index>] "
+      "(e.g. 'cpu', 'cuda:1'). cpp-eager pins the model to the first device. cpp-aoti dispatches "
+      "over the list: a CUDA list is round-robined over the MPI ranks on each node (one device per "
+      "rank when counts match, sharing when there are more ranks than devices, an error when there "
+      "are fewer); a single 'cpu' runs each rank's local batch on CPU. If not specified, defaults "
+      "to the compute device from the --compute-device command line argument.");
+  params.addParam<std::vector<unsigned int>>(
+      "device_batch",
+      {},
+      "Per-device chunk size along the leading batch axis (0 = run the whole local batch at once). "
+      "Must have length 1 (broadcast to all devices) or match the length of 'device'. Defaults to "
+      "0.");
   params.addParam<std::string>(
       "output_device",
-      "Similar to the 'device' parameter, this parameter specifies the device on which to store "
-      "the outputs. Default to be the same as 'device'.");
+      "Device on which to store the outputs, following the same schema as a single 'device' entry. "
+      "Defaults to the model's compute device.");
 
   return params;
 }
@@ -140,34 +193,15 @@ template <class T>
 template <typename... P>
 NEML2ModelInterface<T>::NEML2ModelInterface(const InputParameters & params, P &&... args)
   : T(params, args...),
-    _device(params.isParamValid("device") ? at::Device(params.get<std::string>("device"))
-                                          : this->getMooseApp().getLibtorchDevice()),
+    // The cpp-eager runtime loads the model from the source .i (embedding CPython); the cpp-aoti
+    // runtime (default) loads the ahead-of-time-compiled artifact stub via neml2::aoti::load_model.
+    // makeModelHandle parses the runtime parameters; _device is the handle's resolved device.
+    _model(makeModelHandle(params, *this)),
+    _device(_model->device()),
     _output_device(params.isParamValid("output_device")
                        ? at::Device(params.get<std::string>("output_device"))
                        : _device)
 {
-  // The cpp-eager runtime loads the model from the source .i (embedding CPython); the cpp-aoti
-  // runtime (default) loads the ahead-of-time-compiled artifact named by 'meta'. The 'cli_args'
-  // parameter is currently not forwarded (NEML2 v3's load takes no extra parse arguments).
-  const bool eager = params.get<bool>("eager");
-  const auto load = loadExtensionPaths(params);
-
-  // 'load' imports Python extensions into the embedded interpreter -- meaningful only for cpp-eager.
-  if (!eager && !load.empty())
-    this->paramError("load",
-                     "The 'load' parameter imports Python extensions into the embedded "
-                     "interpreter and is only valid with the cpp-eager runtime. Set eager=true to "
-                     "use it, or remove it for the cpp-aoti runtime.");
-
-  // 'input' is the source .i (cpp-eager) or the compiled-artifact stub .i (cpp-aoti).
-  if (!params.isParamValid("input"))
-    this->paramError("input", "'input' (the NEML2 source or AOTI stub '.i') is required.");
-
-  _model = makeNEML2ModelHandle(eager,
-                                std::string(params.get<DataFileName>("input")),
-                                params.get<std::string>("model"),
-                                _device,
-                                load);
 }
 
 template <class T>

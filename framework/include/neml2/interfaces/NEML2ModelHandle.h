@@ -18,12 +18,13 @@
 #include <map>
 #include <vector>
 #include <utility>
+#include <cstddef>
 
 #include "neml2/csrc/eager/Model.h"
 #include "neml2/csrc/eager/load_model.h"
 #include "neml2/csrc/dispatchers/factory.h"
 #include "neml2/csrc/dispatchers/DispatchedModel.h"
-#include "neml2/csrc/dispatchers/SimpleScheduler.h"
+#include "neml2/csrc/dispatchers/MPISimpleScheduler.h"
 
 /**
  * Runtime-agnostic handle over a NEML2 v3 model.
@@ -64,10 +65,14 @@ public:
   /// Replace a (runtime-flexible) model parameter's value.
   virtual void set_parameter(const std::string & name, const at::Tensor & value) = 0;
   ///@}
+
+  /// The compute device this rank's workload runs on (for cpp-aoti, the scheduler-assigned device).
+  virtual at::Device device() const = 0;
 };
 
 /**
- * Handle wrapping the cpp-eager runtime (embeds CPython; loads from a source `.i`).
+ * Handle wrapping the cpp-eager runtime (embeds CPython; loads from a source `.i`). Single-device:
+ * the model is pinned to one device (cpp-eager has no scheduler / multi-device dispatch).
  */
 class EagerModelHandle : public NEML2ModelHandle
 {
@@ -109,6 +114,7 @@ public:
   {
     _m.set_parameter(name, value);
   }
+  at::Device device() const override { return _m.device(); }
 
 private:
   neml2::eager::Model _m;
@@ -116,16 +122,20 @@ private:
 
 /**
  * Handle wrapping the cpp-aoti runtime: a `neml2::aoti::DispatchedModel` loaded from a
- * `neml2-compile` stub `.i` via `neml2::aoti::load_model`. A `SimpleScheduler` (whole batch in
- * one chunk) pins the workload to the requested device.
+ * `neml2-compile` stub `.i` via `neml2::aoti::load_model`. An `MPISimpleScheduler` pins this rank's
+ * workload to a device, round-robining the device list over the MPI ranks on each node (the single
+ * "cpu" entry sends every rank's local batch to CPU). This matches MOOSE's MPI domain
+ * decomposition -- each rank evaluates its own local batch.
  */
 class AOTIModelHandle : public NEML2ModelHandle
 {
 public:
   AOTIModelHandle(const std::string & stub_file,
                   const std::string & model_name,
-                  const at::Device & device)
-    : _m(load(stub_file, model_name, device))
+                  const std::vector<std::string> & devices,
+                  const std::vector<std::size_t> & batch_sizes,
+                  const void * comm)
+    : _m(load(stub_file, model_name, devices, batch_sizes, comm))
   {
   }
 
@@ -158,17 +168,23 @@ public:
   {
     _m.set_parameter(name, value);
   }
+  at::Device device() const override { return _m.device(); }
 
 private:
-  /// Load the dispatched aoti model, pinning the whole batch to `device` in one chunk.
-  static neml2::aoti::DispatchedModel
-  load(const std::string & stub_file, const std::string & model_name, const at::Device & device)
+  /// Build the MPI scheduler (round-robin device list over the node's ranks) and load the
+  /// dispatched aoti model from the stub.
+  static neml2::aoti::DispatchedModel load(const std::string & stub_file,
+                                           const std::string & model_name,
+                                           const std::vector<std::string> & devices,
+                                           const std::vector<std::size_t> & batch_sizes,
+                                           const void * comm)
   {
-    neml2::aoti::SimpleScheduler::Config config;
-    config.device = device.str();
-    config.batch_size = 0; // run the whole batch at once (no chunking)
+    neml2::aoti::MPISimpleScheduler::Config config;
+    config.devices = devices;
+    config.batch_sizes = batch_sizes;
+    config.comm = comm;
     return neml2::aoti::load_model(
-        stub_file, model_name, std::make_shared<neml2::aoti::SimpleScheduler>(config));
+        stub_file, model_name, std::make_shared<neml2::aoti::MPISimpleScheduler>(config));
   }
 
   neml2::aoti::DispatchedModel _m;
@@ -177,25 +193,30 @@ private:
 /**
  * Construct a NEML2 model handle for the requested runtime.
  *
- * @param eager   When true, build a cpp-eager model from the source `.i`; when false, build a
- *                cpp-aoti dispatched model from the compiled-artifact stub `.i`.
- * @param input   Path to the NEML2 `.i`: the source file for cpp-eager, the `neml2-compile` stub
- *                for cpp-aoti.
- * @param model   Name of the model in the `.i`.
- * @param device  Compute device. cpp-eager pins the model to it; cpp-aoti dispatches to it via a
- *                SimpleScheduler (the device must name an artifact subfolder).
- * @param load    External Python extension paths to import before building (cpp-eager only).
+ * @param eager        When true, build a cpp-eager model from the source `.i`; when false, build a
+ *                     cpp-aoti dispatched model from the compiled-artifact stub `.i`.
+ * @param input        Path to the NEML2 `.i`: the source file for cpp-eager, the `neml2-compile`
+ *                     stub for cpp-aoti.
+ * @param model        Name of the model in the `.i`.
+ * @param devices      Compute device(s). cpp-eager pins to the first; cpp-aoti dispatches over the
+ *                     list (a CUDA list round-robins over the MPI ranks; a single CPU runs locally).
+ * @param batch_sizes  Per-device chunk size (0 = whole batch). Length 1 broadcasts to all devices.
+ * @param comm         Pointer to the host MPI communicator (nullptr => MPI_COMM_WORLD); used by the
+ *                     CUDA MPI scheduler only.
+ * @param load         External Python extension paths to import before building (cpp-eager only).
  */
 inline std::unique_ptr<NEML2ModelHandle>
 makeNEML2ModelHandle(bool eager,
                      const std::string & input,
                      const std::string & model,
-                     const at::Device & device,
+                     const std::vector<std::string> & devices,
+                     const std::vector<std::size_t> & batch_sizes,
+                     const void * comm,
                      const std::vector<std::string> & load)
 {
   if (eager)
-    return std::make_unique<EagerModelHandle>(input, model, device, load);
-  return std::make_unique<AOTIModelHandle>(input, model, device);
+    return std::make_unique<EagerModelHandle>(input, model, at::Device(devices.at(0)), load);
+  return std::make_unique<AOTIModelHandle>(input, model, devices, batch_sizes, comm);
 }
 
 #endif // NEML2_ENABLED
