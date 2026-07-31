@@ -77,6 +77,8 @@ The test: Every changed line should trace directly to the user's request.
   reducing permission prompting.
 - Before building or testing with conda, ask the user which conda environment
   to activate rather than guessing.
+- Treat submodule files as first-class files in the repository; read, write,
+  and navigate them exactly as you would files in the root repository.
 
 ## 7. Goal-Driven Execution
 
@@ -95,6 +97,16 @@ For multi-step tasks, state a brief plan:
 ```
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+
+## 8. Session Context Length Handling
+
+When the user says they're reaching the end of the context window, switch to planning mode,
+and summarize what work remains to be done. This summary should be pastable into
+a clean context window and allow the user to continue seamlessly. The summary
+must include:
+- The original goal and any constraints or decisions made along the way.
+- Remaining steps with enough detail to resume without re-investigation.
+- Any open questions or unresolved tradeoffs.
 
 ---
 
