@@ -13,6 +13,11 @@
 #include "NonlinearSystem.h"
 #include "NonlinearSystemBase.h"
 #include "SNESNPCExecutor.h"
+#include "NodalBCBase.h"
+#include "MooseVariableBase.h"
+#include "MooseMesh.h"
+#include "BndNode.h"
+#include "Moose.h"
 
 #include "libmesh/libmesh.h"
 #include "libmesh/petsc_solver_exception.h"
@@ -22,6 +27,9 @@
 
 #include <petscsnes.h>
 #include <petscsys.h>
+
+#include <array>
+#include <string>
 
 registerMooseObject("MooseApp", NewtonSNESExecutor);
 
@@ -42,11 +50,54 @@ NewtonSNESExecutor::validParams()
       "convergence_names",
       "Convergence object name(s) for each nonlinear system. If provided, must have the same "
       "length as 'nonlinear_system_names'.");
+  params.addParam<PostprocessorName>(
+      "energy_postprocessor",
+      "Postprocessor giving the total potential energy Psi(x). If set, the outer SPIN line search "
+      "uses the energy as its merit (paper App. B/C: it is C^1 across the penalty kink and admits "
+      "a descent-direction fallback). If unset, the line search uses the preconditioned residual "
+      "norm merit 1/2||x - NPC(x)||^2.");
+  params.addParam<bool>(
+      "use_trust_region",
+      false,
+      "If true (requires energy_postprocessor), globalize the outer SPIN solve with a ratio-based "
+      "TRUST REGION on the energy merit instead of the App. B/C strong-Wolfe line search. The "
+      "actual/predicted energy-reduction ratio accepts/shrinks the step and adapts the radius, "
+      "degrading gracefully at crack propagation rather than spiraling the time step to dtmin. See "
+      "'trust_region_solver' for how the trust-region subproblem is solved.");
+  params.addParam<MooseEnum>(
+      "trust_region_solver",
+      MooseEnum("steihaug tr_linesearch", "steihaug"),
+      "Trust-region subproblem solver (when use_trust_region=true): 'steihaug' = SPIN-preconditioned "
+      "Steihaug-Toint truncated CG over the full space (explores the Krylov subspace, handles "
+      "indefinite Hessians via a negative-curvature-to-boundary exit); 'tr_linesearch' = a 1-D "
+      "quadratic energy model along the single SPIN direction (cheaper, but stalls when that "
+      "direction is nearly orthogonal to grad(Psi), e.g. during crack propagation).");
+  params.addParam<bool>(
+      "tr_npc",
+      false,
+      "Nonlinear-preconditioner usage inside the Steihaug trust region (use_trust_region=true, "
+      "steihaug). false = (A) NO nonlinear preconditioning: plain coupled Newton trust region on "
+      "grad^2 Psi (monolithic-family). true = (B) apply one multiplicative-Schwarz NPC sweep "
+      "X <- NPC(X) EVERY outer iteration, then take the Steihaug-TR step at NPC(X) -- the "
+      "'trust-region version of MSPIN' (same nonlinear-preconditioning cadence as the App. C line "
+      "search, but TR globalization).");
   return params;
 }
 
-NewtonSNESExecutor::NewtonSNESExecutor(const InputParameters & params) : SNESExecutor(params)
+NewtonSNESExecutor::NewtonSNESExecutor(const InputParameters & params)
+  : SNESExecutor(params),
+    _energy_pp_name(isParamValid("energy_postprocessor")
+                        ? getParam<PostprocessorName>("energy_postprocessor")
+                        : PostprocessorName("")),
+    _has_energy_pp(isParamValid("energy_postprocessor")),
+    _use_trust_region(getParam<bool>("use_trust_region")),
+    _tr_steihaug(getParam<MooseEnum>("trust_region_solver") == "steihaug"),
+    _tr_npc(getParam<bool>("tr_npc"))
 {
+  if (_use_trust_region && !_has_energy_pp)
+    paramError("use_trust_region",
+               "use_trust_region requires energy_postprocessor (the trust region globalizes the "
+               "energy merit).");
   // I don't actually know if this is possible with the parser like if the user passes an empty
   // string
   const auto & nl_sys_names = getParam<std::vector<NonlinearSystemName>>("nonlinear_system_names");
@@ -110,6 +161,17 @@ NewtonSNESExecutor::NewtonSNESExecutor(const InputParameters & params) : SNESExe
 
 NewtonSNESExecutor::~NewtonSNESExecutor()
 {
+  if (_r_plain)
+    PetscCallAbort(this->comm().get(), VecDestroy(&_r_plain));
+  if (_fullJ_ksp)
+    PetscCallAbort(this->comm().get(), KSPDestroy(&_fullJ_ksp));
+  if (_pc_ksp0)
+    PetscCallAbort(this->comm().get(), KSPDestroy(&_pc_ksp0));
+  if (_pc_ksp1)
+    PetscCallAbort(this->comm().get(), KSPDestroy(&_pc_ksp1));
+  for (Vec * v : {&_cg_p, &_cg_r, &_cg_y, &_cg_d, &_cg_Ad, &_cg_Pp, &_cg_Pd})
+    if (*v)
+      PetscCallAbort(this->comm().get(), VecDestroy(v));
   if (_jac_shell)
     PetscCallAbort(this->comm().get(), MatDestroy(&_jac_shell));
   if (_mat_nest)
@@ -167,8 +229,18 @@ NewtonSNESExecutor::setupSNES()
   LibmeshPetscCallA(this->comm().get(),
                     MatShellSetOperation(_jac_shell, MATOP_MULT, (PetscErrorCodeFn *)shellMatMult));
 
-  LibmeshPetscCallA(this->comm().get(),
-                    SNESSetJacobian(_snes, _jac_shell, _mat_nest, outerJacobianCallback, this));
+  // For the Steihaug trust-region variants -- (A) no-NPC and (B) NPC-every-iteration -- the shell
+  // line search computes its own step from the coupled Hessian _mat_nest; the outer Krylov direction
+  // is discarded. So the outer SNES Jacobian operator is the raw _mat_nest (never the applyBA shell),
+  // the outer function is the PLAIN residual (no automatic NPC sweep -- (B) applies the NPC itself in
+  // the line search), and the outer KSP is made a trivial PREONLY solve below. The App. B/C line
+  // search paths keep the SPIN wiring (shell operator A = M^{-1}A, preconditioned fixed-point residual).
+  const bool tr_coupled = _use_trust_region && _tr_steihaug;
+
+  LibmeshPetscCallA(
+      this->comm().get(),
+      SNESSetJacobian(
+          _snes, tr_coupled ? _mat_nest : _jac_shell, _mat_nest, outerJacobianCallback, this));
 
   // Outer KSP needs no linear preconditioner: all preconditioning is at the NL level.
   KSP ksp;
@@ -177,13 +249,97 @@ NewtonSNESExecutor::setupSNES()
   LibmeshPetscCallA(this->comm().get(), KSPGetPC(ksp, &pc));
   LibmeshPetscCallA(this->comm().get(), PCSetType(pc, PCNONE));
 
-  // Drive ||x - NPC(x)|| to zero (ASPIN-style fixed-point convergence).
-  LibmeshPetscCallA(this->comm().get(), SNESSetNPCSide(_snes, PC_LEFT));
-  LibmeshPetscCallA(this->comm().get(), SNESSetFunctionType(_snes, SNES_FUNCTION_PRECONDITIONED));
+  if (!tr_coupled)
+  {
+    // Drive ||x - NPC(x)|| to zero (ASPIN-style fixed-point convergence).
+    LibmeshPetscCallA(this->comm().get(), SNESSetNPCSide(_snes, PC_LEFT));
+    LibmeshPetscCallA(this->comm().get(),
+                      SNESSetFunctionType(_snes, SNES_FUNCTION_PRECONDITIONED));
+  }
 
   // Set options prefix and set from options
   LibmeshPetscCallA(this->comm().get(), SNESSetOptionsPrefix(_snes, (this->name() + "_").c_str()));
   LibmeshPetscCallA(this->comm().get(), SNESSetFromOptions(_snes));
+
+  // For the coupled trust-region variants make the outer Krylov a trivial PREONLY solve -- the shell
+  // line search discards the outer direction and steps via the Steihaug TRS. Done AFTER
+  // SNESSetFromOptions so it wins over any -<name>_ksp_type option (e.g. gmres) in the input.
+  if (tr_coupled)
+    LibmeshPetscCallA(this->comm().get(), KSPSetType(ksp, KSPPREONLY));
+
+  // Install a custom shell line search for the preconditioned SPIN residual. Done AFTER
+  // SNESSetFromOptions so it wins over any -<name>_snes_linesearch_type option. The stock line
+  // search evaluates trial points with the plain residual (SNESComputeFunction), which is
+  // inconsistent with the preconditioned residual F_SPIN = x - NPC(x) that this outer SNES
+  // actually drives to zero, and consequently cannot backtrack once the fields couple strongly.
+  // spinLineSearch uses SNESApplyNPC at every trial for a consistent merit (see its definition).
+  SNESLineSearch ls;
+  LibmeshPetscCallA(this->comm().get(), SNESGetLineSearch(_snes, &ls));
+  LibmeshPetscCallA(this->comm().get(), SNESLineSearchSetType(ls, SNESLINESEARCHSHELL));
+  LibmeshPetscCallA(this->comm().get(),
+                    SNESLineSearchShellSetApply(ls, &NewtonSNESExecutor::spinLineSearch, this));
+
+  // Full-Jacobian KSP for the App. C inexact-Newton fallback direction (energy merit only). Its
+  // operators are (re)set to the current _mat_nest inside the line search, since buildMatNest()
+  // recreates _mat_nest each solve. Fieldsplit is the natural preconditioner for the 2-field nest;
+  // a loose tolerance suffices for a fallback direction. Tunable via -<name>_fullj_* options.
+  if (_has_energy_pp)
+  {
+    // Dedicated plain-residual VecNest (grad Psi) for the energy line search.
+    LibmeshPetscCallA(this->comm().get(), VecDuplicate(_vec_func, &_r_plain));
+
+    PC pc_fullj;
+    LibmeshPetscCallA(this->comm().get(), KSPCreate(this->comm().get(), &_fullJ_ksp));
+    LibmeshPetscCallA(this->comm().get(),
+                      KSPSetOptionsPrefix(_fullJ_ksp, (this->name() + "_fullj_").c_str()));
+    LibmeshPetscCallA(this->comm().get(), KSPSetType(_fullJ_ksp, KSPGMRES));
+    LibmeshPetscCallA(this->comm().get(), KSPGetPC(_fullJ_ksp, &pc_fullj));
+    LibmeshPetscCallA(this->comm().get(), PCSetType(pc_fullj, PCFIELDSPLIT));
+    LibmeshPetscCallA(this->comm().get(),
+                      KSPSetTolerances(_fullJ_ksp, 1e-3, PETSC_DEFAULT, PETSC_DEFAULT, 200));
+    LibmeshPetscCallA(this->comm().get(), KSPSetFromOptions(_fullJ_ksp));
+
+    // Outer convergence on the COUPLED residual ||F|| = ||grad Psi|| -- NOT the preconditioned
+    // residual ||x - NPC(x)||. Verified from the paper: Algorithm 3's while-condition is
+    // ||F(U,C)|| >= eps_rel ||F(U0,C0)|| (F = the coupled/monolithic residual, eq. 14 = grad Psi),
+    // and Table A.7 documents -snes_atol/-snes_rtol as "(coupled residual)". The scheme is an ENERGY
+    // MINIMIZER: merit = Psi (App. B strong Wolfe on the energy), so the line search drives
+    // grad Psi -> 0, and the convergence test must be on the SAME quantity (grad Psi). Converging on
+    // ||x - NPC(x)|| instead is inconsistent with the energy merit and stalls at a spurious floor in
+    // the non-convex (coupled) regime (the energy-optimal step reduces grad Psi but not the
+    // fixed-point residual). ||grad Psi|| is cached in _r_norm/_r0_norm by spinLineSearch.
+    LibmeshPetscCallA(this->comm().get(),
+                      SNESSetConvergenceTest(_snes, outerConvergenceTest, this, nullptr));
+
+    if (_use_trust_region && _tr_steihaug)
+    {
+      // Block-Jacobi field-split preconditioner for the Steihaug TRS: exact-ish solves on the two
+      // SPD diagonal blocks A00 (disp), A11 (pf). Prototype default = LU (fast on the coarse mesh);
+      // tunable via -<name>_trpc0_* / -<name>_trpc1_* (e.g. hypre for larger meshes). Operators are
+      // (re)bound to the current diagonal blocks inside steihaugTRS (buildMatNest recreates them).
+      Mat A00, A11;
+      LibmeshPetscCallA(this->comm().get(), MatNestGetSubMat(_mat_nest, 0, 0, &A00));
+      LibmeshPetscCallA(this->comm().get(), MatNestGetSubMat(_mat_nest, 1, 1, &A11));
+      const std::array<std::pair<KSP *, Mat>, 2> blocks{{{&_pc_ksp0, A00}, {&_pc_ksp1, A11}}};
+      for (std::size_t b = 0; b < blocks.size(); ++b)
+      {
+        KSP * ksp = blocks[b].first;
+        PC pc_b;
+        LibmeshPetscCallA(this->comm().get(), KSPCreate(this->comm().get(), ksp));
+        LibmeshPetscCallA(
+            this->comm().get(),
+            KSPSetOptionsPrefix(*ksp, (this->name() + "_trpc" + std::to_string(b) + "_").c_str()));
+        LibmeshPetscCallA(this->comm().get(), KSPSetType(*ksp, KSPPREONLY));
+        LibmeshPetscCallA(this->comm().get(), KSPGetPC(*ksp, &pc_b));
+        LibmeshPetscCallA(this->comm().get(), PCSetType(pc_b, PCLU));
+        LibmeshPetscCallA(this->comm().get(), KSPSetOperators(*ksp, blocks[b].second, blocks[b].second));
+        LibmeshPetscCallA(this->comm().get(), KSPSetFromOptions(*ksp));
+      }
+      // CG scratch VecNests (same block layout as the residual/solution nest).
+      for (Vec * v : {&_cg_p, &_cg_r, &_cg_y, &_cg_d, &_cg_Ad, &_cg_Pp, &_cg_Pd})
+        LibmeshPetscCallA(this->comm().get(), VecDuplicate(_vec_func, v));
+    }
+  }
 
   _snes_setup_done = true;
 }
@@ -241,7 +397,37 @@ NewtonSNESExecutor::run()
   else
     buildMatNest();
 
-  LibmeshPetscCallA(this->comm().get(), SNESSetNPC(_snes, _npc_executor->getSNES()));
+  // Attach the nonlinear preconditioner for the App. B/C line-search paths. NOT for the coupled
+  // trust-region variants (A) and (B): (A) uses no NPC at all; (B) applies the NPC sweep EXPLICITLY
+  // in the line search via SNESSolve on the NMSM shell (see spinLineSearch). Attaching it would make
+  // PETSc's NEWTONLS auto-apply the NPC every iteration, doubling the sweep (measured 2x).
+  const bool tr_coupled = _use_trust_region && _tr_steihaug;
+  if (!tr_coupled)
+    LibmeshPetscCallA(this->comm().get(), SNESSetNPC(_snes, _npc_executor->getSNES()));
+
+  // For an energy-based line search, the outer iterate must satisfy the current step's Dirichlet
+  // boundary conditions from iteration 0 -- otherwise Psi(X_0) omits the boundary-condition energy
+  // (e.g. Psi(0)=0 at an undeformed start) and no step can reduce the (non-negative) energy below
+  // it, so the line search fails immediately. Preset the nodal BCs into each system's solution and
+  // re-seed the outer iterate from it. (The residual-norm merit does not need this, since
+  // ||x - NPC(x)|| -> 0 at the solution regardless of how the BC is reached.)
+  if (_has_energy_pp)
+    for (const auto i : index_range(_nl_sys_nums))
+    {
+      auto & sys_i = _fe_problem.getNonlinearSystemBase(static_cast<unsigned int>(i));
+      sys_i.setInitialSolution();
+      Vec libmesh_sol =
+          cast_ptr<libMesh::PetscVector<libMesh::Number> *>(sys_i.system().solution.get())->vec();
+      Vec sub;
+      LibmeshPetscCallA(this->comm().get(), VecNestGetSubVec(_vec_sol, i, &sub));
+      LibmeshPetscCallA(this->comm().get(), VecCopy(libmesh_sol, sub));
+    }
+
+  // Reset the ||grad Psi|| convergence baseline for this solve (energy-merit path).
+  _r_norm = -1.0;
+  _r0_norm = -1.0;
+  // Reset the trust-region radius; it is initialized to ||Y|| on the first line search of the solve.
+  _tr_radius = -1.0;
 
   LibmeshPetscCallA(this->comm().get(), SNESSolve(_snes, nullptr, _vec_sol));
 
@@ -276,8 +462,10 @@ NewtonSNESExecutor::allocateOffDiagMats()
       // We'll allow the matrix to be hash table assembled
       mat->init_without_preallocation(m, n, m_l, n_l, 1);
       mat->finish_initialization();
+      // Allow new nonzeros: the AMR column-constraint distribution in assembleOffDiagJacobian adds
+      // parent-column entries (J_ij(:,parent) += w*J_ij(:,hanging)) that need not be in the raw pattern.
       LibmeshPetscCallA(_fe_problem.comm().get(),
-                        MatSetOption(mat->mat(), MAT_NEW_NONZERO_ALLOCATION_ERR, PETSC_TRUE));
+                        MatSetOption(mat->mat(), MAT_NEW_NONZERO_ALLOCATION_ERR, PETSC_FALSE));
 
       const std::pair<unsigned int, unsigned int> key{i, j};
       auto & [our_mat, tag] = libmesh_map_find(_off_diag_mats, key);
@@ -336,9 +524,72 @@ NewtonSNESExecutor::assembleOffDiagJacobian()
 
       const auto nl_sys_j_num = _nl_sys_nums[j];
       _fe_problem.setJacobianBlockContext(nl_sys_i_num, nl_sys_j_num);
+      // NB: we deliberately do NOT force the element-level constraint path here (e.g. via
+      // setCurrentNonlinearSystem(i)) -- MOOSE's constrain_element_matrix uses a single (row-system)
+      // DofMap and throws "Column too large" on the cross-system columns (col in system j exceeds
+      // system i's dof range). That single-DofMap limitation is idaholab/moose#33478. We instead apply
+      // the row-system constraints to the assembled global block below (post-processing).
       const std::pair<unsigned int, unsigned int> key{i, j};
       auto & [J_ij, tag] = libmesh_map_find(_off_diag_mats, key);
       _fe_problem.computeJacobianTag(*sys_i.system().current_local_solution, *J_ij, tag);
+
+      // Make the off-diagonal block consistent with the AMR hanging-node constraints, matching the
+      // FORM used by dof_map.enforce_constraints_on_jacobian() on the diagonal blocks: a hanging DOF h
+      // of the ROW system i keeps its DOF but has its equation replaced by the interpolation
+      // constraint (u_h - sum_p w_p u_p = 0), which has NO system-j dependence, so row h of the
+      // off-diagonal block J_ij must be ZERO. No parent-row redistribution is applied (that would be
+      // the C^T A C form; enforce_constraints_on_jacobian instead sets the constraint row, so the
+      // residual/diagonal are NOT redistributed -- redistributing the off-diagonal makes it
+      // inconsistent and degrades the SPIN direction, verified). System-j hanging COLUMNS need no
+      // treatment for the SPIN direction: Y on those DOFs is fixed by the constraint row of the
+      // diagonal block A_jj, so the raw column already yields the correct A_ij*Y (verified: distributing
+      // system-j columns leaves both the SPIN direction and the FD Jacobian check unchanged). A fully
+      // consistent cross-system block (P_i^T A_ij P_j, both DofMaps) would need a two-DofMap constraint
+      // API that neither MOOSE nor libMesh provides; that general framework fix is idaholab/moose#33478.
+      auto & dof_map_i = sys_i.system().get_dof_map();
+      std::vector<PetscInt> crows;
+      for (libMesh::dof_id_type d = dof_map_i.first_dof(); d < dof_map_i.end_dof(); ++d)
+        if (dof_map_i.is_constrained_dof(d))
+          crows.push_back(static_cast<PetscInt>(d));
+
+      // ALSO zero the row-system's NODAL-BC (Dirichlet) rows. These are applied via the nodal-BC path
+      // (setResidual/constrainJacobianRow on the diagonal block), NOT libMesh DofMap constraints, so
+      // is_constrained_dof() above MISSES them -- and on a static conforming mesh (no hanging nodes)
+      // that leaves crows empty, so the off-diagonal block keeps its Dirichlet rows. Then the coupled
+      // Jacobian's constrained row is [I | A_ij[bc,:]] instead of a clean identity, and the Newton/CG
+      // step drifts the constrained DOFs by -A_ij[bc,:]*p_j (proportional to the OTHER field's step:
+      // ~0 in the elastic regime, large at damage nucleation -> the constrained disp DOFs blow up and
+      // the solve stalls). Enumerate them from the nodal-BC warehouse of the row system so the coupled
+      // Dirichlet row is a pure identity (row zero in every off-diagonal block).
+      const auto sysnum = sys_i.system().number();
+      const auto & nodal_bcs = sys_i.getNodalBCWarehouse();
+      if (nodal_bcs.hasActiveObjects())
+      {
+        ConstBndNodeRange & bnd_nodes = *_fe_problem.mesh().getBoundaryNodeRange();
+        for (const auto & bnode : bnd_nodes)
+        {
+          const BoundaryID bid = bnode->_bnd_id;
+          const libMesh::Node * node = bnode->_node;
+          if (node->processor_id() != this->processor_id())
+            continue;
+          if (!nodal_bcs.hasActiveBoundaryObjects(bid, 0))
+            continue;
+          for (const auto & bc : nodal_bcs.getActiveBoundaryObjects(bid, 0))
+          {
+            const auto varnum = bc->variable().number();
+            const auto ncomp = node->n_comp(sysnum, varnum);
+            for (unsigned int comp = 0; comp < ncomp; ++comp)
+              crows.push_back(static_cast<PetscInt>(node->dof_number(sysnum, varnum, comp)));
+          }
+        }
+      }
+
+      // MatZeroRows is COLLECTIVE: every rank must call it (with its own local constrained rows, which
+      // may be zero), else ranks with no constrained DOFs skip it and the others deadlock.
+      LibmeshPetscCallA(
+          _fe_problem.comm().get(),
+          MatZeroRows(
+              J_ij->mat(), crows.size(), crows.empty() ? nullptr : crows.data(), 0.0, nullptr, nullptr));
     }
   }
 }
@@ -374,23 +625,1220 @@ NewtonSNESExecutor::shellMatMult(Mat m, Vec X, Vec Y)
   PetscFunctionReturn(PETSC_SUCCESS);
 }
 
+void
+NewtonSNESExecutor::scatterToSystems(Vec x)
+{
+  PetscInt n_sub;
+  LibmeshPetscCallA(this->comm().get(), VecNestGetSize(x, &n_sub));
+  for (PetscInt i = 0; i < n_sub; ++i)
+  {
+    Vec sub_x;
+    LibmeshPetscCallA(this->comm().get(), VecNestGetSubVec(x, i, &sub_x));
+    auto & lm_sys = _fe_problem.getNonlinearSystemBase(static_cast<unsigned int>(i)).system();
+    Vec sol_i = cast_ptr<libMesh::PetscVector<libMesh::Number> *>(lm_sys.solution.get())->vec();
+    LibmeshPetscCallA(this->comm().get(), VecCopy(sub_x, sol_i));
+    lm_sys.update();
+  }
+}
+
+Real
+NewtonSNESExecutor::computeEnergy(Vec x)
+{
+  scatterToSystems(x);
+  // Re-integrate the total-potential-energy postprocessor at the scattered iterate. EXEC_LINESEARCH
+  // carries only the energy postprocessor, so this recomputes its material dependency chain
+  // (strain -> elasticity -> psie -> psi_total) at x without other exec-flag side effects.
+  _fe_problem.execute(EXEC_LINESEARCH);
+  return _fe_problem.getPostprocessorValueByName(_energy_pp_name);
+}
+
+void
+NewtonSNESExecutor::computePlainResidual(Vec x)
+{
+  scatterToSystems(x);
+  const unsigned int n_sys = _fe_problem.numNonlinearSystems();
+
+  // Repoint each system's current-solution pointer at the scattered iterate (the residual assembly
+  // reads _current_solution, repointed only by SolverSystem::setSolution()). Do this for ALL
+  // systems first so cross-system coupling terms see the correct state.
+  for (unsigned int i = 0; i < n_sys; ++i)
+  {
+    auto & sys_i = _fe_problem.getNonlinearSystemBase(i);
+    sys_i.setSolution(*sys_i.system().current_local_solution);
+  }
+  for (unsigned int i = 0; i < n_sys; ++i)
+  {
+    auto & sys_i = _fe_problem.getNonlinearSystemBase(i);
+    _fe_problem.setCurrentNonlinearSystem(i);
+
+    // FEProblem-level residual assembly, mirroring the normal solve path (and the working
+    // outerJacobianCallback, which uses _fe_problem.computeJacobian). Driving the bare system-level
+    // sys_i.computeResidualTags() instead produces an identically-zero residual: it SKIPS
+    // FEProblemBase::computeResidualTags' pre-assembly setup, and in particular never calls
+    // setCurrentResidualVectorTags(). FEProblemBase::addResidual() distributes each element's
+    // accumulated residual into exactly the vectors named by currentResidualVectorTags(); with that
+    // set empty (cleared by the preceding Jacobian eval's resetState()), every kernel contribution
+    // is scattered into no vector, so _Re_non_time stays 0 and residual += *_Re_non_time gives 0.
+    // We call computeResidualInternal() (not the computeResidual(soln,residual,nl) wrapper) because
+    // only the wrapper touches the shared _fe_vector_tags member + mooseAssert(empty()) that is not
+    // reentrant inside the outer SNES line search; computeResidualInternal/computeResidualTags take
+    // the tag set by argument and are reentrancy-safe. Associate RHS to the residual tag BEFORE
+    // selecting tags so residualVectorTag() is included (required for the residual += _Re_non_time
+    // step). Do NOT additionally invoke the bare system-level path here: its element loop caches
+    // residual contributions that a later good assembly then double-counts (observed as ratio 0.5).
+    sys_i.associateVectorToTag(sys_i.RHS(), sys_i.residualVectorTag());
+    std::set<TagID> local_tags;
+    _fe_problem.selectVectorTagsFromSystem(
+        sys_i, _fe_problem.getVectorTags(Moose::VECTOR_TAG_RESIDUAL), local_tags);
+    _fe_problem.computeResidualInternal(
+        *sys_i.system().current_local_solution, sys_i.RHS(), local_tags);
+
+    // Copy the freshly assembled residual into _r_plain. The outer SNES function vector F is
+    // recomputed (SNESApplyNPC) before it is used for convergence, so temporarily overwriting
+    // sys.RHS() here is safe; the energy line search reads grad Psi from _r_plain.
+    Vec rhs_i = cast_ptr<libMesh::PetscVector<libMesh::Number> *>(&sys_i.RHS())->vec();
+    Vec sub;
+    LibmeshPetscCallA(this->comm().get(),
+                      VecNestGetSubVec(_r_plain, static_cast<PetscInt>(i), &sub));
+    LibmeshPetscCallA(this->comm().get(), VecCopy(rhs_i, sub));
+  }
+}
+
+bool
+NewtonSNESExecutor::energyBacktrack(Vec X,
+                                    Vec Y,
+                                    Vec W,
+                                    Real psiX,
+                                    Real slope,
+                                    Real minlambda,
+                                    PetscInt max_it,
+                                    Real & lambda_out,
+                                    Real & psiW_out)
+{
+  const Real c1 = 1e-4; // sufficient-decrease constant (paper)
+  // Energy sufficient-decrease cushion. The SPIN direction targets F_SPIN = 0, not the energy
+  // minimum; near the solution its Newton step (alpha=1) reduces ||F_precond|| (verified to machine
+  // precision) but raises Psi by a hair (residual NPC inexactness -> the F_SPIN fixed point differs
+  // from the energy min at ~1e-8 of |Psi|). A strict Armijo test rejects that step and clips
+  // alpha->0, freezing ||F_precond|| ~1.5 orders above tolerance. The cushion ignores energy changes
+  // below a meaningful fraction of the total energy, so the SPIN step is accepted whenever it does
+  // not INCREASE the energy meaningfully -- the correct globalization for a preconditioned-residual
+  // Newton direction. (A catastrophic energy increase, e.g. an unstable jump at crack nucleation,
+  // still exceeds the cushion and triggers the App. C fallback.)
+  const Real energy_tol = 1e-8 * PetscAbsReal(psiX);
+  Real lambda = 1.0, lambdaprev = 1.0, psiprev = psiX, psiW = psiX;
+  bool ok = false;
+  for (PetscInt it = 0; it <= max_it; ++it)
+  {
+    LibmeshPetscCallA(this->comm().get(), VecWAXPY(W, -lambda, Y, X)); // W = X - lambda*Y
+    psiW = computeEnergy(W);
+
+    if (!PetscIsInfOrNanReal(psiW) && psiW <= psiX + c1 * lambda * slope + energy_tol) // energy Armijo
+    {
+      ok = true;
+      break;
+    }
+    if (lambda <= minlambda)
+      break;
+
+    // Interpolate a shorter step from the energy values (quadratic first, cubic thereafter).
+    Real lambdatemp;
+    if (it == 0 || PetscIsInfOrNanReal(psiW))
+      lambdatemp = -slope * lambda * lambda / (2.0 * (psiW - psiX - lambda * slope));
+    else
+    {
+      const Real t1 = psiW - psiX - lambda * slope;
+      const Real t2 = psiprev - psiX - lambdaprev * slope;
+      const Real a =
+          (t1 / (lambda * lambda) - t2 / (lambdaprev * lambdaprev)) / (lambda - lambdaprev);
+      const Real b =
+          (-lambdaprev * t1 / (lambda * lambda) + lambda * t2 / (lambdaprev * lambdaprev)) /
+          (lambda - lambdaprev);
+      Real d = b * b - 3.0 * a * slope;
+      if (d < 0.0)
+        d = 0.0;
+      lambdatemp = (a == 0.0) ? -slope / (2.0 * b) : (-b + PetscSqrtReal(d)) / (3.0 * a);
+    }
+    if (PetscIsInfOrNanReal(lambdatemp))
+      lambdatemp = 0.5 * lambda;
+
+    lambdaprev = lambda;
+    psiprev = psiW;
+    lambda = PetscClipInterval(lambdatemp, 0.1 * lambda, 0.5 * lambda);
+  }
+  lambda_out = lambda;
+  psiW_out = psiW;
+  return ok;
+}
+
+bool
+NewtonSNESExecutor::strongWolfe(Vec X,
+                                Vec Y,
+                                Vec W,
+                                Real psiX,
+                                Real phi0p,
+                                Real minlambda,
+                                PetscInt /*max_it*/,
+                                Real & lambda_out,
+                                Real & psiW_out)
+{
+  // Strong Wolfe (Nocedal & Wright Alg. 3.5 bracketing + 3.6 zoom), paper App. B: c1=1e-4, c2=0.9.
+  // phi(a) = Psi(X - a*Y); phi'(a) = -R(X - a*Y).Y (grad Psi = R). phi0p = phi'(0) < 0 (descent).
+  const Real c1 = 1e-4, c2 = 0.9;
+  const Real phi0 = psiX;
+  const Real amax = 16.0; // cap so we do not chase overly long steps
+  const PetscInt maxit = 40;
+
+  // Evaluate phi(a) (sets W = X - a*Y) and, when needed, phi'(a) from _r_plain.
+  auto eval_phi = [&](Real a) -> Real
+  {
+    LibmeshPetscCallA(this->comm().get(), VecWAXPY(W, -a, Y, X));
+    return computeEnergy(W);
+  };
+  auto eval_phip = [&]() -> Real // W must currently hold X - a*Y
+  {
+    computePlainResidual(W);
+    PetscScalar RdotY;
+    LibmeshPetscCallA(this->comm().get(), VecDot(_r_plain, Y, &RdotY));
+    return -PetscRealPart(RdotY);
+  };
+
+  auto accept = [&](Real a, Real phi_a) -> bool
+  {
+    lambda_out = a;
+    psiW_out = phi_a;
+    LibmeshPetscCallA(this->comm().get(), VecWAXPY(W, -a, Y, X)); // leave W = X - a*Y
+    return true;
+  };
+
+  // ---- zoom(a_lo, a_hi): a_lo satisfies Armijo and has the lower phi ----
+  auto zoom =
+      [&](Real a_lo, Real a_hi, Real phi_lo, Real /*phi_hi*/, Real & a_out, Real & phi_out) -> bool
+  {
+    for (PetscInt j = 0; j < maxit; ++j)
+    {
+      const Real a_j = 0.5 * (a_lo + a_hi); // bisection (robust)
+      const Real phi_j = eval_phi(a_j);
+      if (PetscIsInfOrNanReal(phi_j) || phi_j > phi0 + c1 * a_j * phi0p || phi_j >= phi_lo)
+        a_hi = a_j;
+      else
+      {
+        const Real phip_j = eval_phip();
+        if (PetscAbsReal(phip_j) <= -c2 * phi0p) // strong Wolfe satisfied
+        {
+          a_out = a_j;
+          phi_out = phi_j;
+          return true;
+        }
+        if (phip_j * (a_hi - a_lo) >= 0.0)
+          a_hi = a_lo;
+        a_lo = a_j;
+        phi_lo = phi_j;
+      }
+      if (PetscAbsReal(a_hi - a_lo) < minlambda)
+        break;
+    }
+    // Fall back to a_lo (Armijo-satisfying, lower phi).
+    a_out = a_lo;
+    phi_out = eval_phi(a_lo);
+    return (a_lo > 0.0 && !PetscIsInfOrNanReal(phi_out) && phi_out <= phi0 + c1 * a_lo * phi0p);
+  };
+
+  // ---- bracketing ----
+  Real a_prev = 0.0, phi_prev = phi0, a = 1.0;
+  for (PetscInt i = 0; i < maxit; ++i)
+  {
+    const Real phi_a = eval_phi(a);
+    if (PetscIsInfOrNanReal(phi_a) || phi_a > phi0 + c1 * a * phi0p || (i > 0 && phi_a >= phi_prev))
+    {
+      Real a_out, phi_out;
+      const bool ok = zoom(a_prev, a, phi_prev, phi_a, a_out, phi_out);
+      return ok ? accept(a_out, phi_out) : (lambda_out = a_out, psiW_out = phi_out, false);
+    }
+    const Real phip_a = eval_phip(); // W currently holds X - a*Y
+    if (PetscAbsReal(phip_a) <= -c2 * phi0p)
+      return accept(a, phi_a); // strong Wolfe satisfied at a
+    if (phip_a >= 0.0)
+    {
+      Real a_out, phi_out;
+      const bool ok = zoom(a, a_prev, phi_a, phi_prev, a_out, phi_out);
+      return ok ? accept(a_out, phi_out) : (lambda_out = a_out, psiW_out = phi_out, false);
+    }
+    a_prev = a;
+    phi_prev = phi_a;
+    a = PetscMin(2.0 * a, amax);
+    if (a_prev >= amax) // already at the cap and still increasing: accept the capped step
+      return accept(a_prev, phi_prev);
+  }
+  lambda_out = a_prev;
+  psiW_out = phi_prev;
+  return false;
+}
+
 PetscErrorCode
-NewtonSNESExecutor::outerJacobianCallback(SNES /*snes*/, Vec /*x*/, Mat /*A*/, Mat P, void * ctx)
+NewtonSNESExecutor::outerConvergenceTest(SNES snes,
+                                         PetscInt it,
+                                         PetscReal /*xnorm*/,
+                                         PetscReal /*ynorm*/,
+                                         PetscReal /*fnorm*/,
+                                         SNESConvergedReason * reason,
+                                         void * ctx)
+{
+  PetscFunctionBeginUser;
+  auto * ex = static_cast<NewtonSNESExecutor *>(ctx);
+  *reason = SNES_CONVERGED_ITERATING;
+
+  PetscReal atol, rtol, stol;
+  PetscInt maxit, maxf;
+  PetscCall(SNESGetTolerances(snes, &atol, &rtol, &stol, &maxit, &maxf));
+
+  // Converge on ||R|| = ||grad Psi|| cached from the line search (one outer iteration in arrears,
+  // which is inconsequential). _r_norm/_r0_norm are set once the first line search of this solve has
+  // run; at it==0 (before any line search) we simply keep iterating.
+  if (it > 0 && ex->_r_norm >= 0.0 && ex->_r0_norm > 0.0)
+  {
+    if (ex->_r_norm < atol)
+      *reason = SNES_CONVERGED_FNORM_ABS;
+    else if (ex->_r_norm < rtol * ex->_r0_norm)
+      *reason = SNES_CONVERGED_FNORM_RELATIVE;
+  }
+  if (*reason == SNES_CONVERGED_ITERATING && it >= maxit)
+    *reason = SNES_DIVERGED_MAX_IT;
+
+  PetscCall(PetscPrintf(PETSC_COMM_WORLD,
+                        "  [gradPsi conv] it=%d ||R||=%.4e rtol*||R0||=%.4e atol=%.4e reason=%d\n",
+                        (int)it,
+                        (double)(ex->_r_norm),
+                        (double)(rtol * ex->_r0_norm),
+                        (double)atol,
+                        (int)*reason));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode
+NewtonSNESExecutor::spinLineSearch(SNESLineSearch ls, void * ctx)
+{
+  PetscFunctionBeginUser;
+  auto * ex = static_cast<NewtonSNESExecutor *>(ctx);
+
+  SNES snes;
+  Vec X, F, Y, W, G;
+  PetscReal fnorm, ynorm, minlambda;
+  PetscInt max_it;
+  PetscCall(SNESLineSearchGetSNES(ls, &snes));
+  // X = base iterate, F = F_SPIN(X) = X - NPC(X); Y = search direction (solving J_SPIN Y = F);
+  // W, G are scratch (trial solution / trial residual).
+  PetscCall(SNESLineSearchGetVecs(ls, &X, &F, &Y, &W, &G));
+  PetscCall(SNESLineSearchGetNorms(ls, nullptr, &fnorm, &ynorm));
+  PetscCall(
+      SNESLineSearchGetTolerances(ls, &minlambda, nullptr, nullptr, nullptr, nullptr, &max_it));
+
+  if (ex->_has_energy_pp)
+  {
+    // ================= energy-merit line search (paper App. B + C) =================
+    // Merit is the total potential energy Psi (C^1 across the penalty kink), evaluated at the OUTER
+    // iterate W = X - alpha*Y. grad Psi = plain residual R = _r_plain. App. C selects the search
+    // direction UP FRONT by the ascent test (paper): use the SPIN direction if it is a descent
+    // direction for Psi; else the full-J inexact-Newton direction J^{-1} R; else (Cauchy-scaled)
+    // steepest descent -R. A SINGLE strong-Wolfe line search (App. B, c1=1e-4, c2=0.9) then
+    // globalizes the chosen, guaranteed-descent direction. (Selecting by ascent -- rather than
+    // trying each tier and falling through on line-search failure -- guarantees a descent direction,
+    // so the line search cannot fail on all tiers.)
+
+    // (B) NPC-every-iteration trust region: apply ONE multiplicative-Schwarz NPC sweep and ADOPT the
+    // swept iterate NPC(X) as the outer iterate, then re-assemble grad^2 Psi there. We invoke the NMSM
+    // shell SNES DIRECTLY (SNESSolve sweeps the VecNest in place, X <- NPC(X)) rather than
+    // SNESApplyNPC -- the NPC is deliberately NOT attached to the outer SNES (see run()), so PETSc's
+    // NEWTONLS does not also auto-apply it (which doubled the sweep). The residual/energy below are
+    // then taken at NPC(X) and the Steihaug TRS steps from there -- the "trust-region version of
+    // MSPIN" (NPC cadence of the App. C line search, TR globalization). The Jacobian callback skipped
+    // the raw-X assembly for this mode, so assemble here.
+    if (ex->_use_trust_region && ex->_tr_steihaug && ex->_tr_npc)
+    {
+      PetscCall(SNESSolve(ex->_npc_executor->getSNES(), nullptr, X)); // X <- NPC(X) (one sweep)
+      PetscCall(ex->assembleCoupledJacobian(X));                      // grad^2 Psi at NPC(X)
+    }
+
+    ex->computePlainResidual(X); // _r_plain <- R(X) = grad Psi(X)  (F holds F_SPIN, do not use it)
+    const PetscReal psiX = ex->computeEnergy(X);
+    PetscReal gradPsiNorm;
+    PetscCall(VecNorm(ex->_r_plain, NORM_2, &gradPsiNorm)); // ||grad Psi|| = ||coupled residual F||
+    // Cache for outerConvergenceTest (the paper converges on this coupled residual). _r0_norm is the
+    // baseline set at the first line search of the solve; _r_norm is the latest value.
+    ex->_r_norm = gradPsiNorm;
+    if (ex->_r0_norm < 0.0)
+      ex->_r0_norm = gradPsiNorm;
+
+    if (std::getenv("SPIN_AUDIT"))
+    { // ===== SPIN INFRA AUDIT: is _mat_nest the SYMMETRIC, correct coupled Jacobian dR/dx? =====
+      // (0) FD GRADIENT check: is g = _r_plain actually grad(Psi)? The trust-region ratio test rests
+      // ENTIRELY on this: rho = ared/pred with ared = Psi(X)-Psi(X+p), pred = -(g^T p + 1/2 p^T A p).
+      // If R != grad(Psi) even on the active subspace, rho can never approach 1 and the model is junk.
+      // Test: (Psi(X + eps g) - Psi(X))/eps  ?=  g^T g  (directional derivative of Psi along g).
+      {
+        Vec gcopy;
+        PetscCall(VecDuplicate(X, &gcopy));
+        PetscCall(VecCopy(ex->_r_plain, gcopy)); // gcopy = g = R(X)
+        PetscReal gnrm, xnrm;
+        PetscCall(VecNorm(gcopy, NORM_2, &gnrm));
+        PetscCall(VecNorm(X, NORM_2, &xnrm));
+        const PetscReal epsg = 1e-7 * (xnrm + 1.0) / PetscMax(gnrm, 1e-300);
+        PetscCall(VecWAXPY(W, epsg, gcopy, X));         // W = X + eps g
+        const PetscReal psiWg = ex->computeEnergy(W);   // NOTE: clobbers _r_plain with R(W)
+        const PetscReal fdg = (psiWg - psiX) / epsg;    // ~ g^T g if R = grad Psi
+        const PetscReal gTg = gnrm * gnrm;
+        ex->computePlainResidual(X);                    // restore _r_plain = R(X)
+        PetscCall(PetscPrintf(PETSC_COMM_WORLD,
+                              "  [spinGrad] dPsi/dg=%.6e  g^Tg=%.6e  ratio=%.4f (=1 iff R=gradPsi)\n",
+                              (double)fdg,
+                              (double)gTg,
+                              (double)(fdg / PetscMax(gTg, 1e-300))));
+        PetscCall(VecDestroy(&gcopy));
+      }
+      Vec v, w, Av, Aw, R0, FDv;
+      PetscCall(VecDuplicate(X, &v));
+      PetscCall(VecDuplicate(X, &w));
+      PetscCall(VecDuplicate(X, &Av));
+      PetscCall(VecDuplicate(X, &Aw));
+      PetscCall(VecDuplicate(X, &R0));
+      PetscCall(VecDuplicate(X, &FDv));
+      PetscRandom rng;
+      PetscCall(PetscRandomCreate(PETSC_COMM_WORLD, &rng));
+      PetscCall(PetscRandomSetFromOptions(rng));
+      PetscCall(VecSetRandom(v, rng));
+      PetscCall(VecSetRandom(w, rng));
+      // (1) SYMMETRY: w^T A v vs v^T A w. A = grad^2 Psi must be symmetric (A01 = A10^T); the
+      // Steihaug CG is only valid for a symmetric operator, so an asymmetric _mat_nest is a bug.
+      PetscCall(MatMult(ex->_mat_nest, v, Av));
+      PetscCall(MatMult(ex->_mat_nest, w, Aw));
+      PetscScalar wAv, vAw;
+      PetscCall(VecDot(w, Av, &wAv));
+      PetscCall(VecDot(v, Aw, &vAw));
+      const PetscReal sym =
+          PetscAbsReal(PetscRealPart(wAv - vAw)) /
+          (PetscAbsReal(PetscRealPart(wAv)) + PetscAbsReal(PetscRealPart(vAw)) + 1e-300);
+      // Does the asymmetry ACTIVATE along an active-subspace vector? R = _r_plain has R_bc = 0 (the
+      // BCs are satisfied/preset), so if ||(A - A^T) R|| / ||A R|| is small, the (Dirichlet-BC)
+      // asymmetry lives only on constrained rows/cols and is BENIGN for the solve (p_bc = 0);
+      // if it is O(sym), the asymmetry genuinely corrupts the Newton/CG step.
+      PetscReal asym_act = -1.0;
+      {
+        // R and AR both have _bc = 0 (BCs satisfied), so this stays on the active subspace and
+        // EXCLUDES the benign Dirichlet-BC row asymmetry: t1 = R^T A(AR) = R^T A^2 R, t2 = (AR)^T(AR)
+        // = R^T A^T A R. Equal iff A is symmetric on the active subspace (where the CG/energy solve
+        // actually operates). If ~0 the 12% is purely benign BC; if O(0.1) it corrupts the step.
+        Vec AR, AAR;
+        PetscCall(VecDuplicate(X, &AR));
+        PetscCall(VecDuplicate(X, &AAR));
+        PetscCall(MatMult(ex->_mat_nest, ex->_r_plain, AR)); // AR = A R
+        PetscCall(MatMult(ex->_mat_nest, AR, AAR));          // AAR = A (A R)
+        PetscScalar t1, t2;
+        PetscCall(VecDot(ex->_r_plain, AAR, &t1)); // R^T A^2 R
+        PetscCall(VecDot(AR, AR, &t2));            // R^T A^T A R
+        asym_act = PetscAbsReal(PetscRealPart(t1 - t2)) /
+                   (PetscAbsReal(PetscRealPart(t1)) + PetscAbsReal(PetscRealPart(t2)) + 1e-300);
+        PetscCall(VecDestroy(&AR));
+        PetscCall(VecDestroy(&AAR));
+      }
+      // (2) FD JACOBIAN along a RANDOM v: A v vs (R(X+eps v) - R(X))/eps (exercises the FULL coupled
+      // operator incl. off-diagonals, unlike the v=R check). Per block: 0=disp, 1=pf.
+      PetscCall(VecCopy(ex->_r_plain, R0)); // R(X)
+      PetscReal xn, vn;
+      PetscCall(VecNorm(X, NORM_2, &xn));
+      PetscCall(VecNorm(v, NORM_2, &vn));
+      const PetscReal eps = 1e-7 * (xn + 1.0) / vn;
+      PetscCall(VecWAXPY(W, eps, v, X));
+      ex->computePlainResidual(W); // _r_plain = R(X + eps v)
+      PetscCall(VecWAXPY(FDv, -1.0, R0, ex->_r_plain));
+      PetscCall(VecScale(FDv, 1.0 / eps)); // FDv = dR/dx . v
+      PetscCall(VecAXPY(Av, -1.0, FDv));   // Av = A v - dR/dx v
+      PetscReal nfd, ea, e0 = -1.0, e1 = -1.0;
+      PetscCall(VecNorm(FDv, NORM_2, &nfd));
+      PetscCall(VecNorm(Av, NORM_2, &ea));
+      {
+        Vec a0, a1, f0, f1;
+        PetscReal na0, na1, nf0, nf1;
+        PetscCall(VecNestGetSubVec(Av, 0, &a0));
+        PetscCall(VecNestGetSubVec(Av, 1, &a1));
+        PetscCall(VecNestGetSubVec(FDv, 0, &f0));
+        PetscCall(VecNestGetSubVec(FDv, 1, &f1));
+        PetscCall(VecNorm(a0, NORM_2, &na0));
+        PetscCall(VecNorm(a1, NORM_2, &na1));
+        PetscCall(VecNorm(f0, NORM_2, &nf0));
+        PetscCall(VecNorm(f1, NORM_2, &nf1));
+        e0 = (nf0 > 0) ? na0 / nf0 : na0;
+        e1 = (nf1 > 0) ? na1 / nf1 : na1;
+      }
+      // (3) PER-BLOCK symmetry: locate the asymmetry (coupling A01=A10^T already verified; check the
+      // diagonal blocks A00 (disp) and A11 (pf)).
+      PetscReal s00 = -1.0, s11 = -1.0;
+      // A00: vd=(v0,0), wd=(w0,0) -> A00 v0 = (A vd)_disp, A00 w0 = (A wd)_disp.
+      PetscCall(VecCopy(v, Av));
+      PetscCall(VecCopy(w, Aw));
+      {
+        Vec p;
+        PetscCall(VecNestGetSubVec(Av, 1, &p));
+        PetscCall(VecSet(p, 0.0)); // Av = (v0,0)
+        PetscCall(VecNestGetSubVec(Aw, 1, &p));
+        PetscCall(VecSet(p, 0.0)); // Aw = (w0,0)
+      }
+      PetscCall(MatMult(ex->_mat_nest, Av, R0));  // R0  = A (v0,0)
+      PetscCall(MatMult(ex->_mat_nest, Aw, FDv)); // FDv = A (w0,0)
+      {
+        Vec r0d, fdd, v0, w0;
+        PetscScalar a, b;
+        PetscCall(VecNestGetSubVec(R0, 0, &r0d));  // A00 v0
+        PetscCall(VecNestGetSubVec(FDv, 0, &fdd)); // A00 w0
+        PetscCall(VecNestGetSubVec(v, 0, &v0));
+        PetscCall(VecNestGetSubVec(w, 0, &w0));
+        PetscCall(VecDot(w0, r0d, &a)); // w0^T A00 v0
+        PetscCall(VecDot(v0, fdd, &b)); // v0^T A00 w0
+        s00 = PetscAbsReal(PetscRealPart(a - b)) /
+              (PetscAbsReal(PetscRealPart(a)) + PetscAbsReal(PetscRealPart(b)) + 1e-300);
+      }
+      // A11 + coupling: vp=(0,v1), wp=(0,w1).
+      PetscCall(VecCopy(v, Av));
+      PetscCall(VecCopy(w, Aw));
+      {
+        Vec p;
+        PetscCall(VecNestGetSubVec(Av, 0, &p));
+        PetscCall(VecSet(p, 0.0)); // Av = (0,v1)
+        PetscCall(VecNestGetSubVec(Aw, 0, &p));
+        PetscCall(VecSet(p, 0.0)); // Aw = (0,w1)
+      }
+      PetscCall(MatMult(ex->_mat_nest, Av, R0));  // R0  = A (0,v1) -> (R0)_pf=A11 v1, (R0)_disp=A01 v1
+      PetscCall(MatMult(ex->_mat_nest, Aw, FDv)); // FDv = A (0,w1)
+      {
+        Vec r0p, fdp, v1v, w1v;
+        PetscScalar a, b;
+        PetscCall(VecNestGetSubVec(R0, 1, &r0p));  // A11 v1
+        PetscCall(VecNestGetSubVec(FDv, 1, &fdp)); // A11 w1
+        PetscCall(VecNestGetSubVec(v, 1, &v1v));
+        PetscCall(VecNestGetSubVec(w, 1, &w1v));
+        PetscCall(VecDot(w1v, r0p, &a)); // w1^T A11 v1
+        PetscCall(VecDot(v1v, fdp, &b)); // v1^T A11 w1
+        s11 = PetscAbsReal(PetscRealPart(a - b)) /
+              (PetscAbsReal(PetscRealPart(a)) + PetscAbsReal(PetscRealPart(b)) + 1e-300);
+      }
+      ex->computePlainResidual(X); // restore _r_plain = R(X)
+      PetscCall(PetscPrintf(
+          PETSC_COMM_WORLD,
+          "  [spinAudit] ||gradPsi||=%.3e sym(A)=%.3e asymActive(R)=%.3e | s(A00)=%.3e s(A11)=%.3e | "
+          "FD=%.3e (disp=%.3e pf=%.3e)\n",
+          (double)gradPsiNorm,
+          (double)sym,
+          (double)asym_act,
+          (double)s00,
+          (double)s11,
+          (double)(nfd > 0 ? ea / nfd : ea),
+          (double)e0,
+          (double)e1));
+      PetscCall(PetscRandomDestroy(&rng));
+      PetscCall(VecDestroy(&v));
+      PetscCall(VecDestroy(&w));
+      PetscCall(VecDestroy(&Av));
+      PetscCall(VecDestroy(&Aw));
+      PetscCall(VecDestroy(&R0));
+      PetscCall(VecDestroy(&FDv));
+    }
+
+    if (std::getenv("SPIN_DIAG"))
+    { // ===== SPIN-DIRECTION DIAGNOSTIC (opt-in; does an extra full-J solve per line search) =====
+      // Exact energy-Newton direction: solve A z = R accurately (z = A^{-1}R) into G.
+      PetscCall(KSPSetOperators(ex->_fullJ_ksp, ex->_mat_nest, ex->_mat_nest));
+      PetscCall(KSPSetTolerances(ex->_fullJ_ksp, 1e-11, 1e-14, PETSC_DEFAULT, 2000)); // tight ref for cos
+      PetscCall(KSPSolve(ex->_fullJ_ksp, ex->_r_plain, G)); // G = A^{-1} R (exact energy-Newton dir)
+      KSPConvergedReason kr_full;
+      PetscInt kits_full;
+      PetscCall(KSPGetConvergedReason(ex->_fullJ_ksp, &kr_full));
+      PetscCall(KSPGetIterationNumber(ex->_fullJ_ksp, &kits_full));
+      PetscScalar RAiR;
+      PetscCall(VecDot(ex->_r_plain, G, &RAiR)); // kappa_inv = R.A^{-1}R (>0 => -A^{-1}R descent)
+      PetscReal gnorm_ex, ynorm_in;
+      PetscCall(VecNorm(G, NORM_2, &gnorm_ex)); // ||A^{-1}R||
+      PetscCall(VecNorm(Y, NORM_2, &ynorm_in)); // ||Y_spin||
+      PetscScalar YdotG;
+      PetscCall(VecDot(Y, G, &YdotG)); // Y . A^{-1}R
+      const PetscReal cosYG =
+          (ynorm_in > 0 && gnorm_ex > 0) ? PetscRealPart(YdotG) / (ynorm_in * gnorm_ex) : 0.0;
+      // Outer Krylov that produced Y: did it actually converge (M^{-1}A) Y = F_SPIN ?
+      KSP outer_ksp;
+      KSPConvergedReason kr_out;
+      PetscInt kits_out;
+      PetscReal krnorm_out;
+      PetscCall(SNESGetKSP(snes, &outer_ksp));
+      PetscCall(KSPGetConvergedReason(outer_ksp, &kr_out));
+      PetscCall(KSPGetIterationNumber(outer_ksp, &kits_out));
+      PetscCall(KSPGetResidualNorm(outer_ksp, &krnorm_out));
+      // RHS-consistency check: is F_SPIN = M^{-1} R ?  Equivalent: M F_SPIN = R with the
+      // block-lower-triangular M = [[A00,0],[A10,A11]] (uses only the trusted _mat_nest blocks).
+      PetscReal mfr_rel = -1.0;
+      {
+        Mat A00, A10, A11;
+        Vec F0, F1, W0, W1;
+        PetscCall(MatNestGetSubMat(ex->_mat_nest, 0, 0, &A00));
+        PetscCall(MatNestGetSubMat(ex->_mat_nest, 1, 0, &A10));
+        PetscCall(MatNestGetSubMat(ex->_mat_nest, 1, 1, &A11));
+        if (A00 && A10 && A11)
+        {
+          PetscCall(VecNestGetSubVec(F, 0, &F0));
+          PetscCall(VecNestGetSubVec(F, 1, &F1));
+          PetscCall(VecNestGetSubVec(W, 0, &W0));
+          PetscCall(VecNestGetSubVec(W, 1, &W1));
+          PetscCall(MatMult(A00, F0, W0));        // W0 = A00 F0
+          PetscCall(MatMult(A10, F0, W1));        // W1 = A10 F0
+          PetscCall(MatMultAdd(A11, F1, W1, W1)); // W1 += A11 F1  => W = M F_SPIN
+          PetscCall(VecAXPY(W, -1.0, ex->_r_plain)); // W = M F_SPIN - R
+          PetscReal mfr;
+          PetscCall(VecNorm(W, NORM_2, &mfr));
+          mfr_rel = (gradPsiNorm > 0) ? mfr / gradPsiNorm : mfr;
+        }
+      }
+      // OPERATOR-consistency check: is the shell truly M^{-1}A ?  Test M*(shell*R) == A*R.
+      // If applyBA's block solves use a STALE factorization M_stale != M (KSPSetOperators skipped on
+      // unchanged pointer), then M*(M_stale^{-1} A R) != A R and this ratio is large.
+      PetscReal shell_rel = -1.0;
+      {
+        Mat A00, A10, A11;
+        PetscCall(MatNestGetSubMat(ex->_mat_nest, 0, 0, &A00));
+        PetscCall(MatNestGetSubMat(ex->_mat_nest, 1, 0, &A10));
+        PetscCall(MatNestGetSubMat(ex->_mat_nest, 1, 1, &A11));
+        if (A00 && A10 && A11)
+        {
+          Vec sR, AR, MsR;
+          PetscCall(VecDuplicate(ex->_r_plain, &sR));
+          PetscCall(VecDuplicate(ex->_r_plain, &AR));
+          PetscCall(VecDuplicate(ex->_r_plain, &MsR));
+          PetscCall(MatMult(ex->_jac_shell, ex->_r_plain, sR)); // sR = shell*R = M_stale^{-1} A R
+          PetscCall(MatMult(ex->_mat_nest, ex->_r_plain, AR));   // AR = A R
+          Vec s0, s1, m0, m1;
+          PetscCall(VecNestGetSubVec(sR, 0, &s0));
+          PetscCall(VecNestGetSubVec(sR, 1, &s1));
+          PetscCall(VecNestGetSubVec(MsR, 0, &m0));
+          PetscCall(VecNestGetSubVec(MsR, 1, &m1));
+          PetscCall(MatMult(A00, s0, m0));        // m0 = A00 s0
+          PetscCall(MatMult(A10, s0, m1));        // m1 = A10 s0
+          PetscCall(MatMultAdd(A11, s1, m1, m1)); // m1 += A11 s1 => MsR = M*(shell*R)
+          PetscCall(VecAXPY(MsR, -1.0, AR));      // MsR = M*shell*R - A*R
+          PetscReal e_shell, nAR;
+          PetscCall(VecNorm(MsR, NORM_2, &e_shell));
+          PetscCall(VecNorm(AR, NORM_2, &nAR));
+          shell_rel = (nAR > 0) ? e_shell / nAR : e_shell;
+          PetscCall(VecDestroy(&sR));
+          PetscCall(VecDestroy(&AR));
+          PetscCall(VecDestroy(&MsR));
+        }
+      }
+      PetscCall(PetscPrintf(
+          PETSC_COMM_WORLD,
+          "  [spinDir] ||R||=%.3e ||F_SPIN||=%.3e | Y:||%.3e|| exact||%.3e|| cos=%.4f | "
+          "MFspin-R=%.3e MshR-AR=%.3e | outerKSP its=%d reason=%d | fullJ(refG) its=%d reason=%d\n",
+          (double)gradPsiNorm,
+          (double)fnorm,
+          (double)ynorm_in,
+          (double)gnorm_ex,
+          (double)cosYG,
+          (double)mfr_rel,
+          (double)shell_rel,
+          (int)kits_out,
+          (int)kr_out,
+          (int)kits_full,
+          (int)kr_full));
+    }
+
+    if (ex->_use_trust_region && ex->_tr_steihaug)
+    {
+      // ========== SPIN-preconditioned Steihaug-Toint TRUST REGION (full-space) ==========
+      // Solve min g^T p + 1/2 p^T A p s.t. ||p||_P <= Delta by preconditioned truncated CG (see
+      // docs/trust_region_spin.md), accept on the energy-reduction ratio, adapt the radius. Unlike
+      // the 1-D variant, CG explores the whole Krylov subspace, so it finds a descent step even when
+      // the single SPIN direction is nearly orthogonal to grad(Psi) (the propagation regime), and it
+      // handles the indefinite (softening) Hessian via a negative-curvature-to-boundary exit.
+      const PetscReal eta1 = 0.1, eta2 = 0.75, gshrink = 0.25, gexpand = 2.0, Dmax = 1.0e8;
+      // Eisenstat-Walker inner forcing (tightened): CG explores the Krylov subspace rather than
+      // stopping after one preconditioned step.
+      const PetscReal eps =
+          PetscMin(0.1, PetscSqrtReal(gradPsiNorm / PetscMax(ex->_r0_norm, 1e-300)));
+
+      // Near-convergence threshold (couple of x the outer atol). There the quadratic energy model
+      // breaks down -- pred (~||p||^2) drops below the energy's cubic term (~||p||^3), so the ratio
+      // test is unreliable (NOT noise: refuted; genuine higher-order/local non-convexity). The SGS
+      // step is still a valid (Newton-like) descent direction, so we trust it there and let the outer
+      // solve converge on ||grad Psi||. Away from convergence the ratio test governs fully.
+      PetscReal atol_o, rtol_o, stol_o;
+      PetscInt maxit_o, maxf_o;
+      PetscCall(SNESGetTolerances(snes, &atol_o, &rtol_o, &stol_o, &maxit_o, &maxf_o));
+      const PetscReal conv_thresh = 10.0 * PetscMax(atol_o, rtol_o * ex->_r0_norm);
+
+      // First use: Delta0 = ||P^{-1}g||_P = sqrt(g^T P^{-1} g) (natural field-split step scale).
+      if (ex->_tr_radius <= 0.0)
+      {
+        PetscCall(ex->applyBlockSGS(ex->_r_plain, ex->_cg_y)); // y = P^{-1} g
+        PetscScalar gy;
+        PetscCall(VecDot(ex->_r_plain, ex->_cg_y, &gy));
+        ex->_tr_radius = PetscSqrtReal(PetscMax(PetscRealPart(gy), 1e-300));
+      }
+
+      bool tr_accepted = false, on_bnd = false;
+      PetscReal rho = 0.0, pred = 0.0;
+      PetscInt cg_its = 0;
+      // Radius floor for FAILURE: once the radius is a tiny fraction of its initial value and the
+      // ratio is still bad, the model cannot guide a step here (abrupt softening at nucleation) ->
+      // fail so the driver cuts dt, rather than accepting meaningless (near-zero) steps forever.
+      const PetscReal rad_fail = 1e-8 * ex->_tr_radius;
+      for (PetscInt tr_it = 0; tr_it <= max_it; ++tr_it)
+      {
+        PetscCall(
+            ex->steihaugTRS(ex->_r_plain, ex->_tr_radius, eps, pred, on_bnd, cg_its)); // step -> _cg_p
+        PetscCall(VecWAXPY(W, 1.0, ex->_cg_p, X)); // W = X + p  (p solves A p = -g, a descent step)
+        const PetscReal psiW = ex->computeEnergy(W);
+        const PetscReal ared = psiX - psiW;
+        rho = (pred > 0.0 && !PetscIsInfOrNanReal(ared)) ? ared / pred : -1.0;
+        // Accept on a good ratio, OR when we are in the local (Newton) basin: once ||grad Psi|| has
+        // dropped ~2 orders from this step's start (or is within a few x the outer atol), the
+        // quadratic ENERGY model is unreliable -- pred sinks below the energy's higher-order term, so
+        // the ratio goes erratic -- but the strong SGS step is a valid (near-Newton) descent
+        // direction, so trust it and let the outer solve converge on ||grad Psi||. The threshold is
+        // RELATIVE (load-independent): an absolute one lags the breakdown floor, which rises with
+        // load. Away from the basin (e.g. the residual JUMP at nucleation) the ratio test governs
+        // fully, so a genuinely bad model (abrupt softening) still rejects -> shrink -> cutback.
+        const bool near_conv =
+            gradPsiNorm < conv_thresh || gradPsiNorm < 1e-2 * PetscMax(ex->_r0_norm, 1e-300);
+        if (rho >= eta1 || near_conv)
+        {
+          if (rho > eta2 && on_bnd) // very good AND radius-limited -> expand
+            ex->_tr_radius = PetscMin(gexpand * ex->_tr_radius, Dmax);
+          tr_accepted = true;
+          break;
+        }
+        ex->_tr_radius *= gshrink; // reject -> shrink radius and re-solve the TRS
+        if (ex->_tr_radius < rad_fail || ex->_tr_radius < 1e-14)
+          break; // radius collapsed far from convergence -> fail this solve (dt cutback, not a hang)
+      }
+
+      PetscReal pnorm;
+      PetscCall(VecNorm(ex->_cg_p, NORM_2, &pnorm));
+      PetscCall(PetscPrintf(
+          PETSC_COMM_WORLD,
+          "  [spinTRcg] rho=%.3e pred=%.3e radius=%.3e ||p||=%.3e cg=%d onBnd=%d ||gradPsi||=%.6e "
+          "acc=%d\n",
+          (double)rho,
+          (double)pred,
+          (double)ex->_tr_radius,
+          (double)pnorm,
+          (int)cg_its,
+          (int)on_bnd,
+          (double)gradPsiNorm,
+          (int)tr_accepted));
+
+      if (tr_accepted)
+      {
+        // Commit X <- X + p. In the Steihaug path the outer SNES function F_SPIN and its Krylov
+        // direction Y are NOT used (convergence is on ||grad Psi|| via outerConvergenceTest; the step
+        // comes from the TRS; the block-Jacobi preconditioner, not the multiplicative NPC, is the
+        // preconditioner). So we deliberately do NOT run SNESApplyNPC here -- that extra
+        // multiplicative sweep is a full inner disp+pf Newton solve (the pf one chattering on the
+        // penalty kink) whose result is discarded. Report ||grad Psi|| as the line-search fnorm for
+        // the monitor; F is stale but only ever feeds the discarded Krylov RHS.
+        PetscReal xnorm;
+        PetscCall(VecCopy(W, X));
+        PetscCall(VecNorm(X, NORM_2, &xnorm));
+        PetscCall(SNESLineSearchSetNorms(ls, xnorm, gradPsiNorm, pnorm));
+        PetscCall(SNESLineSearchSetLambda(ls, 1.0));
+        PetscCall(SNESLineSearchSetReason(ls, SNES_LINESEARCH_SUCCEEDED));
+      }
+      else
+        PetscCall(SNESLineSearchSetReason(ls, SNES_LINESEARCH_FAILED_REDUCT));
+
+      PetscFunctionReturn(PETSC_SUCCESS);
+    }
+
+    if (ex->_use_trust_region)
+    {
+      // ================= ratio-based TRUST REGION on the energy Psi =================
+      // 1-D trust region restricted to the SPIN direction Y. Quadratic energy model along the ray
+      // X - alpha*D:  m(alpha) = Psi - alpha*(g.D) + 1/2*alpha^2*(D^T A D), with g = grad Psi = R,
+      // A = _mat_nest (the coupled Hessian at X, assembled by outerJacobianCallback). The step is the
+      // model minimizer clipped to the radius; accept/shrink on the actual/predicted reduction ratio;
+      // adapt the radius. If Y is not a descent direction for Psi (g.Y <= 0, near instability where A
+      // is indefinite), fall back to steepest descent D = g (self-scaled by the model, Cauchy-like).
+      // For the exact SPIN direction Y ~ A^{-1}g the model minimizer is alpha ~ 1 (the full SPIN =
+      // energy-Newton step); when the model is poor (nonlinear/propagation region) the ratio shrinks
+      // the step, so the solve makes small monotone-energy progress instead of spiraling dt to dtmin.
+      const PetscReal eta1 = 0.1;      // accept if rho >= eta1
+      const PetscReal eta2 = 0.75;     // expand radius if rho > eta2 and step hit the boundary
+      const PetscReal gshrink = 0.25;  // radius shrink factor on rejection
+      const PetscReal gexpand = 2.0;   // radius expansion factor
+      const PetscReal Dmax = 1.0e8;    // max radius (solution norm)
+
+      // Outer convergence tolerances, for the near-convergence bypass below.
+      PetscReal atol_o, rtol_o, stol_o;
+      PetscInt maxit_o, maxf_o;
+      PetscCall(SNESGetTolerances(snes, &atol_o, &rtol_o, &stol_o, &maxit_o, &maxf_o));
+      const PetscReal conv_thresh = 10.0 * PetscMax(atol_o, rtol_o * ex->_r0_norm);
+
+      Vec D = Y;                 // step direction (default: SPIN direction)
+      PetscReal dnorm = ynorm;   // ||D||
+      PetscScalar gDs;
+      PetscCall(VecDot(ex->_r_plain, Y, &gDs));
+      PetscReal gD = PetscRealPart(gDs); // g.D  (>0 => -D is a descent direction for Psi)
+
+      // Near-convergence last mile: Psi is flat/noisy and the SPIN direction is ~ the energy-Newton
+      // direction (cos ~ 1), so the ratio test is dominated by energy-eval noise (the SPIN step
+      // reduces ||F_SPIN|| while nudging Psi within noise -> a meaningless negative ratio that would
+      // collapse the radius). Take the full SPIN step; the outer solve converges on ||gradPsi||,
+      // which the SPIN step drives to zero. In the HARD region ||gradPsi|| >> conv_thresh, so the
+      // ratio-test globalization below applies fully.
+      if (gradPsiNorm < conv_thresh && gD > 0.0)
+      {
+        PetscReal xnorm, fnorm_new;
+        PetscCall(VecWAXPY(W, -1.0, Y, X)); // W = X - Y (full SPIN step)
+        PetscCall(VecCopy(W, X));
+        PetscCall(SNESApplyNPC(snes, W, nullptr, F));
+        PetscCall(VecNorm(X, NORM_2, &xnorm));
+        PetscCall(VecNorm(F, NORM_2, &fnorm_new));
+        PetscCall(SNESLineSearchSetNorms(ls, xnorm, fnorm_new, ynorm));
+        PetscCall(SNESLineSearchSetLambda(ls, 1.0));
+        PetscCall(SNESLineSearchSetReason(ls, SNES_LINESEARCH_SUCCEEDED));
+        PetscCall(PetscPrintf(PETSC_COMM_WORLD,
+                              "  [spinTR] near-conv full SPIN step ||gradPsi||=%.6e (<%.3e)\n",
+                              (double)gradPsiNorm,
+                              (double)conv_thresh));
+        PetscFunctionReturn(PETSC_SUCCESS);
+      }
+
+      if (gD <= 0.0)
+      {
+        D = ex->_r_plain;               // steepest descent fallback (X - alpha*g reduces Psi)
+        gD = gradPsiNorm * gradPsiNorm; // g.D = ||g||^2 > 0
+        dnorm = gradPsiNorm;
+      }
+      PetscCall(MatMult(ex->_mat_nest, D, G)); // G = A D
+      PetscScalar cs;
+      PetscCall(VecDot(D, G, &cs));
+      const PetscReal curv = PetscRealPart(cs); // D^T A D (model curvature)
+
+      if (ex->_tr_radius <= 0.0)
+        ex->_tr_radius = (dnorm > 0.0) ? dnorm : 1.0; // first use: allow ~one full step (alpha_max~1)
+
+      bool tr_accepted = false;
+      PetscReal alpha = 0.0, psiW_tr = psiX, rho = 0.0;
+      for (PetscInt it = 0; it <= max_it; ++it)
+      {
+        const PetscReal amax = ex->_tr_radius / dnorm;
+        // 1-D model minimizer of m(alpha) clipped to [0, amax]
+        PetscReal a = (curv > 0.0) ? PetscMin(gD / curv, amax) : amax;
+        if (a <= 0.0)
+          a = amax;
+        PetscCall(VecWAXPY(W, -a, D, X)); // W = X - a D
+        psiW_tr = ex->computeEnergy(W);
+        const PetscReal pred = a * gD - 0.5 * a * a * curv; // model reduction m(0)-m(a) (>0)
+        const PetscReal ared = psiX - psiW_tr;              // actual reduction
+        rho = (pred > 0.0 && !PetscIsInfOrNanReal(ared)) ? ared / pred : -1.0;
+        if (rho >= eta1)
+        {
+          alpha = a;
+          if (rho > eta2 && a >= amax * (1.0 - 1e-10)) // very good AND at the boundary -> expand
+            ex->_tr_radius = PetscMin(gexpand * ex->_tr_radius, Dmax);
+          tr_accepted = true;
+          break;
+        }
+        // reject: shrink the radius below the failed step and retry the same direction
+        ex->_tr_radius = gshrink * a * dnorm;
+        if (ex->_tr_radius < minlambda * dnorm)
+          break; // radius collapsed -> fail this outer solve (triggers a dt cutback)
+      }
+
+      PetscCall(PetscPrintf(
+          PETSC_COMM_WORLD,
+          "  [spinTR] rho=%.3e alpha=%.3e radius=%.3e curv=%.3e ||gradPsi||=%.6e accepted=%d\n",
+          (double)rho,
+          (double)alpha,
+          (double)ex->_tr_radius,
+          (double)curv,
+          (double)gradPsiNorm,
+          (int)tr_accepted));
+
+      if (tr_accepted)
+      {
+        PetscReal xnorm, fnorm_new;
+        PetscCall(VecCopy(W, X));                        // X <- X - alpha*D
+        PetscCall(SNESApplyNPC(snes, W, nullptr, F));    // F <- F_SPIN(X) for the convergence test
+        PetscCall(VecNorm(X, NORM_2, &xnorm));
+        PetscCall(VecNorm(F, NORM_2, &fnorm_new));
+        PetscCall(SNESLineSearchSetNorms(ls, xnorm, fnorm_new, alpha * dnorm));
+        PetscCall(SNESLineSearchSetLambda(ls, alpha));
+        PetscCall(SNESLineSearchSetReason(ls, SNES_LINESEARCH_SUCCEEDED));
+      }
+      else
+        PetscCall(SNESLineSearchSetReason(ls, SNES_LINESEARCH_FAILED_REDUCT));
+
+      PetscFunctionReturn(PETSC_SUCCESS);
+    }
+
+    PetscScalar dot;
+    PetscReal slope, lambda = 0.0, psiW = psiX;
+    int tier = 1;
+    bool accepted = false;
+
+    // --- App. C direction selection: try the SPIN direction first, fall back only if it GENUINELY
+    // increases the energy. This is the paper's App. C, but the "is the SPIN direction acceptable"
+    // test is an actual (noise-cushioned) energy check rather than the raw sign of slope = -R.Y --
+    // which near convergence is dominated by rounding noise (the SPIN direction becomes nearly
+    // orthogonal to grad Psi, |cos(R,Y)| ~ 1e-6, since it targets F_SPIN=0 where the energy is already
+    // ~minimal). A raw-sign test escalates on that noise and abandons the excellent SPIN direction
+    // (which drives ||F_precond|| to machine precision) for the full-J Newton, which stalls when the
+    // energy is this flat.
+    const PetscReal energy_tol = 1e-8 * PetscAbsReal(psiX); // energy sufficient-decrease cushion (see energyBacktrack)
+    PetscCall(VecDot(ex->_r_plain, Y, &dot));                // Y = SPIN direction from the outer KSP
+    slope = -PetscRealPart(dot);                             // phi'(0) = -R . Y
+    if (slope < 0.0) // SPIN is a descent direction for Psi -> cushioned energy-Armijo backtrack
+      accepted = ex->energyBacktrack(X, Y, W, psiX, slope, minlambda, max_it, lambda, psiW);
+    else // SPIN is (noise-level or genuine) ascent: try the full SPIN step, accept if energy is flat
+    {
+      PetscCall(VecWAXPY(W, -1.0, Y, X)); // W = X - Y
+      psiW = ex->computeEnergy(W);
+      if (!PetscIsInfOrNanReal(psiW) && psiW <= psiX + energy_tol)
+      {
+        lambda = 1.0;
+        accepted = true; // energy flat within noise -> the SPIN Newton step still reduces ||F_precond||
+      }
+    }
+
+    // --- App. C fallback: only if the SPIN direction genuinely increases the energy. ---
+    if (!accepted)
+    {
+      // full-J inexact Newton J^{-1} R (the energy's Newton step), globalized by strong Wolfe.
+      PetscCall(KSPSetOperators(ex->_fullJ_ksp, ex->_mat_nest, ex->_mat_nest));
+      PetscCall(KSPSolve(ex->_fullJ_ksp, ex->_r_plain, Y)); // Y = J^{-1} R
+      PetscCall(VecDot(ex->_r_plain, Y, &dot));
+      slope = -PetscRealPart(dot);
+      tier = 2;
+      if (slope >= 0.0) // Newton direction also ascent -> Cauchy-scaled steepest descent (tier 3)
+      {
+        PetscScalar RR, RJR;
+        PetscCall(VecDot(ex->_r_plain, ex->_r_plain, &RR));
+        PetscCall(MatMult(ex->_mat_nest, ex->_r_plain, W)); // W = J R  (scratch; LS resets it)
+        PetscCall(VecDot(ex->_r_plain, W, &RJR));
+        // Cauchy step length (1-D minimizer of the quadratic model along -R): keeps alpha=1 well
+        // scaled, since raw grad Psi = R is in force units, not solution units.
+        const PetscReal aC =
+            (PetscRealPart(RJR) > 0.0) ? PetscRealPart(RR) / PetscRealPart(RJR) : 1.0;
+        PetscCall(VecCopy(ex->_r_plain, Y));
+        PetscCall(VecScale(Y, aC)); // Y = aC * R
+        PetscCall(VecDot(ex->_r_plain, Y, &dot));
+        slope = -PetscRealPart(dot); // = -aC*||R||^2 < 0
+        tier = 3;
+      }
+      accepted = ex->strongWolfe(X, Y, W, psiX, slope, minlambda, max_it, lambda, psiW);
+    }
+
+    // Outer-Krylov iteration count that produced the SPIN direction Y (J_SPIN Y = F_SPIN via applyBA).
+    // This is the per-outer-iteration SPIN-direction Krylov cost; sum over the run for the benchmark.
+    // (Cheap: reads the count PETSc already computed before the line search; no extra solve.)
+    KSP outer_ksp;
+    PetscInt kits_out = 0;
+    PetscCall(SNESGetKSP(snes, &outer_ksp));
+    PetscCall(KSPGetIterationNumber(outer_ksp, &kits_out));
+    PetscCall(PetscPrintf(PETSC_COMM_WORLD,
+                          "  [spinLS] tier=%d alpha=%.4e slope=%.4e gradPsi=%.6e outerKSP=%d accepted=%d\n",
+                          tier,
+                          (double)lambda,
+                          (double)slope,
+                          (double)gradPsiNorm,
+                          (int)kits_out,
+                          (int)accepted));
+
+    if (accepted)
+    {
+      // Commit: outer iterate X <- W; set F <- F_SPIN(W) for the outer convergence test and next
+      // Jacobian. SNESApplyNPC also leaves the libMesh state at NPC(W) -- where
+      // outerJacobianCallback linearizes -- so no extra bookkeeping is needed.
+      PetscReal xnorm, fnorm_new;
+      PetscCall(VecNorm(Y, NORM_2, &ynorm));
+      PetscCall(VecCopy(W, X));
+      PetscCall(SNESApplyNPC(snes, W, nullptr, F));
+      PetscCall(VecNorm(X, NORM_2, &xnorm));
+      PetscCall(VecNorm(F, NORM_2, &fnorm_new));
+      PetscCall(SNESLineSearchSetNorms(ls, xnorm, fnorm_new, ynorm));
+      PetscCall(SNESLineSearchSetLambda(ls, lambda));
+      PetscCall(SNESLineSearchSetReason(ls, SNES_LINESEARCH_SUCCEEDED));
+    }
+    else
+      PetscCall(SNESLineSearchSetReason(ls, SNES_LINESEARCH_FAILED_REDUCT));
+
+    PetscFunctionReturn(PETSC_SUCCESS);
+  }
+
+  // ================= residual-norm merit (default: 1/2||x - NPC(x)||^2) =================
+  const PetscReal alpha = 1e-4;               // App. B sufficient-decrease constant (paper c1)
+  const PetscReal f = 0.5 * fnorm * fnorm;    // merit at the base iterate
+
+  // Initial slope phi'(0) = -F^T (J_SPIN Y), using the shell operator that generated Y (W is free
+  // scratch until the backtracking loop overwrites it). For an accurate SPIN direction J_SPIN Y = F
+  // so this is -||F||^2 < 0 (a descent direction for the merit); force-negative as a safety net if
+  // an inexact/indefinite operator makes it non-negative.
+  PetscCall(MatMult(ex->_jac_shell, Y, W));
+  PetscScalar FtJY;
+  PetscCall(VecDot(F, W, &FtJY));
+  PetscReal initslope = -PetscRealPart(FtJY);
+  if (initslope >= 0.0)
+    initslope = -(PetscAbsReal(PetscRealPart(FtJY)) + PETSC_MACHINE_EPSILON);
+
+  PetscReal lambda = 1.0, lambdaprev = 1.0, gprev = f, gnorm = fnorm, g = f;
+  PetscBool success = PETSC_FALSE;
+  for (PetscInt it = 0; it <= max_it; ++it)
+  {
+    // Trial point W = X - lambda*Y and CONSISTENT merit via the preconditioned residual:
+    // G = F_SPIN(W) = W - NPC(W). This is the crux -- each trial costs one inner NPC sub-solve.
+    PetscCall(VecWAXPY(W, -lambda, Y, X));
+    PetscCall(SNESApplyNPC(snes, W, nullptr, G));
+    PetscCall(VecNorm(G, NORM_2, &gnorm));
+    g = 0.5 * gnorm * gnorm;
+
+    if (PetscIsInfOrNanReal(g))
+    {
+      // Non-finite merit: shrink hard and retry (do not attempt interpolation).
+      if (lambda <= minlambda)
+        break;
+      lambdaprev = lambda;
+      gprev = g;
+      lambda = PetscMax(0.1 * lambda, minlambda);
+      continue;
+    }
+
+    if (g <= f + lambda * alpha * initslope) // Armijo sufficient decrease
+    {
+      success = PETSC_TRUE;
+      break;
+    }
+
+    if (lambda <= minlambda)
+      break;
+
+    // Interpolate a shorter step (quadratic on the first backtrack, cubic thereafter), mirroring
+    // PETSc's SNESLineSearchApply_BT, then clip to [0.1, 0.5]*lambda.
+    PetscReal lambdatemp;
+    if (it == 0)
+      lambdatemp = -initslope * lambda * lambda / (2.0 * (g - f - lambda * initslope));
+    else
+    {
+      const PetscReal t1 = g - f - lambda * initslope;
+      const PetscReal t2 = gprev - f - lambdaprev * initslope;
+      const PetscReal a =
+          (t1 / (lambda * lambda) - t2 / (lambdaprev * lambdaprev)) / (lambda - lambdaprev);
+      const PetscReal b =
+          (-lambdaprev * t1 / (lambda * lambda) + lambda * t2 / (lambdaprev * lambdaprev)) /
+          (lambda - lambdaprev);
+      PetscReal d = b * b - 3.0 * a * initslope;
+      if (d < 0.0)
+        d = 0.0;
+      if (a == 0.0)
+        lambdatemp = -initslope / (2.0 * b);
+      else
+        lambdatemp = (-b + PetscSqrtReal(d)) / (3.0 * a);
+    }
+    if (PetscIsInfOrNanReal(lambdatemp))
+      lambdatemp = 0.5 * lambda;
+
+    lambdaprev = lambda;
+    gprev = g;
+    lambda = PetscClipInterval(lambdatemp, 0.1 * lambda, 0.5 * lambda);
+  }
+
+  if (success)
+  {
+    // Commit the accepted trial: X <- W, F <- F_SPIN(W); set consistent norms/lambda/reason.
+    PetscReal xnorm;
+    PetscCall(VecCopy(W, X));
+    PetscCall(VecCopy(G, F));
+    PetscCall(VecNorm(X, NORM_2, &xnorm));
+    PetscCall(SNESLineSearchSetNorms(ls, xnorm, gnorm, ynorm));
+    PetscCall(SNESLineSearchSetLambda(ls, lambda));
+    PetscCall(SNESLineSearchSetReason(ls, SNES_LINESEARCH_SUCCEEDED));
+  }
+  else
+    PetscCall(SNESLineSearchSetReason(ls, SNES_LINESEARCH_FAILED_REDUCT));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode
+NewtonSNESExecutor::applyBlockJacobi(Vec in, Vec out)
+{
+  PetscFunctionBegin;
+  Vec in0, in1, out0, out1;
+  PetscCall(VecNestGetSubVec(in, 0, &in0));
+  PetscCall(VecNestGetSubVec(in, 1, &in1));
+  PetscCall(VecNestGetSubVec(out, 0, &out0));
+  PetscCall(VecNestGetSubVec(out, 1, &out1));
+  PetscCall(KSPSolve(_pc_ksp0, in0, out0)); // out0 = A00^{-1} in0
+  PetscCall(KSPSolve(_pc_ksp1, in1, out1)); // out1 = A11^{-1} in1
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode
+NewtonSNESExecutor::applyBlockSGS(Vec in, Vec out)
+{
+  // out = P_SGS^{-1} in = (D+U)^{-1} D (D+L)^{-1} in, with D=diag(A00,A11), L=[[0,0],[A10,0]], U=L^T.
+  //   forward  : z0 = A00^{-1} in0;      z1 = A11^{-1} (in1 - A10 z0)   -> out
+  //   scale    : w0 = A00 z0;            w1 = A11 z1                    -> _cg_Pd (scratch)
+  //   backward : y1 = A11^{-1} w1;       y0 = A00^{-1} (w0 - A01 y1)    -> out
+  PetscFunctionBegin;
+  Mat A00, A01, A10, A11;
+  PetscCall(MatNestGetSubMat(_mat_nest, 0, 0, &A00));
+  PetscCall(MatNestGetSubMat(_mat_nest, 0, 1, &A01));
+  PetscCall(MatNestGetSubMat(_mat_nest, 1, 0, &A10));
+  PetscCall(MatNestGetSubMat(_mat_nest, 1, 1, &A11));
+  Vec in0, in1, out0, out1, t0, t1;
+  PetscCall(VecNestGetSubVec(in, 0, &in0));
+  PetscCall(VecNestGetSubVec(in, 1, &in1));
+  PetscCall(VecNestGetSubVec(out, 0, &out0));
+  PetscCall(VecNestGetSubVec(out, 1, &out1));
+  PetscCall(VecNestGetSubVec(_cg_Pd, 0, &t0)); // scratch (w0, then reused)
+  PetscCall(VecNestGetSubVec(_cg_Pd, 1, &t1)); // scratch (in1 - A10 z0, w1, A01 y1)
+
+  // forward sweep (D+L)^{-1}
+  PetscCall(KSPSolve(_pc_ksp0, in0, out0));  // z0 = A00^{-1} in0
+  PetscCall(MatMult(A10, out0, t1));         // t1 = A10 z0
+  PetscCall(VecAYPX(t1, -1.0, in1));         // t1 = in1 - A10 z0
+  PetscCall(KSPSolve(_pc_ksp1, t1, out1));   // z1 = A11^{-1} (in1 - A10 z0)
+  // block-diagonal scale D
+  PetscCall(MatMult(A00, out0, t0));         // t0 = w0 = A00 z0 (disp)
+  PetscCall(MatMult(A11, out1, t1));         // t1 = w1 = A11 z1 (pf)
+  // backward sweep (D+U)^{-1}. A01 maps pf->disp, so A01*y1 is disp-sized: reuse out0 (z0 is done).
+  PetscCall(KSPSolve(_pc_ksp1, t1, out1));   // y1 = A11^{-1} w1 (pf)
+  PetscCall(MatMult(A01, out1, out0));       // out0 = A01 y1 (disp)
+  PetscCall(VecAYPX(out0, -1.0, t0));        // out0 = w0 - A01 y1 (disp)
+  PetscCall(KSPSolve(_pc_ksp0, out0, t0));   // t0 = A00^{-1} (w0 - A01 y1) = y0
+  PetscCall(VecCopy(t0, out0));              // out0 = y0 (disp)
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode
+NewtonSNESExecutor::steihaugTRS(
+    Vec g, Real Delta, Real eps, Real & pred, bool & on_boundary, PetscInt & cg_its)
+{
+  // Preconditioned Steihaug-Toint truncated CG on A p = -g within ||p||_P <= Delta, P = symmetric
+  // block Gauss-Seidel. The P-norm quantities (||p||_P^2, <p,d>_P, ||d||_P^2) are tracked by scalar
+  // recurrences (no forward P-apply needed) using the CG orthogonalities r_j _|_ d_i, r_j _|_ y_i
+  // (i<j): ||d_j||_P^2 = zeta_j + beta_j^2 ||d_{j-1}||_P^2, <p_j,d_j>_P = beta_j(<p_{j-1},d_{j-1}>_P
+  // + alpha_{j-1}||d_{j-1}||_P^2), with zeta_j = r_j^T P^{-1} r_j. Step returned in _cg_p.
+  // See docs/trust_region_spin.md.
+  PetscFunctionBegin;
+  // Bind the block preconditioner to the current diagonal blocks (buildMatNest recreates _mat_nest).
+  Mat A00, A11;
+  PetscCall(MatNestGetSubMat(_mat_nest, 0, 0, &A00));
+  PetscCall(MatNestGetSubMat(_mat_nest, 1, 1, &A11));
+  PetscCall(KSPSetOperators(_pc_ksp0, A00, A00));
+  PetscCall(KSPSetOperators(_pc_ksp1, A11, A11));
+
+  Vec p = _cg_p, r = _cg_r, y = _cg_y, d = _cg_d, Ad = _cg_Ad;
+  const PetscReal Delta2 = Delta * Delta;
+
+  PetscCall(VecSet(p, 0.0));
+  PetscCall(VecCopy(g, r));          // r = A p + g = g at p = 0
+  PetscCall(applyBlockSGS(r, y));    // y = P^{-1} r
+  PetscScalar ry_s;
+  PetscCall(VecDot(r, y, &ry_s));    // zeta_0 = r^T P^{-1} r  (>= 0)
+  PetscReal ry = PetscRealPart(ry_s);
+  PetscReal gnorm;
+  PetscCall(VecNorm(g, NORM_2, &gnorm));
+  PetscCall(VecCopy(y, d));
+  PetscCall(VecScale(d, -1.0));      // d = -y
+
+  on_boundary = false;
+  cg_its = 0;
+  PetscReal np = 0.0;  // ||p||_P^2
+  PetscReal nd = ry;   // ||d||_P^2 (= zeta_0 for d_0 = -y_0)
+  PetscReal pdip = 0.0; // <p,d>_P (=0 at p=0)
+  const PetscInt maxcg = 100;
+  for (PetscInt j = 0; j < maxcg; ++j)
+  {
+    cg_its = j + 1;
+    PetscCall(MatMult(_mat_nest, d, Ad)); // Ad = A d
+    PetscScalar dAd_s;
+    PetscCall(VecDot(d, Ad, &dAd_s));
+    const PetscReal kappa = PetscRealPart(dAd_s); // curvature d^T A d
+
+    if (kappa <= 0.0) // (a) negative curvature: model unbounded along d -> go to the boundary
+    {
+      const PetscReal tau =
+          (nd > 0.0) ? (-pdip + PetscSqrtReal(PetscMax(pdip * pdip + nd * (Delta2 - np), 0.0))) / nd
+                     : 0.0;
+      PetscCall(VecAXPY(p, tau, d));
+      on_boundary = true;
+      break;
+    }
+
+    const PetscReal alpha = ry / kappa;
+    const PetscReal npnew = np + 2.0 * alpha * pdip + alpha * alpha * nd; // ||p + alpha d||_P^2
+    if (npnew >= Delta2) // (b) boundary hit
+    {
+      const PetscReal tau =
+          (nd > 0.0) ? (-pdip + PetscSqrtReal(PetscMax(pdip * pdip + nd * (Delta2 - np), 0.0))) / nd
+                     : 0.0;
+      PetscCall(VecAXPY(p, tau, d));
+      on_boundary = true;
+      break;
+    }
+
+    PetscCall(VecAXPY(p, alpha, d)); // p += alpha d
+    np = npnew;
+    PetscCall(VecAXPY(r, alpha, Ad)); // r += alpha A d
+    PetscReal rnorm;
+    PetscCall(VecNorm(r, NORM_2, &rnorm));
+    if (rnorm <= eps * gnorm) // (c) interior convergence
+      break;
+    PetscCall(applyBlockSGS(r, y)); // y = P^{-1} r
+    PetscScalar ry_new_s;
+    PetscCall(VecDot(r, y, &ry_new_s));
+    const PetscReal ry_new = PetscRealPart(ry_new_s); // zeta_{j+1}
+    const PetscReal beta = ry_new / ry;
+    // scalar P-norm recurrences for d_{j+1} = -y_{j+1} + beta d_j (use OLD nd/pdip)
+    pdip = beta * (pdip + alpha * nd); // <p_{j+1}, d_{j+1}>_P
+    nd = ry_new + beta * beta * nd;    // ||d_{j+1}||_P^2
+    ry = ry_new;
+    PetscCall(VecScale(d, beta));   // d = beta d
+    PetscCall(VecAXPY(d, -1.0, y)); // d = -y + beta d
+  }
+
+  // Model reduction pred = -(g^T p + 1/2 p^T A p) > 0 (Steihaug guarantees model descent).
+  PetscCall(MatMult(_mat_nest, p, Ad)); // Ad reused as A p
+  PetscScalar gp_s, pAp_s;
+  PetscCall(VecDot(g, p, &gp_s));
+  PetscCall(VecDot(p, Ad, &pAp_s));
+  pred = -(PetscRealPart(gp_s) + 0.5 * PetscRealPart(pAp_s));
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode
+NewtonSNESExecutor::assembleCoupledJacobian(Vec x)
 {
   KSP sub_ksp;
 
   PetscFunctionBegin;
-  auto * ex = static_cast<NewtonSNESExecutor *>(ctx);
-
-  for (const auto nl_sys_num : ex->_nl_sys_nums)
+  // Assemble the coupled Jacobian _mat_nest = grad^2 Psi at the OUTER ITERATE x = (U^k, C^k),
+  // matching the paper (Algorithm 3: J^k <- F'(U^k, C^k)). The residual eval (SNESApplyNPC) leaves
+  // the libMesh state at NPC(x), so WITHOUT this scatter computeJacobian would linearize at
+  // NPC(x) != x. (In the (B) NPC-every-iteration path the caller passes x = NPC(x) deliberately, so
+  // the Hessian and the residual are both taken at the swept point.)
+  scatterToSystems(x);
+  const unsigned int n_sys_scatter = _fe_problem.numNonlinearSystems();
+  for (unsigned int i = 0; i < n_sys_scatter; ++i)
   {
-    auto & moose_sys = ex->_fe_problem.getNonlinearSystem(nl_sys_num);
+    auto & sys_i = _fe_problem.getNonlinearSystemBase(i);
+    sys_i.setSolution(*sys_i.system().current_local_solution);
+  }
+
+  for (const auto nl_sys_num : _nl_sys_nums)
+  {
+    auto & moose_sys = _fe_problem.getNonlinearSystem(nl_sys_num);
     auto & lm_sys = moose_sys.sys();
     auto & J_ii = lm_sys.get_system_matrix();
-    // We'll assume that the sub-solves converged tightly enough that we can assume solution
-    // constraints are already enforced. And System::update() is called at the end of sub-solves
-    // such that we should already have current_local_solution in a good state
-    ex->_fe_problem.computeJacobian(*lm_sys.current_local_solution, J_ii, nl_sys_num);
+    // current_local_solution now holds the outer iterate x (scattered above).
+    _fe_problem.computeJacobian(*lm_sys.current_local_solution, J_ii, nl_sys_num);
     auto & dof_map = lm_sys.get_dof_map();
     if (dof_map.n_constrained_dofs())
     {
@@ -401,23 +1849,38 @@ NewtonSNESExecutor::outerJacobianCallback(SNES /*snes*/, Vec /*x*/, Mat /*A*/, M
     }
   }
 
-  ex->assembleOffDiagJacobian();
+  assembleOffDiagJacobian();
 
-  // P is the raw MatNest; A is the ASPIN shell (no assembly needed for shell).
-  PetscCall(MatAssemblyBegin(P, MAT_FINAL_ASSEMBLY));
-  PetscCall(MatAssemblyEnd(P, MAT_FINAL_ASSEMBLY));
+  PetscCall(MatAssemblyBegin(_mat_nest, MAT_FINAL_ASSEMBLY));
+  PetscCall(MatAssemblyEnd(_mat_nest, MAT_FINAL_ASSEMBLY));
 
   // Update per-field KSP operators from the freshly assembled diagonal blocks so that
-  // shellMatMult reuses the current factorizations across all Krylov iterations.
-  for (const auto i : index_range(ex->_nl_sys_nums))
+  // shellMatMult (and the Steihaug field-split preconditioner) reuse the current factorizations.
+  for (const auto i : index_range(_nl_sys_nums))
   {
     Mat J_ii;
-    PetscCall(MatNestGetSubMat(P, i, i, &J_ii));
-    auto sub_snes = ex->_fe_problem.getNonlinearSystem(ex->_nl_sys_nums[i]).getSNES();
+    PetscCall(MatNestGetSubMat(_mat_nest, i, i, &J_ii));
+    auto sub_snes = _fe_problem.getNonlinearSystem(_nl_sys_nums[i]).getSNES();
     PetscCall(SNESGetKSP(sub_snes, &sub_ksp));
     PetscCall(KSPSetOperators(sub_ksp, J_ii, J_ii));
   }
 
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode
+NewtonSNESExecutor::outerJacobianCallback(SNES /*snes*/, Vec x, Mat /*A*/, Mat /*P*/, void * ctx)
+{
+  PetscFunctionBegin;
+  auto * ex = static_cast<NewtonSNESExecutor *>(ctx);
+
+  // (B) NPC-every-iteration TR (_tr_npc): the Steihaug line search sweeps X <- NPC(X) and RE-assembles
+  // grad^2 Psi at NPC(X) itself, so skip this (raw-x) assembly to avoid a redundant Jacobian per
+  // outer iteration. All other paths assemble the coupled Jacobian at the outer iterate here.
+  if (ex->_use_trust_region && ex->_tr_steihaug && ex->_tr_npc)
+    PetscFunctionReturn(PETSC_SUCCESS);
+
+  PetscCall(ex->assembleCoupledJacobian(x));
   PetscFunctionReturn(PETSC_SUCCESS);
 }
 

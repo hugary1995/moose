@@ -67,14 +67,22 @@ NMSMExecutor::run()
 {
   auto & result = newResult();
 
+  // Label each block sub-solve so the interleaved inner nonlinear-residual monitors are readable
+  // (which "N Nonlinear |R|" lines belong to which subproblem in the NPC block sweep).
   for (auto * const sub : _sub_snes)
+  {
+    _console << "    -- [NPC sweep] '" << sub->name() << "' subproblem --" << std::endl;
     result.record(sub->name(), sub->exec());
+  }
 
   // Backward sweep for symmetric multiplicative, excluding the last element of the
   // forward sweep (which was just solved and has not had any inputs change since).
   if (_sweep_type == "symmetric_multiplicative")
     for (auto it = std::next(_sub_snes.rbegin()); it != _sub_snes.rend(); ++it)
+    {
+      _console << "    -- [NPC sweep, back] '" << (*it)->name() << "' subproblem --" << std::endl;
       result.record((*it)->name(), (*it)->exec());
+    }
 
   return result;
 }

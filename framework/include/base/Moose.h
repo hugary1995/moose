@@ -128,6 +128,8 @@ extern const ExecFlagType EXEC_LINEAR;
 extern const ExecFlagType EXEC_NONLINEAR_CONVERGENCE;
 extern const ExecFlagType EXEC_NONLINEAR;
 extern const ExecFlagType EXEC_POSTCHECK;
+/// executed when a custom (nonlinear-preconditioner outer) line search re-evaluates a merit
+extern const ExecFlagType EXEC_LINESEARCH;
 extern const ExecFlagType EXEC_TIMESTEP_END;
 extern const ExecFlagType EXEC_TIMESTEP_BEGIN;
 extern const ExecFlagType EXEC_MULTIAPP_FIXED_POINT_ITERATION_END;
