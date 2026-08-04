@@ -16,11 +16,14 @@
 #include <map>
 #include <memory>
 #include <utility>
+#include <cstdlib>
 
 namespace libMesh
 {
 template <typename>
 class PetscMatrix;
+template <typename>
+class NumericVector;
 }
 
 /**
@@ -36,6 +39,9 @@ public:
 
   virtual Result run() override;
   virtual SNES getSNES() override;
+
+  /// Global nonlinear-system numbers this executor solves (for a block sub-executor, its single system).
+  const std::vector<unsigned int> & nlSysNums() const { return _nl_sys_nums; }
 
   /**
    * @returns the libMesh system corresponding to the index \p i
@@ -70,6 +76,116 @@ private:
   /// same nonlinear-preconditioning cadence as the App. C line search but TR globalization.
   const bool _tr_npc;
 
+  // --- PDAS bound-constraint layer (design (b), Heister-Wheeler-Wick Alg. 3.2) ------------------
+  /// If true, enforce the irreversibility bound d_old <= d <= 1 on _bounded_var_name via a
+  /// primal-dual active set merged into the outer solve, applied consistently to the coupled operator
+  /// AND every field-split preconditioner block.
+  const bool _bounds;
+  /// Name of the bounded (phase-field) variable; its owning nonlinear system carries the constraint.
+  const NonlinearVariableName _bounded_var_name;
+  /// Primal-dual active-set complementarity constant c > 0. Retained for input compatibility (unused
+  /// by the projected-gradient active set).
+  const Real _pdas_c;
+  /// Multiplier dead-band: a bounded DOF at its bound joins the active set only if |B^{-1} R| exceeds
+  /// this. Suppresses roundoff-level active-set chatter in the unstressed pre-damage region.
+  const Real _pdas_lambda_tol;
+  /// Name of the matrix tag holding the (consistent) mass matrix on the bounded variable.
+  const TagName _mass_tag_name;
+  /// On-demand verbose diagnostics (env SPIN_VERBOSE): print the one-line-per-category solver traces
+  /// ([PDAS], [PDAS sweep], [spinTRcg], [gradPsi conv], NPC-sweep headers). Default off -> only the
+  /// outer SNES function norm is logged.
+  const bool _verbose = (std::getenv("SPIN_VERBOSE") != nullptr);
+
+  /// Resolved (once, lazily at first solve): global nonlinear-system number and variable number of
+  /// the bounded variable, its local index within this executor's VecNest, and the mass matrix tag.
+  unsigned int _bounded_sys_num = libMesh::invalid_uint;
+  unsigned int _bounded_var_num = libMesh::invalid_uint;
+  unsigned int _bounded_sys_local = libMesh::invalid_uint;
+  TagID _mass_tag = Moose::INVALID_TAG_ID;
+
+  /// Cached B^{-1}: reciprocal of the lumped (row-summed) mass diagonal on the bounded variable's
+  /// system. Computed once (geometry-only) and reused every iteration for the multiplier estimate
+  /// lambda ~ B^{-1} R. Layout matches the bounded variable's system solution vector.
+  std::unique_ptr<libMesh::NumericVector<libMesh::Number>> _binv;
+  /// Whether _binv has been built yet.
+  bool _mass_built = false;
+
+  /// Assemble the mass matrix on the bounded variable once, lump it (row sum), invert, and cache the
+  /// result in _binv. Also resolves _bounded_sys_num/_bounded_var_num/_bounded_sys_local/_mass_tag.
+  void buildLumpedMassInverse();
+
+  /// PDAS active set on the bounded variable's DOFs, recomputed each outer iteration (block-global
+  /// indices in the bounded system's index space, this rank's owned dofs). _active_d_prev holds the
+  /// previous iteration's set for the HWW active-set-unchanged convergence test.
+  std::vector<PetscInt> _active_d_dofs;
+  std::vector<PetscInt> _active_d_prev;
+  /// Freeze value for each entry of _active_d_dofs: the bound the DOF is pinned to (d_old for a
+  /// lower-active DOF, 1 for an upper-active DOF). Aligned index-for-index with _active_d_dofs.
+  std::vector<PetscReal> _active_val;
+  /// Whether the active set changed on the last computeActiveSet (HWW converges only when it does not
+  /// change AND ||R|| < tol). Starts true so a solve cannot "converge" before any set is computed.
+  bool _active_set_changed = true;
+  /// Mask over the bounded variable's system (1.0 on inactive DOFs, 0.0 on active), used to zero the
+  /// active columns of the (u,d) off-diagonal block (MatDiagonalScale) and the active residual entries.
+  Vec _active_mask = nullptr;
+  /// Previous accepted step's increment on the bounded variable (delta d^{k-1}) for the criterion;
+  /// reset to zero at the start of each solve.
+  Vec _pdas_prev_dstep = nullptr;
+  /// Scratch for the HIK merit safeguard on the NPC sweep (bounds=true, tr_npc): _x_presweep holds the
+  /// pre-sweep iterate X, _sweep_dir holds NPC(X) - X so the sweep can be backtracked on the KKT merit.
+  Vec _x_presweep = nullptr;
+  Vec _sweep_dir = nullptr;
+  /// Scratch holding the reduced residual R_I(X) across the trust-region trial loop (bounds + energy
+  /// merit), so the decoupled KKT-progress test can evaluate ||R_I(W)|| (which overwrites _r_plain) and
+  /// then restore R_I(X) for the next Steihaug re-solve.
+  Vec _r_stash = nullptr;
+
+  /// Recompute the PDAS active set from R (= _r_plain), the current iterate \p X, d_old, and the
+  /// previous step. Updates _active_d_dofs, _active_mask, and _active_set_changed. Active criterion
+  /// (raccoon d >= d_old convention): (B^{-1})_ii R_i + c (d_old - d^k - delta d^{k-1})_i > 0.
+  void computeActiveSet(Vec X);
+  /// Dynamic Dirichlet elimination of the active set from the coupled Hessian _mat_nest and the
+  /// residual _r_plain: zero active rows+cols (diag 1) of the d-diagonal block, active rows of the
+  /// (d,u) block, active cols of the (u,d) block, and active entries of R -- so the reduced step has
+  /// delta d = 0 on the active set. Must run after assembleCoupledJacobian and before steihaugTRS.
+  PetscErrorCode applyActiveSetElimination();
+  /// Project the bounded variable of the coupled iterate \p X onto the active-set freeze values
+  /// (d_old on lower-active DOFs, 1 on upper-active DOFs) -- the feasibility projection of a
+  /// bound-constrained active-set step. Run after computeActiveSet, before assembling at X.
+  void clampActiveToBounds(Vec X);
+  /// Project a trial coupled iterate \p W onto the box d_old <= d <= 1 (clip the whole bounded-variable
+  /// block). Applied to EVERY trial in the TR and LS globalizations so a bound-constrained step cannot
+  /// overshoot. No-op unless _bounds. Shared PDAS treatment across globalizations.
+  void pdasProjectTrial(Vec W);
+  /// Record the accepted step's bounded-variable increment (delta d^k) into _pdas_prev_dstep for the
+  /// next iteration's active-set criterion. No-op unless _bounds.
+  void pdasRecordStep(Vec step);
+
+public:
+  /// Arm this (single-system) sub-executor to solve the REDUCED subsystem on its next run(): a Newton
+  /// solve of its nonlinear system with the DOFs in \p frozen held at the values in \p vals (their
+  /// rows/cols eliminated). Called by the parent coupled executor (via NMSMExecutor) before an NPC
+  /// sweep so the phase-field block sub-solve respects the shared two-sided PDAS active set. \p frozen
+  /// are global DOF indices in this executor's (single) nonlinear system; \p vals the bound each is
+  /// pinned to (d_old or 1), aligned with \p frozen.
+  void armReducedSolve(const std::vector<PetscInt> & frozen, const std::vector<PetscReal> & vals);
+  /// Disarm the reduced solve (restore the normal stock sub-solve).
+  void disarmReducedSolve();
+
+private:
+  /// Whether run() should do a reduced (frozen-set) Newton solve instead of the stock _fe_problem
+  /// solve, and the frozen DOF set (this system's global indices).
+  bool _reduced_solve_armed = false;
+  std::vector<PetscInt> _frozen_dofs;
+  /// Freeze value for each _frozen_dofs entry (bound the DOF is pinned to; aligned with _frozen_dofs).
+  std::vector<PetscReal> _frozen_vals;
+  /// LU KSP for the reduced-subsystem Newton solve (lazily created).
+  KSP _reduced_ksp = nullptr;
+
+  /// Newton solve of this single nonlinear system with _frozen_dofs held at d_old (their rows/cols
+  /// eliminated from the Jacobian and residual). Used for the bound-constrained NPC phase-field block.
+  void reducedNewtonSolve();
+
   /// Trust-region radius (P-norm for Steihaug, solution-norm for the 1-D variant), persistent across
   /// outer iterations of a solve and reset at the start of each solve. Negative => uninitialized.
   Real _tr_radius = -1.0;
@@ -97,6 +213,12 @@ private:
   /// computePlainResidual(). The outer SNES function vector F is a SEPARATE vector holding the
   /// preconditioned residual F_SPIN, so the energy line search must use _r_plain for grad Psi.
   Vec _r_plain = nullptr;
+
+  /// Stash of the reduced R(X) for the RESIDUAL-merit trust region, preserved across the ratio-test
+  /// retry loop: steihaugTRS re-reads _r_plain=R(X) on every rejected re-solve, but the per-trial
+  /// residual eval (computeMerit(W)) overwrites _r_plain with R(W). Allocated only for the
+  /// residual-merit Steihaug path (TR steihaug without an energy postprocessor).
+  Vec _r_base = nullptr;
 
   /// ||R|| = ||grad Psi|| cached from the last line-search call, and its value at the start of the
   /// current outer solve. The energy-merit path converges on ||grad Psi|| (the nonlinear
@@ -139,6 +261,17 @@ private:
   /// Total potential energy Psi at the outer iterate \p x: scatters \p x, runs EXEC_LINESEARCH so
   /// the energy postprocessor re-integrates, and returns its value. Requires _has_energy_pp.
   Real computeEnergy(Vec x);
+  /// Merit at the outer iterate \p x for the trust-region ratio test: the total potential energy
+  /// Psi(x) if an energy postprocessor is set, else the residual-norm merit 1/2||R(x)||^2 (reduced by
+  /// the active-set mask when _bounds). NOTE: computeEnergy leaves _r_plain untouched, but the
+  /// residual branch OVERWRITES _r_plain with R(x); callers preserve R(X) via _r_base across the TR
+  /// retry loop (see spinLineSearch's Steihaug block).
+  Real computeMerit(Vec x);
+  /// KKT-residual merit 1/2||mask (.) R(x)||^2 on the reduced (inactive) space of the CURRENT active-set
+  /// mask. Independent of _has_energy_pp: this is the semismooth-Newton merit for the bound-constrained
+  /// KKT system, used to globalize the NPC sweep (the energy Psi can fall while the KKT residual rises,
+  /// so Psi is the wrong merit for the active-set safeguard). OVERWRITES _r_plain with R(x).
+  Real reducedResidualMerit(Vec x);
   /// Assemble the plain (unpreconditioned) residual F(x) at \p x into _vec_func (== the outer SNES
   /// function vector). This is grad Psi(x), used for the energy line search's slope and App. C.
   void computePlainResidual(Vec x);

@@ -9,6 +9,7 @@
 
 #include "NMSMExecutor.h"
 #include "NewtonSNESExecutor.h"
+#include "NonlinearSystemBase.h"
 
 #include "libmesh/petsc_solver_exception.h"
 #include "libmesh/petsc_vector.h"
@@ -62,17 +63,36 @@ NMSMExecutor::setupSNES()
   _snes_setup_done = true;
 }
 
+void
+NMSMExecutor::logSubSolve(NewtonSNESExecutor * sub, bool back)
+{
+  // Block sub-executors solve a single nonlinear system through MOOSE's standard path, so read the
+  // iteration count and final residual from that system's solve stats (its own PETSc SNES is not the
+  // one that ran).
+  const auto & nlsys = _fe_problem.getNonlinearSystemBase(sub->nlSysNums().front());
+  LibmeshPetscCallA(this->comm().get(),
+                    PetscPrintf(PETSC_COMM_WORLD,
+                                "    [NPC sweep] '%s'%s: its=%u ||R||=%.3e\n",
+                                sub->name().c_str(),
+                                back ? " (back)" : "",
+                                nlsys.nNonlinearIterations(),
+                                (double)nlsys.finalNonlinearResidual()));
+}
+
 Executor::Result
 NMSMExecutor::run()
 {
   auto & result = newResult();
 
-  // Label each block sub-solve so the interleaved inner nonlinear-residual monitors are readable
-  // (which "N Nonlinear |R|" lines belong to which subproblem in the NPC block sweep).
+  // NPC block Gauss-Seidel sweep. On-demand (env SPIN_VERBOSE), print a one-line summary per
+  // subproblem AFTER its sub-solve -- iteration count and final residual -- indented to nest under
+  // the outer SNES function-norm monitor. Default off: keep the log to just the outer norms.
+  const bool verbose = (std::getenv("SPIN_VERBOSE") != nullptr);
   for (auto * const sub : _sub_snes)
   {
-    _console << "    -- [NPC sweep] '" << sub->name() << "' subproblem --" << std::endl;
     result.record(sub->name(), sub->exec());
+    if (verbose)
+      logSubSolve(sub, false);
   }
 
   // Backward sweep for symmetric multiplicative, excluding the last element of the
@@ -80,11 +100,29 @@ NMSMExecutor::run()
   if (_sweep_type == "symmetric_multiplicative")
     for (auto it = std::next(_sub_snes.rbegin()); it != _sub_snes.rend(); ++it)
     {
-      _console << "    -- [NPC sweep, back] '" << (*it)->name() << "' subproblem --" << std::endl;
       result.record((*it)->name(), (*it)->exec());
+      if (verbose)
+        logSubSolve(*it, true);
     }
 
   return result;
+}
+
+void
+NMSMExecutor::armBoundedSubSolve(unsigned int sys_num,
+                                 const std::vector<PetscInt> & frozen,
+                                 const std::vector<PetscReal> & vals)
+{
+  for (auto * const sub : _sub_snes)
+    if (sub->getSystem().number() == sys_num)
+      sub->armReducedSolve(frozen, vals);
+}
+
+void
+NMSMExecutor::disarmBoundedSubSolve()
+{
+  for (auto * const sub : _sub_snes)
+    sub->disarmReducedSolve();
 }
 
 // Will be called when this is a preconditioner

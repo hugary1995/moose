@@ -31,6 +31,15 @@ public:
   virtual Result run() override;
   virtual PetscErrorCode applyBA(Mat A, Vec X, Vec Y) override;
 
+  /// Arm the sub-executor whose nonlinear system is \p sys_num to do a REDUCED (bound-constrained)
+  /// solve on the next sweep, holding \p frozen (that system's global DOF indices) at d_old. Used by
+  /// the parent coupled PDAS executor so the phase-field block sub-solve respects the shared active set.
+  void armBoundedSubSolve(unsigned int sys_num,
+                          const std::vector<PetscInt> & frozen,
+                          const std::vector<PetscReal> & vals);
+  /// Undo armBoundedSubSolve on all sub-executors (restore normal stock sub-solves).
+  void disarmBoundedSubSolve();
+
 protected:
   virtual void setupSNES() override;
 
@@ -39,6 +48,11 @@ private:
   const MooseEnum _sweep_type;
   Vec _block_residual = nullptr;
   Vec _block_update = nullptr;
+
+  /// On-demand (SPIN_VERBOSE) one-line summary of a block sub-solve: its iteration count and final
+  /// residual (from the sub-system's MOOSE nonlinear-solve stats), indented to nest under the outer
+  /// SNES function-norm monitor. \p back tags the backward half of a symmetric sweep.
+  void logSubSolve(NewtonSNESExecutor * sub, bool back);
 
   static PetscErrorCode shellSolveCallback(SNES snes, Vec x);
   PetscErrorCode applyBlockUpdate(Mat A, Vec rhs, Vec Y, PetscInt i);

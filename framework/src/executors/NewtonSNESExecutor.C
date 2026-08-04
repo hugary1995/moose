@@ -13,6 +13,7 @@
 #include "NonlinearSystem.h"
 #include "NonlinearSystemBase.h"
 #include "SNESNPCExecutor.h"
+#include "NMSMExecutor.h"
 #include "NodalBCBase.h"
 #include "MooseVariableBase.h"
 #include "MooseMesh.h"
@@ -22,6 +23,8 @@
 #include "libmesh/libmesh.h"
 #include "libmesh/petsc_solver_exception.h"
 #include "libmesh/implicit_system.h"
+#include "libmesh/nonlinear_implicit_system.h"
+#include "libmesh/nonlinear_solver.h"
 #include "libmesh/petsc_matrix.h"
 #include "libmesh/petsc_vector.h"
 
@@ -32,6 +35,29 @@
 #include <string>
 
 registerMooseObject("MooseApp", NewtonSNESExecutor);
+
+namespace
+{
+// libMesh nonlinear-solver bounds callback for the bound-constrained NPC phase-field sub-solve. It
+// copies the system's (MOOSE-owned) lower_bound/upper_bound vectors -- filled by the executor with
+// the shared PDAS set -- into the SNES's VI bound vectors XL/XU. Using MOOSE/libMesh vectors here (no
+// raw PETSc, no shared Vec ownership) avoids the double-free that SNESVISetVariableBounds caused.
+void
+pdasCopyBounds(libMesh::NumericVector<libMesh::Number> & XL,
+               libMesh::NumericVector<libMesh::Number> & XU,
+               libMesh::NonlinearImplicitSystem & sys)
+{
+  const auto & lb = sys.get_vector("lower_bound");
+  const auto & ub = sys.get_vector("upper_bound");
+  for (auto i = XL.first_local_index(); i < XL.last_local_index(); ++i)
+  {
+    XL.set(i, lb(i));
+    XU.set(i, ub(i));
+  }
+  XL.close();
+  XU.close();
+}
+}
 
 InputParameters
 NewtonSNESExecutor::validParams()
@@ -81,6 +107,36 @@ NewtonSNESExecutor::validParams()
       "X <- NPC(X) EVERY outer iteration, then take the Steihaug-TR step at NPC(X) -- the "
       "'trust-region version of MSPIN' (same nonlinear-preconditioning cadence as the App. C line "
       "search, but TR globalization).");
+  params.addParam<bool>(
+      "bounds",
+      false,
+      "Enforce the irreversibility bound constraint d_old <= d <= 1 on 'bounded_variable' via a "
+      "primal-dual active set (Heister-Wheeler-Wick Alg. 3.2) merged into the outer solve. The same "
+      "active set is applied to the coupled operator and every field-split preconditioner block, so "
+      "the nonlinear preconditioner is consistent with the constraint.");
+  params.addParam<NonlinearVariableName>(
+      "bounded_variable",
+      "The bounded (phase-field) variable when bounds=true; its owning nonlinear system carries the "
+      "irreversibility constraint d_old <= d <= 1.");
+  params.addParam<Real>(
+      "pdas_c",
+      1.0,
+      "Primal-dual active-set complementarity constant c > 0 (bounds=true). Retained for input "
+      "compatibility; the projected-gradient active set uses the multiplier sign + dead-band "
+      "'pdas_lambda_tol', not c.");
+  params.addParam<Real>(
+      "pdas_lambda_tol",
+      1e-8,
+      "Multiplier dead-band (bounds=true): a bounded DOF at its bound joins the active set only if its "
+      "lumped-mass multiplier estimate |B^{-1} R| exceeds this tolerance. Excludes numerically "
+      "indifferent DOFs (multiplier ~ roundoff, e.g. the unstressed pre-damage region) that would "
+      "otherwise chatter in/out of the set and inflate the outer-iteration count.");
+  params.addParam<TagName>(
+      "mass_matrix_tag",
+      "mass",
+      "Name of the matrix tag holding the (consistent) mass matrix on 'bounded_variable' (bounds="
+      "true), used to form the lumped-mass multiplier scaling B^{-1}. Provide a MassMatrix kernel on "
+      "the bounded variable targeting this tag plus '[Problem] extra_tag_matrices'.");
   return params;
 }
 
@@ -92,12 +148,25 @@ NewtonSNESExecutor::NewtonSNESExecutor(const InputParameters & params)
     _has_energy_pp(isParamValid("energy_postprocessor")),
     _use_trust_region(getParam<bool>("use_trust_region")),
     _tr_steihaug(getParam<MooseEnum>("trust_region_solver") == "steihaug"),
-    _tr_npc(getParam<bool>("tr_npc"))
+    _tr_npc(getParam<bool>("tr_npc")),
+    _bounds(getParam<bool>("bounds")),
+    _bounded_var_name(_bounds ? getParam<NonlinearVariableName>("bounded_variable")
+                              : NonlinearVariableName("")),
+    _pdas_c(getParam<Real>("pdas_c")),
+    _pdas_lambda_tol(getParam<Real>("pdas_lambda_tol")),
+    _mass_tag_name(getParam<TagName>("mass_matrix_tag"))
 {
-  if (_use_trust_region && !_has_energy_pp)
+  // The trust region can globalize either the energy merit Psi (requires energy_postprocessor) or, for
+  // the Steihaug variant, the residual merit 1/2||R||^2 (no energy postprocessor needed -- used where
+  // R != grad Psi, e.g. irreversible mixed-mode CZM). The 1-D (non-steihaug) TR is energy-only.
+  if (_use_trust_region && !_tr_steihaug && !_has_energy_pp)
     paramError("use_trust_region",
-               "use_trust_region requires energy_postprocessor (the trust region globalizes the "
-               "energy merit).");
+               "the 1-D (non-steihaug) trust region requires energy_postprocessor (energy merit). Use "
+               "trust_region_solver=steihaug for the residual-merit trust region.");
+  if (_bounds && !isParamValid("bounded_variable"))
+    paramError("bounded_variable", "bounds=true requires 'bounded_variable'.");
+  if (_bounds && _pdas_c <= 0.0)
+    paramError("pdas_c", "must be > 0.");
   // I don't actually know if this is possible with the parser like if the user passes an empty
   // string
   const auto & nl_sys_names = getParam<std::vector<NonlinearSystemName>>("nonlinear_system_names");
@@ -105,6 +174,19 @@ NewtonSNESExecutor::NewtonSNESExecutor(const InputParameters & params)
     paramError("nonlinear_system_names", "Empty string passed?");
   for (const auto & nl_sys_name : nl_sys_names)
     _nl_sys_nums.push_back(_fe_problem.nlSysNum(nl_sys_name));
+
+  // For the bound-constrained PDAS path, add lower_bound/upper_bound vectors to the target systems
+  // now (before EquationSystems init). The NPC phase-field sub-solve fills them with the shared active
+  // set and its bounds callback (pdasCopyBounds) feeds them to vinewtonrsls -- MOOSE's native VI path.
+  // PARALLEL (non-ghosted): VI bounds only need owned entries. GHOSTED corrupts in parallel because
+  // this ctor runs before the mesh is partitioned, so the ghost pattern is built wrong.
+  if (_bounds)
+    for (const auto nl : _nl_sys_nums)
+    {
+      auto & s = _fe_problem.getNonlinearSystemBase(nl);
+      s.addVector("lower_bound", false, libMesh::PARALLEL);
+      s.addVector("upper_bound", false, libMesh::PARALLEL);
+    }
 
   //
   // Store PETSc options
@@ -163,6 +245,8 @@ NewtonSNESExecutor::~NewtonSNESExecutor()
 {
   if (_r_plain)
     PetscCallAbort(this->comm().get(), VecDestroy(&_r_plain));
+  if (_r_base)
+    PetscCallAbort(this->comm().get(), VecDestroy(&_r_base));
   if (_fullJ_ksp)
     PetscCallAbort(this->comm().get(), KSPDestroy(&_fullJ_ksp));
   if (_pc_ksp0)
@@ -172,6 +256,11 @@ NewtonSNESExecutor::~NewtonSNESExecutor()
   for (Vec * v : {&_cg_p, &_cg_r, &_cg_y, &_cg_d, &_cg_Ad, &_cg_Pp, &_cg_Pd})
     if (*v)
       PetscCallAbort(this->comm().get(), VecDestroy(v));
+  for (Vec * v : {&_active_mask, &_pdas_prev_dstep, &_x_presweep, &_sweep_dir, &_r_stash})
+    if (*v)
+      PetscCallAbort(this->comm().get(), VecDestroy(v));
+  if (_reduced_ksp)
+    PetscCallAbort(this->comm().get(), KSPDestroy(&_reduced_ksp));
   if (_jac_shell)
     PetscCallAbort(this->comm().get(), MatDestroy(&_jac_shell));
   if (_mat_nest)
@@ -279,15 +368,18 @@ NewtonSNESExecutor::setupSNES()
   LibmeshPetscCallA(this->comm().get(),
                     SNESLineSearchShellSetApply(ls, &NewtonSNESExecutor::spinLineSearch, this));
 
-  // Full-Jacobian KSP for the App. C inexact-Newton fallback direction (energy merit only). Its
-  // operators are (re)set to the current _mat_nest inside the line search, since buildMatNest()
-  // recreates _mat_nest each solve. Fieldsplit is the natural preconditioner for the 2-field nest;
-  // a loose tolerance suffices for a fallback direction. Tunable via -<name>_fullj_* options.
-  if (_has_energy_pp)
-  {
-    // Dedicated plain-residual VecNest (grad Psi) for the energy line search.
+  // Dedicated plain-residual VecNest R: grad Psi (energy merit) or the coupled nonlinear residual
+  // (residual merit) / its reduced form (PDAS). Read by computePlainResidual, computeActiveSet,
+  // applyActiveSetElimination, steihaugTRS, and the energy line search -- allocate for ANY path that
+  // needs it, not just the energy merit.
+  const bool tr_steihaug_path = _use_trust_region && _tr_steihaug;
+  if (_has_energy_pp || tr_steihaug_path || _bounds)
     LibmeshPetscCallA(this->comm().get(), VecDuplicate(_vec_func, &_r_plain));
 
+  // Full-Jacobian KSP for the App. C inexact-Newton fallback direction (ENERGY merit only; the
+  // Steihaug TR path never uses it). Fieldsplit preconditioner; tunable via -<name>_fullj_* options.
+  if (_has_energy_pp)
+  {
     PC pc_fullj;
     LibmeshPetscCallA(this->comm().get(), KSPCreate(this->comm().get(), &_fullJ_ksp));
     LibmeshPetscCallA(this->comm().get(),
@@ -298,47 +390,55 @@ NewtonSNESExecutor::setupSNES()
     LibmeshPetscCallA(this->comm().get(),
                       KSPSetTolerances(_fullJ_ksp, 1e-3, PETSC_DEFAULT, PETSC_DEFAULT, 200));
     LibmeshPetscCallA(this->comm().get(), KSPSetFromOptions(_fullJ_ksp));
+  }
 
-    // Outer convergence on the COUPLED residual ||F|| = ||grad Psi|| -- NOT the preconditioned
-    // residual ||x - NPC(x)||. Verified from the paper: Algorithm 3's while-condition is
-    // ||F(U,C)|| >= eps_rel ||F(U0,C0)|| (F = the coupled/monolithic residual, eq. 14 = grad Psi),
-    // and Table A.7 documents -snes_atol/-snes_rtol as "(coupled residual)". The scheme is an ENERGY
-    // MINIMIZER: merit = Psi (App. B strong Wolfe on the energy), so the line search drives
-    // grad Psi -> 0, and the convergence test must be on the SAME quantity (grad Psi). Converging on
-    // ||x - NPC(x)|| instead is inconsistent with the energy merit and stalls at a spurious floor in
-    // the non-convex (coupled) regime (the energy-optimal step reduces grad Psi but not the
-    // fixed-point residual). ||grad Psi|| is cached in _r_norm/_r0_norm by spinLineSearch.
+  // Outer convergence on the COUPLED residual ||R|| (grad Psi for the energy merit; the coupled
+  // nonlinear residual for the residual merit) with the HWW active-set-unchanged gate -- NOT the
+  // preconditioned residual ||x - NPC(x)||. The paper's Algorithm 3 while-condition is
+  // ||F(U,C)|| >= eps_rel ||F(U0,C0)|| (F = the coupled/monolithic residual, eq. 14 = grad Psi), and
+  // Table A.7 documents -snes_atol/-snes_rtol as "(coupled residual)". Every trust-region path
+  // converges on ||R|| cached in _r_norm/_r0_norm by spinLineSearch (for the energy merit the NPC
+  // pre-minimizes block-wise so ||x - NPC(x)|| plateaus while ||R|| -> 0).
+  if (_has_energy_pp || tr_steihaug_path)
     LibmeshPetscCallA(this->comm().get(),
                       SNESSetConvergenceTest(_snes, outerConvergenceTest, this, nullptr));
 
-    if (_use_trust_region && _tr_steihaug)
+  // Steihaug-Toint TRS machinery (energy OR residual merit): block field-split preconditioner on the
+  // two SPD diagonal blocks A00 (disp), A11 (pf) + CG scratch VecNests. Block PC default LU/MUMPS;
+  // tunable via -<name>_trpc0_* / -<name>_trpc1_*. Operators (re)bound to the current blocks each solve.
+  if (tr_steihaug_path)
+  {
+    Mat A00, A11;
+    LibmeshPetscCallA(this->comm().get(), MatNestGetSubMat(_mat_nest, 0, 0, &A00));
+    LibmeshPetscCallA(this->comm().get(), MatNestGetSubMat(_mat_nest, 1, 1, &A11));
+    const std::array<std::pair<KSP *, Mat>, 2> blocks{{{&_pc_ksp0, A00}, {&_pc_ksp1, A11}}};
+    for (std::size_t b = 0; b < blocks.size(); ++b)
     {
-      // Block-Jacobi field-split preconditioner for the Steihaug TRS: exact-ish solves on the two
-      // SPD diagonal blocks A00 (disp), A11 (pf). Prototype default = LU (fast on the coarse mesh);
-      // tunable via -<name>_trpc0_* / -<name>_trpc1_* (e.g. hypre for larger meshes). Operators are
-      // (re)bound to the current diagonal blocks inside steihaugTRS (buildMatNest recreates them).
-      Mat A00, A11;
-      LibmeshPetscCallA(this->comm().get(), MatNestGetSubMat(_mat_nest, 0, 0, &A00));
-      LibmeshPetscCallA(this->comm().get(), MatNestGetSubMat(_mat_nest, 1, 1, &A11));
-      const std::array<std::pair<KSP *, Mat>, 2> blocks{{{&_pc_ksp0, A00}, {&_pc_ksp1, A11}}};
-      for (std::size_t b = 0; b < blocks.size(); ++b)
-      {
-        KSP * ksp = blocks[b].first;
-        PC pc_b;
-        LibmeshPetscCallA(this->comm().get(), KSPCreate(this->comm().get(), ksp));
-        LibmeshPetscCallA(
-            this->comm().get(),
-            KSPSetOptionsPrefix(*ksp, (this->name() + "_trpc" + std::to_string(b) + "_").c_str()));
-        LibmeshPetscCallA(this->comm().get(), KSPSetType(*ksp, KSPPREONLY));
-        LibmeshPetscCallA(this->comm().get(), KSPGetPC(*ksp, &pc_b));
-        LibmeshPetscCallA(this->comm().get(), PCSetType(pc_b, PCLU));
-        LibmeshPetscCallA(this->comm().get(), KSPSetOperators(*ksp, blocks[b].second, blocks[b].second));
-        LibmeshPetscCallA(this->comm().get(), KSPSetFromOptions(*ksp));
-      }
-      // CG scratch VecNests (same block layout as the residual/solution nest).
-      for (Vec * v : {&_cg_p, &_cg_r, &_cg_y, &_cg_d, &_cg_Ad, &_cg_Pp, &_cg_Pd})
-        LibmeshPetscCallA(this->comm().get(), VecDuplicate(_vec_func, v));
+      KSP * ksp = blocks[b].first;
+      PC pc_b;
+      LibmeshPetscCallA(this->comm().get(), KSPCreate(this->comm().get(), ksp));
+      LibmeshPetscCallA(
+          this->comm().get(),
+          KSPSetOptionsPrefix(*ksp, (this->name() + "_trpc" + std::to_string(b) + "_").c_str()));
+      LibmeshPetscCallA(this->comm().get(), KSPSetType(*ksp, KSPPREONLY));
+      LibmeshPetscCallA(this->comm().get(), KSPGetPC(*ksp, &pc_b));
+      LibmeshPetscCallA(this->comm().get(), PCSetType(pc_b, PCLU));
+      // Parallel-capable direct solver (petsc's built-in LU is serial-only). Use MUMPS, NOT
+      // SuperLU_DIST: SuperLU_DIST frees its process-grid MPI communicator twice at teardown
+      // (once in MatDestroy_SuperLU_DIST -> superlu_gridexit, again via its comm-keyval delete
+      // callback at PetscFinalize), which double-frees the OpenMPI communicator and corrupts the
+      // heap ("corrupted double-linked list") at exit. MUMPS manages its comm cleanly.
+      LibmeshPetscCallA(this->comm().get(), PCFactorSetMatSolverType(pc_b, MATSOLVERMUMPS));
+      LibmeshPetscCallA(this->comm().get(),
+                        KSPSetOperators(*ksp, blocks[b].second, blocks[b].second));
+      LibmeshPetscCallA(this->comm().get(), KSPSetFromOptions(*ksp));
     }
+    // CG scratch VecNests (same block layout as the residual/solution nest).
+    for (Vec * v : {&_cg_p, &_cg_r, &_cg_y, &_cg_d, &_cg_Ad, &_cg_Pp, &_cg_Pd})
+      LibmeshPetscCallA(this->comm().get(), VecDuplicate(_vec_func, v));
+    // Residual-merit TR only: preserve R(X) across the ratio-test retry loop (see spinLineSearch).
+    if (!_has_energy_pp)
+      LibmeshPetscCallA(this->comm().get(), VecDuplicate(_vec_func, &_r_base));
   }
 
   _snes_setup_done = true;
@@ -355,6 +455,15 @@ NewtonSNESExecutor::run()
   if (_nl_sys_nums.size() == 1)
   {
     const auto nl_sys_num = _nl_sys_nums[0];
+
+    // Bound-constrained NPC block: solve the reduced subsystem (frozen DOFs held at d_old) instead of
+    // the stock nonlinear solve. Armed by the parent coupled executor before an NPC sweep.
+    if (_reduced_solve_armed)
+    {
+      reducedNewtonSolve();
+      result.pass(solve_converged_msg);
+      return result;
+    }
 
     // Wire the nonlinear preconditioner if we have it
     if (_npc_executor)
@@ -397,6 +506,10 @@ NewtonSNESExecutor::run()
   else
     buildMatNest();
 
+  // Build the cached lumped-mass inverse once for the bound-constrained (PDAS) layer.
+  if (_bounds && !_mass_built)
+    buildLumpedMassInverse();
+
   // Attach the nonlinear preconditioner for the App. B/C line-search paths. NOT for the coupled
   // trust-region variants (A) and (B): (A) uses no NPC at all; (B) applies the NPC sweep EXPLICITLY
   // in the line search via SNESSolve on the NMSM shell (see spinLineSearch). Attaching it would make
@@ -428,6 +541,15 @@ NewtonSNESExecutor::run()
   _r0_norm = -1.0;
   // Reset the trust-region radius; it is initialized to ||Y|| on the first line search of the solve.
   _tr_radius = -1.0;
+  // Reset the PDAS state for this solve: the previous d-increment is zero (initial guess d = d_old),
+  // and the active set starts unknown so the first iteration is never spuriously "converged".
+  if (_bounds)
+  {
+    _active_d_prev.clear();
+    _active_set_changed = true;
+    if (_pdas_prev_dstep)
+      LibmeshPetscCallA(this->comm().get(), VecSet(_pdas_prev_dstep, 0.0));
+  }
 
   LibmeshPetscCallA(this->comm().get(), SNESSolve(_snes, nullptr, _vec_sol));
 
@@ -438,6 +560,275 @@ NewtonSNESExecutor::run()
   else
     result.fail(solve_didnt_converge_msg);
   return result;
+}
+
+void
+NewtonSNESExecutor::buildLumpedMassInverse()
+{
+  // Resolve the bounded variable's system/var numbers (variables exist by the first solve, unlike at
+  // executor-construction time). getVariable searches all systems, so it works with the field split.
+  const auto & var = _fe_problem.getVariable(/*tid=*/0,
+                                             _bounded_var_name,
+                                             Moose::VarKindType::VAR_SOLVER,
+                                             Moose::VarFieldType::VAR_FIELD_ANY);
+  _bounded_sys_num = var.sys().number();
+  _bounded_var_num = var.number();
+  _bounded_sys_local = libMesh::invalid_uint;
+  for (const auto i : index_range(_nl_sys_nums))
+    if (_nl_sys_nums[i] == _bounded_sys_num)
+      _bounded_sys_local = static_cast<unsigned int>(i);
+  if (_bounded_sys_local == libMesh::invalid_uint)
+    mooseError("NewtonSNESExecutor: bounded_variable '",
+               _bounded_var_name,
+               "' is not in any of this executor's nonlinear systems.");
+
+  _mass_tag = _fe_problem.getMatrixTagID(_mass_tag_name);
+  auto & dsys = _fe_problem.getNonlinearSystemBase(_bounded_sys_num);
+  if (!dsys.hasMatrix(_mass_tag))
+    mooseError("NewtonSNESExecutor: no mass matrix on tag '",
+               _mass_tag_name,
+               "'. Add a MassMatrix kernel on '",
+               _bounded_var_name,
+               "' with matrix_tags='",
+               _mass_tag_name,
+               "' and [Problem] extra_tag_matrices='",
+               _mass_tag_name,
+               "'.");
+
+  libMesh::SparseMatrix<libMesh::Number> & M = dsys.getMatrix(_mass_tag);
+
+  // Assemble the mass matrix ONCE (geometry-only; constant across the whole run).
+  _fe_problem.setCurrentNonlinearSystem(_bounded_sys_num);
+  _fe_problem.computeJacobianTag(*dsys.system().current_local_solution, M, _mass_tag);
+
+  // Lump by row sum (= integral of N_i for a partition-of-unity basis; the mass system holds only
+  // the bounded variable, so every diagonal is nonzero), then invert to get the B^{-1} diagonal.
+  _binv = dsys.solution().zero_clone();
+  auto ones = dsys.solution().zero_clone();
+  *ones = 1.0;
+  ones->close();
+  M.vector_mult(*_binv, *ones); // _binv = M * 1 = row sums = lumped mass
+  _binv->close();
+
+  const Real mmin = _binv->min();
+  const Real mmax = _binv->max();
+
+  _binv->reciprocal(); // -> B^{-1} diagonal
+  _binv->close();
+
+  _mass_built = true;
+
+  _console << "[PDAS] lumped mass on '" << _bounded_var_name << "' (nl sys " << _bounded_sys_num
+           << ", local index " << _bounded_sys_local << "): lumped-mass min=" << mmin
+           << " max=" << mmax << ", c=" << _pdas_c << std::endl;
+}
+
+void
+NewtonSNESExecutor::computeActiveSet(Vec X)
+{
+  const auto comm = this->comm().get();
+  auto & dsys = _fe_problem.getNonlinearSystemBase(_bounded_sys_num);
+  const libMesh::NumericVector<libMesh::Number> & d_old = dsys.solutionOld();
+
+  // Bounded-variable block of the coupled residual (R = grad Psi) and current iterate.
+  Vec Rd, Xd;
+  LibmeshPetscCallA(comm, VecNestGetSubVec(_r_plain, _bounded_sys_local, &Rd));
+  LibmeshPetscCallA(comm, VecNestGetSubVec(X, _bounded_sys_local, &Xd));
+
+  // Lazy-allocate the mask and previous-step vectors (bounded-system layout, matching Rd).
+  if (!_active_mask)
+    LibmeshPetscCallA(comm, VecDuplicate(Rd, &_active_mask));
+  if (!_pdas_prev_dstep)
+  {
+    LibmeshPetscCallA(comm, VecDuplicate(Rd, &_pdas_prev_dstep));
+    LibmeshPetscCallA(comm, VecSet(_pdas_prev_dstep, 0.0));
+  }
+
+  PetscInt lo, hi;
+  LibmeshPetscCallA(comm, VecGetOwnershipRange(Rd, &lo, &hi));
+
+  const PetscScalar *r_arr, *x_arr, *ds_arr;
+  PetscScalar * mask_arr;
+  LibmeshPetscCallA(comm, VecGetArrayRead(Rd, &r_arr));
+  LibmeshPetscCallA(comm, VecGetArrayRead(Xd, &x_arr));
+  LibmeshPetscCallA(comm, VecGetArrayRead(_pdas_prev_dstep, &ds_arr));
+  LibmeshPetscCallA(comm, VecGetArray(_active_mask, &mask_arr));
+
+  _active_d_dofs.clear();
+  _active_val.clear();
+  unsigned int n_lower = 0, n_upper = 0;
+  const PetscInt n = hi - lo;
+  // Projected-gradient (min-map) active set, following PETSc's vinewtonrsls (SNESVIGetActiveSetIS,
+  // vi.c): a bounded DOF joins the active set from its current POSITION and multiplier SIGN, with NO
+  // predictor delta d^{k-1} and NO complementarity constant c (the HWW predictor drove a period-2
+  // active-set limit cycle). The multiplier lambda = (B^{-1})_ii R_i is lumped-mass scaled, so the
+  // dead-band _pdas_lambda_tol is a mesh-independent pointwise driving force: DOFs whose multiplier is
+  // numerically indifferent (~roundoff, e.g. the unstressed pre-damage region) stay inactive rather
+  // than chattering in/out of the set.
+  //   lower-active: d <= d_old + ztol  AND  lambda >  +lambda_tol  -> freeze at d_old
+  //   upper-active: d >= 1     - ztol  AND  lambda <  -lambda_tol  -> freeze at 1
+  const PetscReal ztol = 1e-8;
+  (void)ds_arr; // no predictor in the projected-gradient criterion (ds_arr consumed by Restore below)
+  for (PetscInt j = 0; j < n; ++j)
+  {
+    const libMesh::dof_id_type gdof = static_cast<libMesh::dof_id_type>(lo + j);
+    const PetscReal di = PetscRealPart(x_arr[j]);
+    const PetscReal lambda = (*_binv)(gdof)*PetscRealPart(r_arr[j]); // pointwise multiplier estimate
+    const PetscReal dlo = d_old(gdof);
+    const PetscReal dup = 1.0; // physical upper bound on damage
+    if (di <= dlo + ztol && lambda > _pdas_lambda_tol)
+    {
+      _active_d_dofs.push_back(lo + j);
+      _active_val.push_back(dlo);
+      mask_arr[j] = 0.0;
+      ++n_lower;
+    }
+    else if (di >= dup - ztol && lambda < -_pdas_lambda_tol)
+    {
+      _active_d_dofs.push_back(lo + j);
+      _active_val.push_back(dup);
+      mask_arr[j] = 0.0;
+      ++n_upper;
+    }
+    else
+      mask_arr[j] = 1.0;
+  }
+
+  LibmeshPetscCallA(comm, VecRestoreArrayRead(Rd, &r_arr));
+  LibmeshPetscCallA(comm, VecRestoreArrayRead(Xd, &x_arr));
+  LibmeshPetscCallA(comm, VecRestoreArrayRead(_pdas_prev_dstep, &ds_arr));
+  LibmeshPetscCallA(comm, VecRestoreArray(_active_mask, &mask_arr));
+
+  // Global change flag: the active set has "changed" if it changed on ANY rank (so the HWW
+  // convergence decision in outerConvergenceTest is identical on all ranks, as PETSc requires).
+  unsigned int changed = (_active_d_dofs != _active_d_prev) ? 1u : 0u;
+  this->comm().max(changed);
+  _active_set_changed = (changed != 0u);
+  _active_d_prev = _active_d_dofs;
+
+  if (_verbose)
+  {
+    this->comm().sum(n_lower);
+    this->comm().sum(n_upper);
+    _console << "    [PDAS] active=" << (n_lower + n_upper) << " / " << dsys.system().n_dofs()
+             << " (lower=" << n_lower << " upper=" << n_upper << ")  changed=" << _active_set_changed
+             << std::endl;
+  }
+}
+
+PetscErrorCode
+NewtonSNESExecutor::applyActiveSetElimination()
+{
+  PetscFunctionBeginUser;
+  const PetscInt i_d = static_cast<PetscInt>(_bounded_sys_local);
+  const PetscInt n_active = static_cast<PetscInt>(_active_d_dofs.size());
+  const PetscInt * idx = _active_d_dofs.empty() ? nullptr : _active_d_dofs.data();
+
+  // (d,d) diagonal block: zero active rows AND columns, unit diagonal -> delta d = 0 on the active
+  // set (dynamic Dirichlet elimination). Modifying this block (the pf system matrix) bumps its state
+  // so the block preconditioner (_pc_ksp1 LU / block-SGS) refactors the reduced block downstream.
+  Mat Add;
+  PetscCall(MatNestGetSubMat(_mat_nest, i_d, i_d, &Add));
+  PetscCall(MatZeroRowsColumns(Add, n_active, idx, 1.0, nullptr, nullptr));
+
+  // Off-diagonal coupling blocks (restore symmetry, HWW step 4).
+  for (const auto j : index_range(_nl_sys_nums))
+  {
+    if (static_cast<PetscInt>(j) == i_d)
+      continue;
+    // (d,u): zero the active d ROWS -- the frozen d-equations no longer couple to u.
+    Mat Adu;
+    PetscCall(MatNestGetSubMat(_mat_nest, i_d, static_cast<PetscInt>(j), &Adu));
+    PetscCall(MatZeroRows(Adu, n_active, idx, 0.0, nullptr, nullptr));
+    // (u,d): zero the active d COLUMNS -- column-scale by the inactive mask (no MatZeroColumns in
+    // PETSc); keeps the coupled operator symmetric for the Steihaug CG.
+    Mat Aud;
+    PetscCall(MatNestGetSubMat(_mat_nest, static_cast<PetscInt>(j), i_d, &Aud));
+    PetscCall(MatDiagonalScale(Aud, nullptr, _active_mask));
+  }
+
+  // Zero the active residual entries so the reduced gradient drives delta d = 0 there.
+  Vec Rd;
+  PetscCall(VecNestGetSubVec(_r_plain, i_d, &Rd));
+  PetscCall(VecPointwiseMult(Rd, Rd, _active_mask));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+void
+NewtonSNESExecutor::clampActiveToBounds(Vec X)
+{
+  if (_active_d_dofs.empty())
+    return;
+  const auto comm = this->comm().get();
+  Vec Xd;
+  LibmeshPetscCallA(comm, VecNestGetSubVec(X, _bounded_sys_local, &Xd));
+  PetscInt lo, hi;
+  LibmeshPetscCallA(comm, VecGetOwnershipRange(Xd, &lo, &hi));
+  PetscScalar * xa;
+  LibmeshPetscCallA(comm, VecGetArray(Xd, &xa));
+  for (std::size_t i = 0; i < _active_d_dofs.size(); ++i)
+  {
+    const PetscInt g = _active_d_dofs[i];
+    if (g >= lo && g < hi)
+      xa[g - lo] = _active_val[i];
+  }
+  LibmeshPetscCallA(comm, VecRestoreArray(Xd, &xa));
+}
+
+void
+NewtonSNESExecutor::armReducedSolve(const std::vector<PetscInt> & frozen,
+                                    const std::vector<PetscReal> & vals)
+{
+  _reduced_solve_armed = true;
+  _frozen_dofs = frozen;
+  _frozen_vals = vals;
+}
+
+void
+NewtonSNESExecutor::disarmReducedSolve()
+{
+  _reduced_solve_armed = false;
+  _frozen_dofs.clear();
+  _frozen_vals.clear();
+}
+
+void
+NewtonSNESExecutor::reducedNewtonSolve()
+{
+  const auto sys_num = _nl_sys_nums[0];
+  auto & sys = _fe_problem.getNonlinearSystemBase(sys_num);
+  auto & lm = _fe_problem.getNonlinearSystem(sys_num).sys();
+  const libMesh::NumericVector<libMesh::Number> & d_old = sys.solutionOld();
+
+  // Install our bounds callback on this system's nonlinear solver once (replaces MOOSE's default
+  // compute_bounds for the pf VI sub-solve). It copies lower_bound/upper_bound (filled below) into the
+  // SNES's VI bound vectors -- MOOSE/libMesh only, no raw PETSc, no shared Vec ownership.
+  if (lm.nonlinear_solver->bounds != pdasCopyBounds)
+    lm.nonlinear_solver->bounds = pdasCopyBounds;
+
+  // Fill the shared-set VI bounds into the system's MOOSE-owned bound vectors: inactive DOFs get the
+  // physical box [d_old, 1]; outer-active DOFs are pinned (lower = upper = freeze value) so the inner
+  // VI cannot reclassify them -> it reuses the outer active/inactive partition exactly.
+  auto & lb = sys.getVector("lower_bound");
+  auto & ub = sys.getVector("upper_bound");
+  for (auto i = lb.first_local_index(); i < lb.last_local_index(); ++i)
+  {
+    lb.set(i, d_old(i));
+    ub.set(i, 1.0);
+  }
+  for (std::size_t k = 0; k < _frozen_dofs.size(); ++k)
+  {
+    const auto g = static_cast<libMesh::dof_id_type>(_frozen_dofs[k]);
+    lb.set(g, _frozen_vals[k]);
+    ub.set(g, _frozen_vals[k]);
+  }
+  lb.close();
+  ub.close();
+
+  // Stock nonlinear solve of the pf block under the VI bounds (vinewtonrsls via the sub-executor
+  // petsc options; correct re-entrant assembly, unlike a hand-rolled Newton).
+  _fe_problem.solve(sys_num);
 }
 
 void
@@ -650,6 +1041,73 @@ NewtonSNESExecutor::computeEnergy(Vec x)
   // (strain -> elasticity -> psie -> psi_total) at x without other exec-flag side effects.
   _fe_problem.execute(EXEC_LINESEARCH);
   return _fe_problem.getPostprocessorValueByName(_energy_pp_name);
+}
+
+Real
+NewtonSNESExecutor::computeMerit(Vec x)
+{
+  // Energy merit: total potential energy Psi(x) (leaves _r_plain untouched).
+  if (_has_energy_pp)
+    return computeEnergy(x);
+
+  // Residual merit 1/2||R(x)||^2. Used where R != grad Psi (e.g. irreversible mixed-mode CZM), so no
+  // energy postprocessor exists. Reduced by the active-set mask so the merit is on the same space as
+  // the step and the base merit 1/2||reduced R(X)||^2.
+  return reducedResidualMerit(x);
+}
+
+Real
+NewtonSNESExecutor::reducedResidualMerit(Vec x)
+{
+  // KKT-residual merit 1/2||mask (.) R(x)||^2 on the current active-set mask. computePlainResidual
+  // OVERWRITES _r_plain with R(x); zero the active d-entries (mirroring applyActiveSetElimination) so
+  // the merit lives on the same REDUCED (inactive) space as the step.
+  computePlainResidual(x);
+  if (_bounds && _active_mask)
+  {
+    Vec Rd;
+    LibmeshPetscCallA(this->comm().get(), VecNestGetSubVec(_r_plain, _bounded_sys_local, &Rd));
+    LibmeshPetscCallA(this->comm().get(), VecPointwiseMult(Rd, Rd, _active_mask));
+  }
+  PetscReal n;
+  LibmeshPetscCallA(this->comm().get(), VecNorm(_r_plain, NORM_2, &n));
+  return 0.5 * n * n;
+}
+
+void
+NewtonSNESExecutor::pdasProjectTrial(Vec W)
+{
+  // Feasibility projection: clip the bounded variable's block of the trial iterate W onto [d_old, 1].
+  // Shared by every globalization (TR / LS) so a bound-constrained step cannot overshoot.
+  if (!_bounds)
+    return;
+  const auto comm = this->comm().get();
+  auto & dsys = _fe_problem.getNonlinearSystemBase(_bounded_sys_num);
+  const libMesh::NumericVector<libMesh::Number> & d_old = dsys.solutionOld();
+  Vec Wd;
+  LibmeshPetscCallA(comm, VecNestGetSubVec(W, _bounded_sys_local, &Wd));
+  PetscInt wlo, whi;
+  LibmeshPetscCallA(comm, VecGetOwnershipRange(Wd, &wlo, &whi));
+  PetscScalar * wa;
+  LibmeshPetscCallA(comm, VecGetArray(Wd, &wa));
+  for (PetscInt i = wlo; i < whi; ++i)
+  {
+    const PetscReal dlo = d_old(static_cast<libMesh::dof_id_type>(i));
+    const PetscReal v = PetscRealPart(wa[i - wlo]);
+    wa[i - wlo] = PetscMax(dlo, PetscMin(v, 1.0));
+  }
+  LibmeshPetscCallA(comm, VecRestoreArray(Wd, &wa));
+}
+
+void
+NewtonSNESExecutor::pdasRecordStep(Vec step)
+{
+  // Cache the accepted step's bounded-variable increment (delta d^k) for the next active-set criterion.
+  if (!_bounds)
+    return;
+  Vec sd;
+  LibmeshPetscCallA(this->comm().get(), VecNestGetSubVec(step, _bounded_sys_local, &sd));
+  LibmeshPetscCallA(this->comm().get(), VecCopy(sd, _pdas_prev_dstep));
 }
 
 void
@@ -894,24 +1352,34 @@ NewtonSNESExecutor::outerConvergenceTest(SNES snes,
 
   // Converge on ||R|| = ||grad Psi|| cached from the line search (one outer iteration in arrears,
   // which is inconsequential). _r_norm/_r0_norm are set once the first line search of this solve has
-  // run; at it==0 (before any line search) we simply keep iterating.
+  // run; at it==0 (before any line search) we simply keep iterating. For the bound-constrained PDAS
+  // path (HWW Remark 3.3) convergence additionally requires the active set to have stopped changing:
+  // ||R|| here is the reduced (inactive) residual, which can be tiny while the active set still moves.
   if (it > 0 && ex->_r_norm >= 0.0 && ex->_r0_norm > 0.0)
   {
+    // (A) Absolute KKT satisfaction ALWAYS counts: a reduced (inactive) residual below atol means the
+    // stationarity+complementarity residual is at the noise floor, so any residual-level active-set
+    // churn (borderline DOFs with sub-tolerance multipliers) is meaningless -- accept regardless of
+    // _active_set_changed. This clears the spurious "converged residual but active set still flipping"
+    // stall (reduced ||R|| ~ 1e-10 blocked by a 16-DOF flip, then a degenerate rho rejection).
     if (ex->_r_norm < atol)
       *reason = SNES_CONVERGED_FNORM_ABS;
-    else if (ex->_r_norm < rtol * ex->_r0_norm)
+    // Relative convergence still requires a settled active set (HWW Remark 3.3): a modest relative drop
+    // with the set still moving is not yet a PDAS solution.
+    else if ((!ex->_bounds || !ex->_active_set_changed) && ex->_r_norm < rtol * ex->_r0_norm)
       *reason = SNES_CONVERGED_FNORM_RELATIVE;
   }
   if (*reason == SNES_CONVERGED_ITERATING && it >= maxit)
     *reason = SNES_DIVERGED_MAX_IT;
 
-  PetscCall(PetscPrintf(PETSC_COMM_WORLD,
-                        "  [gradPsi conv] it=%d ||R||=%.4e rtol*||R0||=%.4e atol=%.4e reason=%d\n",
-                        (int)it,
-                        (double)(ex->_r_norm),
-                        (double)(rtol * ex->_r0_norm),
-                        (double)atol,
-                        (int)*reason));
+  if (ex->_verbose)
+    PetscCall(PetscPrintf(PETSC_COMM_WORLD,
+                          "    [gradPsi conv] it=%d ||R||=%.4e rtol*||R0||=%.4e atol=%.4e reason=%d\n",
+                          (int)it,
+                          (double)(ex->_r_norm),
+                          (double)(rtol * ex->_r0_norm),
+                          (double)atol,
+                          (int)*reason));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
@@ -934,9 +1402,14 @@ NewtonSNESExecutor::spinLineSearch(SNESLineSearch ls, void * ctx)
   PetscCall(
       SNESLineSearchGetTolerances(ls, &minlambda, nullptr, nullptr, nullptr, nullptr, &max_it));
 
-  if (ex->_has_energy_pp)
+  // Enter this block for the energy-merit line search (App. B/C) AND for the Steihaug trust region
+  // regardless of merit -- the TR shares the same prefix (tr_npc sweep, plain-residual assembly, PDAS
+  // elimination) and the residual-merit TR reuses the whole Steihaug machinery below, swapping only
+  // the ratio-test merit (energy Psi -> 1/2||R||^2). The 1-D TR and App-C line search (further down)
+  // are energy-only and are unreachable here without _has_energy_pp (the Steihaug block returns).
+  if (ex->_has_energy_pp || (ex->_use_trust_region && ex->_tr_steihaug))
   {
-    // ================= energy-merit line search (paper App. B + C) =================
+    // ============ energy-merit line search (App. B + C) / trust-region shared prefix ============
     // Merit is the total potential energy Psi (C^1 across the penalty kink), evaluated at the OUTER
     // iterate W = X - alpha*Y. grad Psi = plain residual R = _r_plain. App. C selects the search
     // direction UP FRONT by the ascent test (paper): use the SPIN direction if it is a descent
@@ -956,21 +1429,133 @@ NewtonSNESExecutor::spinLineSearch(SNESLineSearch ls, void * ctx)
     // the raw-X assembly for this mode, so assemble here.
     if (ex->_use_trust_region && ex->_tr_steihaug && ex->_tr_npc)
     {
-      PetscCall(SNESSolve(ex->_npc_executor->getSNES(), nullptr, X)); // X <- NPC(X) (one sweep)
-      PetscCall(ex->assembleCoupledJacobian(X));                      // grad^2 Psi at NPC(X)
+      if (ex->_bounds)
+      {
+        // Bound-constrained (B): compute the PDAS active set at the PRE-SWEEP iterate X, then arm the
+        // phase-field sub-executor to solve only the INACTIVE subsystem (active DOFs held at d_old).
+        // This makes the NPC sweep bound-consistent (no unconstrained d excursion). The same set is
+        // eliminated from the coupled operator below (computeActiveSet is not called again this
+        // iteration -- see the guarded block after the sweep).
+        ex->computePlainResidual(X);
+        ex->computeActiveSet(X);
+        PetscReal r_pre;
+        PetscCall(VecNorm(ex->_r_plain, NORM_2, &r_pre)); // full coupled residual BEFORE the sweep
+        auto * const nmsm = dynamic_cast<NMSMExecutor *>(ex->_npc_executor);
+        if (!nmsm)
+          ex->mooseError("bounds=true with tr_npc requires an NMSMExecutor nonlinear preconditioner "
+                         "(nl_preconditioning).");
+
+        // ---- HIK merit safeguard on the multiplicative NPC sweep --------------------------------
+        // The sweep is a semismooth-Newton block step armed by the active set A(X). Under rapid crack
+        // propagation A(X) can freeze DOFs that should move, so the swept iterate NPC(X) carries a
+        // LARGER KKT residual than X; adopting it unconditionally (outside the trust region's rho
+        // test) sustains a limit cycle (the active set chatters, reduced ||R|| orbits at ~1e-2).
+        // Globalize the sweep by a backtracking line search on the KKT-residual merit
+        // phi = 1/2||mask (.) R||^2 (NOT the energy Psi: the block minimization lowers Psi while
+        // raising ||R||, so Psi would not see the chatter). Take the full sweep, then accept the
+        // largest t in {1, 1/2, ...} with phi(X_pre + t (NPC(X)-X_pre)) <= phi(X_pre); t=0 rejects a
+        // pure-ascent sweep and steps from X_pre (the rho-guarded TR below then makes the progress).
+        // Monotone phi across outer iterations -> no limit cycle. In the healthy regime the full
+        // sweep reduces phi and t=1 is taken with a single extra residual evaluation.
+        if (!ex->_x_presweep)
+          PetscCall(VecDuplicate(X, &ex->_x_presweep));
+        if (!ex->_sweep_dir)
+          PetscCall(VecDuplicate(X, &ex->_sweep_dir));
+        const PetscReal phi0 = ex->reducedResidualMerit(X); // 1/2||mask (.) R(X_pre)||^2
+        PetscCall(VecCopy(X, ex->_x_presweep));             // stash pre-sweep iterate
+
+        nmsm->armBoundedSubSolve(ex->_bounded_sys_num, ex->_active_d_dofs, ex->_active_val);
+        PetscCall(SNESSolve(ex->_npc_executor->getSNES(), nullptr, X)); // X <- NPC(X): reduced pf
+        nmsm->disarmBoundedSubSolve();
+        PetscCall(VecWAXPY(ex->_sweep_dir, -1.0, ex->_x_presweep, X)); // sweep_dir = NPC(X) - X_pre
+
+        PetscReal phi = ex->reducedResidualMerit(X); // phi at the full sweep (t = 1)
+        PetscReal t = 1.0;
+        PetscInt bt = 0;
+        const PetscInt max_bt = 12;
+        while (phi > phi0 && bt < max_bt) // sweep raised the KKT merit -> backtrack
+        {
+          t *= 0.5;
+          ++bt;
+          PetscCall(VecWAXPY(X, t, ex->_sweep_dir, ex->_x_presweep)); // X = X_pre + t (NPC(X)-X_pre)
+          phi = ex->reducedResidualMerit(X);
+        }
+        if (phi > phi0) // even the shortest tried step ascends -> reject the sweep entirely
+        {
+          PetscCall(VecCopy(ex->_x_presweep, X));
+          t = 0.0;
+        }
+
+        if (ex->_verbose)
+        {
+          ex->computePlainResidual(X); // (recomputed unconditionally at line ~1505; here only for print)
+          PetscReal r_post;
+          PetscCall(VecNorm(ex->_r_plain, NORM_2, &r_post)); // full coupled residual AFTER safeguard
+          PetscCall(PetscPrintf(PETSC_COMM_WORLD,
+                                "    [PDAS sweep] full||R|| pre=%.4e post=%.4e (ratio %.2f) t=%.3g bt=%d\n",
+                                (double)r_pre,
+                                (double)r_post,
+                                (double)(r_post / PetscMax(r_pre, 1e-300)),
+                                (double)t,
+                                (int)bt));
+        }
+      }
+      else
+        PetscCall(SNESSolve(ex->_npc_executor->getSNES(), nullptr, X)); // X <- NPC(X) (one sweep)
+      PetscCall(ex->assembleCoupledJacobian(X)); // grad^2 Psi at NPC(X)
     }
 
     ex->computePlainResidual(X); // _r_plain <- R(X) = grad Psi(X)  (F holds F_SPIN, do not use it)
-    const PetscReal psiX = ex->computeEnergy(X);
+
+    // PDAS bound constraint: eliminate the active set (dynamic Dirichlet) from the coupled Hessian and
+    // residual so the TR/CG step below has delta d = 0 on the active set. Done BEFORE the norm so ||R||
+    // is the reduced (inactive) residual (HWW Remark 3.4), and BEFORE steihaugTRS so the block
+    // preconditioners refactor the reduced blocks. The set is computed here for the non-NPC paths; the
+    // (B) tr_npc path already computed it at the pre-sweep iterate (used to freeze the NPC pf sweep).
+    if (ex->_bounds)
+    {
+      const bool tr_npc_path = ex->_use_trust_region && ex->_tr_steihaug && ex->_tr_npc;
+      if (!tr_npc_path)
+        ex->computeActiveSet(X);
+      ex->clampActiveToBounds(X); // project active DOFs onto their bound (d_old lower, 1 upper)
+      // Diagnostic: the bounded variable's range on the current iterate (should stay >= d_old) and
+      // the full (pre-elimination) coupled residual. If d drops below the lower bound, a DOF that
+      // should be frozen is free -> the step is not respecting the constraint.
+      if (ex->_verbose)
+      {
+        Vec Xd;
+        PetscReal dmn, dmx, rfull;
+        PetscCall(VecNestGetSubVec(X, ex->_bounded_sys_local, &Xd));
+        PetscCall(VecMin(Xd, nullptr, &dmn));
+        PetscCall(VecMax(Xd, nullptr, &dmx));
+        PetscCall(VecNorm(ex->_r_plain, NORM_2, &rfull));
+        PetscCall(PetscPrintf(PETSC_COMM_WORLD,
+                              "    [PDAS diag] d in [%.4e, %.4e]  full||R||=%.4e\n",
+                              (double)dmn,
+                              (double)dmx,
+                              (double)rfull));
+      }
+      PetscCall(ex->applyActiveSetElimination());
+    }
+
     PetscReal gradPsiNorm;
-    PetscCall(VecNorm(ex->_r_plain, NORM_2, &gradPsiNorm)); // ||grad Psi|| = ||coupled residual F||
+    PetscCall(VecNorm(ex->_r_plain, NORM_2, &gradPsiNorm)); // ||reduced R|| (= ||grad Psi|| for energy)
     // Cache for outerConvergenceTest (the paper converges on this coupled residual). _r0_norm is the
     // baseline set at the first line search of the solve; _r_norm is the latest value.
     ex->_r_norm = gradPsiNorm;
     if (ex->_r0_norm < 0.0)
       ex->_r0_norm = gradPsiNorm;
+    // Base merit for the trust-region ratio test: total potential energy Psi(X) if provided, else the
+    // residual merit 1/2||R(X)||^2 (reduced; reuses gradPsiNorm -- no extra assembly). The trial
+    // point uses computeMerit(W).
+    const PetscReal psiX =
+        ex->_has_energy_pp ? ex->computeEnergy(X) : 0.5 * gradPsiNorm * gradPsiNorm;
+    // Residual-merit TR: stash the reduced R(X) so it survives the ratio-test retry loop (steihaugTRS
+    // re-reads _r_plain=R(X) each rejected re-solve; the per-trial computeMerit(W) overwrites it).
+    if (!ex->_has_energy_pp && ex->_r_base)
+      PetscCall(VecCopy(ex->_r_plain, ex->_r_base));
 
-    if (std::getenv("SPIN_AUDIT"))
+    if (ex->_has_energy_pp && std::getenv("SPIN_AUDIT"))
     { // ===== SPIN INFRA AUDIT: is _mat_nest the SYMMETRIC, correct coupled Jacobian dR/dx? =====
       // (0) FD GRADIENT check: is g = _r_plain actually grad(Psi)? The trust-region ratio test rests
       // ENTIRELY on this: rho = ared/pred with ared = Psi(X)-Psi(X+p), pred = -(g^T p + 1/2 p^T A p).
@@ -1143,7 +1728,7 @@ NewtonSNESExecutor::spinLineSearch(SNESLineSearch ls, void * ctx)
       PetscCall(VecDestroy(&FDv));
     }
 
-    if (std::getenv("SPIN_DIAG"))
+    if (ex->_has_energy_pp && std::getenv("SPIN_DIAG"))
     { // ===== SPIN-DIRECTION DIAGNOSTIC (opt-in; does an extra full-J solve per line search) =====
       // Exact energy-Newton direction: solve A z = R accurately (z = A^{-1}R) into G.
       PetscCall(KSPSetOperators(ex->_fullJ_ksp, ex->_mat_nest, ex->_mat_nest));
@@ -1280,19 +1865,45 @@ NewtonSNESExecutor::spinLineSearch(SNESLineSearch ls, void * ctx)
         ex->_tr_radius = PetscSqrtReal(PetscMax(PetscRealPart(gy), 1e-300));
       }
 
-      bool tr_accepted = false, on_bnd = false;
+      bool tr_accepted = false, on_bnd = false, accepted_via_kkt = false;
       PetscReal rho = 0.0, pred = 0.0;
       PetscInt cg_its = 0;
       // Radius floor for FAILURE: once the radius is a tiny fraction of its initial value and the
       // ratio is still bad, the model cannot guide a step here (abrupt softening at nucleation) ->
       // fail so the driver cuts dt, rather than accepting meaningless (near-zero) steps forever.
       const PetscReal rad_fail = 1e-8 * ex->_tr_radius;
+      // Decoupled acceptance (bounds + energy merit): stash the reduced residual R_I(X) so the
+      // KKT-progress test can evaluate ||R_I(W)|| per trial (which overwrites _r_plain) and then
+      // restore R_I(X) for the next TRS re-solve. ||R_I(X)|| itself is the scalar gradPsiNorm.
+      if (ex->_bounds && ex->_has_energy_pp)
+      {
+        if (!ex->_r_stash)
+          PetscCall(VecDuplicate(ex->_r_plain, &ex->_r_stash));
+        PetscCall(VecCopy(ex->_r_plain, ex->_r_stash));
+      }
       for (PetscInt tr_it = 0; tr_it <= max_it; ++tr_it)
       {
+        // Residual-merit TR: restore R(X) into _r_plain for this (re-)solve -- the previous trial's
+        // computeMerit(W) overwrote it, and steihaugTRS re-reads _r_plain=R(X).
+        if (!ex->_has_energy_pp && ex->_r_base)
+          PetscCall(VecCopy(ex->_r_base, ex->_r_plain));
         PetscCall(
             ex->steihaugTRS(ex->_r_plain, ex->_tr_radius, eps, pred, on_bnd, cg_its)); // step -> _cg_p
         PetscCall(VecWAXPY(W, 1.0, ex->_cg_p, X)); // W = X + p  (p solves A p = -g, a descent step)
-        const PetscReal psiW = ex->computeEnergy(W);
+        // Feasibility projection of the trial step: clip d onto [d_old, 1] so a bound-constrained
+        // step cannot overshoot (the ratio test then sees the FEASIBLE energy/residual).
+        ex->pdasProjectTrial(W);
+        // Residual merit: override the energy-model pred (from steihaugTRS) with the residual-model
+        // reduction 1/2(||R(X)||^2 - ||R(X)+A p||^2), formed BEFORE the trial residual eval overwrites
+        // _r_plain. A p = _cg_Ad (left by steihaugTRS); R(X) = _r_base; G is free scratch here.
+        if (!ex->_has_energy_pp)
+        {
+          PetscCall(VecWAXPY(G, 1.0, ex->_cg_Ad, ex->_r_base)); // G = R(X) + A p
+          PetscReal rApnorm;
+          PetscCall(VecNorm(G, NORM_2, &rApnorm));
+          pred = 0.5 * (gradPsiNorm * gradPsiNorm - rApnorm * rApnorm);
+        }
+        const PetscReal psiW = ex->computeMerit(W); // Psi(W) (energy) or 1/2||R(W)||^2 (residual)
         const PetscReal ared = psiX - psiW;
         rho = (pred > 0.0 && !PetscIsInfOrNanReal(ared)) ? ared / pred : -1.0;
         // Accept on a good ratio, OR when we are in the local (Newton) basin: once ||grad Psi|| has
@@ -1303,13 +1914,38 @@ NewtonSNESExecutor::spinLineSearch(SNESLineSearch ls, void * ctx)
         // RELATIVE (load-independent): an absolute one lags the breakdown floor, which rises with
         // load. Away from the basin (e.g. the residual JUMP at nucleation) the ratio test governs
         // fully, so a genuinely bad model (abrupt softening) still rejects -> shrink -> cutback.
+        // near_conv trusts the SGS step without the ratio test when close to a solution. For the
+        // bound-constrained path this must NOT fire while the active set is still changing (the
+        // eliminated residual can look tiny mid-transition), or it accepts overshooting steps.
         const bool near_conv =
-            gradPsiNorm < conv_thresh || gradPsiNorm < 1e-2 * PetscMax(ex->_r0_norm, 1e-300);
-        if (rho >= eta1 || near_conv)
+            (!ex->_bounds || !ex->_active_set_changed) &&
+            (gradPsiNorm < conv_thresh || gradPsiNorm < 1e-2 * PetscMax(ex->_r0_norm, 1e-300));
+        // Decoupled KKT-progress clause (bounds): the energy Psi drives the smooth descent via rho, but
+        // near the bound-constrained minimizer Psi is flat while the reduced (inactive) residual still
+        // resolves the complementarity/active set. Accept if ||R_I(W)|| < ||R_I(X)|| = gradPsiNorm even
+        // when rho abstains, so the active-set resolution is not vetoed by a flat-energy ratio. This
+        // ||R_I||-decrease is itself the overshoot safeguard the old !active_set_changed gate provided.
+        // ||R_I(W)|| via reducedResidualMerit(W): energy path clobbers _r_plain -> restore from stash.
+        bool kkt_progress = false;
+        if (ex->_bounds)
+        {
+          PetscReal kktW;
+          if (ex->_has_energy_pp)
+          {
+            const PetscReal mW = ex->reducedResidualMerit(W); // 1/2||R_I(W)||^2 (overwrites _r_plain)
+            kktW = PetscSqrtReal(2.0 * PetscMax(mW, 0.0));
+            PetscCall(VecCopy(ex->_r_stash, ex->_r_plain)); // restore reduced R(X) for the next TRS
+          }
+          else
+            kktW = PetscSqrtReal(2.0 * PetscMax(psiW, 0.0)); // residual merit: psiW = 1/2||R_I(W)||^2
+          kkt_progress = (kktW < gradPsiNorm);
+        }
+        if (rho >= eta1 || near_conv || kkt_progress)
         {
           if (rho > eta2 && on_bnd) // very good AND radius-limited -> expand
             ex->_tr_radius = PetscMin(gexpand * ex->_tr_radius, Dmax);
           tr_accepted = true;
+          accepted_via_kkt = (rho < eta1 && !near_conv); // accepted purely on KKT-residual progress
           break;
         }
         ex->_tr_radius *= gshrink; // reject -> shrink radius and re-solve the TRS
@@ -1318,19 +1954,21 @@ NewtonSNESExecutor::spinLineSearch(SNESLineSearch ls, void * ctx)
       }
 
       PetscReal pnorm;
-      PetscCall(VecNorm(ex->_cg_p, NORM_2, &pnorm));
-      PetscCall(PetscPrintf(
-          PETSC_COMM_WORLD,
-          "  [spinTRcg] rho=%.3e pred=%.3e radius=%.3e ||p||=%.3e cg=%d onBnd=%d ||gradPsi||=%.6e "
-          "acc=%d\n",
-          (double)rho,
-          (double)pred,
-          (double)ex->_tr_radius,
-          (double)pnorm,
-          (int)cg_its,
-          (int)on_bnd,
-          (double)gradPsiNorm,
-          (int)tr_accepted));
+      PetscCall(VecNorm(ex->_cg_p, NORM_2, &pnorm)); // ||p|| (also fed to SNESLineSearchSetNorms below)
+      if (ex->_verbose)
+        PetscCall(PetscPrintf(
+            PETSC_COMM_WORLD,
+            "    [spinTRcg] rho=%.3e pred=%.3e radius=%.3e ||p||=%.3e cg=%d onBnd=%d ||gradPsi||=%.6e "
+            "kkt=%d acc=%d\n",
+            (double)rho,
+            (double)pred,
+            (double)ex->_tr_radius,
+            (double)pnorm,
+            (int)cg_its,
+            (int)on_bnd,
+            (double)gradPsiNorm,
+            (int)accepted_via_kkt,
+            (int)tr_accepted));
 
       if (tr_accepted)
       {
@@ -1344,6 +1982,8 @@ NewtonSNESExecutor::spinLineSearch(SNESLineSearch ls, void * ctx)
         PetscReal xnorm;
         PetscCall(VecCopy(W, X));
         PetscCall(VecNorm(X, NORM_2, &xnorm));
+        // Record the accepted d-increment (delta d^k) for the next iteration's active-set criterion.
+        ex->pdasRecordStep(ex->_cg_p);
         PetscCall(SNESLineSearchSetNorms(ls, xnorm, gradPsiNorm, pnorm));
         PetscCall(SNESLineSearchSetLambda(ls, 1.0));
         PetscCall(SNESLineSearchSetReason(ls, SNES_LINESEARCH_SUCCEEDED));
