@@ -1940,35 +1940,47 @@ NewtonSNESExecutor::spinLineSearch(SNESLineSearch ls, void * ctx)
             kktW = PetscSqrtReal(2.0 * PetscMax(psiW, 0.0)); // residual merit: psiW = 1/2||R_I(W)||^2
           kkt_progress = (kktW < gradPsiNorm);
         }
-        if (rho >= eta1 || near_conv || kkt_progress)
+        const bool accept = (rho >= eta1 || near_conv || kkt_progress);
+        accepted_via_kkt = accept && rho < eta1 && !near_conv; // accepted purely on KKT-residual progress
+        // Per-TRIAL trace: one line per Steihaug trial, so rejected trials are visible and the residual/
+        // energy eval count for this outer iteration = number of these lines. acc=1 marks the accepted one.
+        if (ex->_verbose)
+        {
+          PetscReal pnorm_t;
+          PetscCall(VecNorm(ex->_cg_p, NORM_2, &pnorm_t));
+          PetscCall(PetscPrintf(
+              PETSC_COMM_WORLD,
+              "    [spinTRcg] rho=%.3e pred=%.3e radius=%.3e ||p||=%.3e cg=%d onBnd=%d "
+              "||gradPsi||=%.6e kkt=%d acc=%d\n",
+              (double)rho, (double)pred, (double)ex->_tr_radius, (double)pnorm_t,
+              (int)cg_its, (int)on_bnd, (double)gradPsiNorm, (int)accepted_via_kkt, (int)accept));
+        }
+        if (accept)
         {
           if (rho > eta2 && on_bnd) // very good AND radius-limited -> expand
             ex->_tr_radius = PetscMin(gexpand * ex->_tr_radius, Dmax);
           tr_accepted = true;
-          accepted_via_kkt = (rho < eta1 && !near_conv); // accepted purely on KKT-residual progress
           break;
         }
-        ex->_tr_radius *= gshrink; // reject -> shrink radius and re-solve the TRS
-        if (ex->_tr_radius < rad_fail || ex->_tr_radius < 1e-14)
+        // Reject: shrink the radius and re-solve. Log the rejection + the shrink on its own line.
+        const PetscReal rad_before = ex->_tr_radius;
+        ex->_tr_radius *= gshrink;
+        const bool tr_fail = (ex->_tr_radius < rad_fail || ex->_tr_radius < 1e-14);
+        if (ex->_verbose)
+          PetscCall(PetscPrintf(PETSC_COMM_WORLD,
+                                "    [spinTR reject] rho=%.3e < eta1=%.2f  radius %.3e -> %.3e%s\n",
+                                (double)rho,
+                                (double)eta1,
+                                (double)rad_before,
+                                (double)ex->_tr_radius,
+                                tr_fail ? "  (radius floor: fail -> dt cutback)" : ""));
+        if (tr_fail)
           break; // radius collapsed far from convergence -> fail this solve (dt cutback, not a hang)
       }
 
       PetscReal pnorm;
-      PetscCall(VecNorm(ex->_cg_p, NORM_2, &pnorm)); // ||p|| (also fed to SNESLineSearchSetNorms below)
-      if (ex->_verbose)
-        PetscCall(PetscPrintf(
-            PETSC_COMM_WORLD,
-            "    [spinTRcg] rho=%.3e pred=%.3e radius=%.3e ||p||=%.3e cg=%d onBnd=%d ||gradPsi||=%.6e "
-            "kkt=%d acc=%d\n",
-            (double)rho,
-            (double)pred,
-            (double)ex->_tr_radius,
-            (double)pnorm,
-            (int)cg_its,
-            (int)on_bnd,
-            (double)gradPsiNorm,
-            (int)accepted_via_kkt,
-            (int)tr_accepted));
+      PetscCall(VecNorm(ex->_cg_p, NORM_2, &pnorm)); // ||p|| for SNESLineSearchSetNorms below
+      // (per-trial [spinTRcg] and [spinTR reject] are logged inside the retry loop above)
 
       if (tr_accepted)
       {
