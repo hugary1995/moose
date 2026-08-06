@@ -27,11 +27,17 @@
 #include "libmesh/nonlinear_solver.h"
 #include "libmesh/petsc_matrix.h"
 #include "libmesh/petsc_vector.h"
+#include "libmesh/numeric_vector.h"
+#include "libmesh/mesh_base.h"
+#include "libmesh/elem.h"
+#include "libmesh/dof_map.h"
+#include "libmesh/remote_elem.h"
 
 #include <petscsnes.h>
 #include <petscsys.h>
 
 #include <array>
+#include <set>
 #include <string>
 
 registerMooseObject("MooseApp", NewtonSNESExecutor);
@@ -107,6 +113,42 @@ NewtonSNESExecutor::validParams()
       "X <- NPC(X) EVERY outer iteration, then take the Steihaug-TR step at NPC(X) -- the "
       "'trust-region version of MSPIN' (same nonlinear-preconditioning cadence as the App. C line "
       "search, but TR globalization).");
+  params.addParam<MooseEnum>(
+      "npc",
+      MooseEnum("mono mspin mspin_pne mspin_fne", "mono"),
+      "Nonlinear preconditioner / per-iteration sweep applied inside the Steihaug trust region "
+      "(the coupled-solver FAMILY). 'mono' = no NPC (plain coupled Newton-TR). 'mspin' = one full "
+      "multiplicative-Schwarz field sweep X<-NPC(X) every outer iteration (TR version of MSPIN). "
+      "'mspin_pne' = NEPIN[PARTIAL]: partial nonlinear elimination -- the sweep eliminates only the "
+      "hard DAMAGE band (nepin_band_lo < d < 1-nepin_band_hi), freezing all other damage DOFs at their "
+      "current value and solving the band alone (pf only); displacement is left to the outer TR. "
+      "'mspin_fne' = NEPIN[FULL]: full nonlinear elimination -- BOTH the damage band and the coupled "
+      "displacement front (|R_u|>nepin_u_rtol*max|R_u|) are eliminated together (block Gauss-Seidel of "
+      "vinewtonrsls reduced-space sub-solves, far-field frozen). By default (nepin_restrict_assembly) "
+      "each block sub-solve restricts its FE assembly to the crack-front band, so cost scales with the "
+      "band -- identical numerics to the full-assembly variant. If npc is unset, it is derived from "
+      "the deprecated 'tr_npc' bool (true->mspin, false->mono).");
+  params.addParam<bool>(
+      "nepin_restrict_assembly",
+      true,
+      "NEPIN[FULL] (npc=mspin_fne): restrict each block sub-solve's FE assembly to the elements "
+      "incident to its free set (crack-front band), so residual/Jacobian cost scales with the band "
+      "rather than the whole mesh. The vinewtonrsls reduced-space solve is unchanged, so this is a pure "
+      "cost optimization -- the iterates are bit-identical to the full-assembly path. Set false to "
+      "assemble the full domain (reference / for profiling comparisons).");
+  params.addParam<Real>("nepin_band_lo",
+                        1e-2,
+                        "NEPIN hard-set lower threshold: damage DOFs with d > nepin_band_lo (and below "
+                        "the upper threshold) are eliminated. Below this they are far-field 'easy'.");
+  params.addParam<Real>("nepin_band_hi",
+                        1e-2,
+                        "NEPIN hard-set upper threshold: damage DOFs with d < 1 - nepin_band_hi (and "
+                        "above the lower threshold) are eliminated. Above this they are broken 'easy'.");
+  params.addParam<Real>("nepin_u_rtol",
+                        1e-2,
+                        "NEPIN[FULL] displacement hard-set relative threshold: a disp DOF is eliminated "
+                        "(freed on the front band) iff |R_u,i| > nepin_u_rtol * max_i|R_u,i|. Larger "
+                        "-> narrower disp band. Unused for mono/mspin/mspin_pne.");
   params.addParam<bool>(
       "bounds",
       false,
@@ -130,7 +172,7 @@ NewtonSNESExecutor::validParams()
       "Multiplier dead-band (bounds=true): a bounded DOF at its bound joins the active set only if its "
       "lumped-mass multiplier estimate |B^{-1} R| exceeds this tolerance. Excludes numerically "
       "indifferent DOFs (multiplier ~ roundoff, e.g. the unstressed pre-damage region) that would "
-      "otherwise chatter in/out of the set and inflate the outer-iteration count.");
+      "otherwise oscillate in/out of the set and inflate the outer-iteration count.");
   params.addParam<TagName>(
       "mass_matrix_tag",
       "mass",
@@ -148,7 +190,10 @@ NewtonSNESExecutor::NewtonSNESExecutor(const InputParameters & params)
     _has_energy_pp(isParamValid("energy_postprocessor")),
     _use_trust_region(getParam<bool>("use_trust_region")),
     _tr_steihaug(getParam<MooseEnum>("trust_region_solver") == "steihaug"),
-    _tr_npc(getParam<bool>("tr_npc")),
+    _nepin_lo(getParam<Real>("nepin_band_lo")),
+    _nepin_hi(getParam<Real>("nepin_band_hi")),
+    _nepin_u_rtol(getParam<Real>("nepin_u_rtol")),
+    _nepin_restrict_assembly(getParam<bool>("nepin_restrict_assembly")),
     _bounds(getParam<bool>("bounds")),
     _bounded_var_name(_bounds ? getParam<NonlinearVariableName>("bounded_variable")
                               : NonlinearVariableName("")),
@@ -156,6 +201,17 @@ NewtonSNESExecutor::NewtonSNESExecutor(const InputParameters & params)
     _pdas_lambda_tol(getParam<Real>("pdas_lambda_tol")),
     _mass_tag_name(getParam<TagName>("mass_matrix_tag"))
 {
+  // Resolve the coupled-solver FAMILY (npc enum) into the internal sweep flags. The enum is the modern
+  // single mutually-exclusive selector; if unset, fall back to the deprecated tr_npc bool so existing
+  // inputs (mono_tr.i / mspin_tr.i) keep working. NEPIN is a hard-set-restricted MSPIN sweep, so it
+  // lives on the same axis as mono/mspin -- not a separate composable knob.
+  MooseEnum npc = getParam<MooseEnum>("npc");
+  if (!isParamSetByUser("npc") && isParamSetByUser("tr_npc"))
+    npc = getParam<bool>("tr_npc") ? "mspin" : "mono";
+  _tr_npc = (npc != "mono");
+  _nepin = (npc == "mspin_pne" || npc == "mspin_fne");
+  _nepin_full = (npc == "mspin_fne");
+
   // The trust region can globalize either the energy merit Psi (requires energy_postprocessor) or, for
   // the Steihaug variant, the residual merit 1/2||R||^2 (no energy postprocessor needed -- used where
   // R != grad Psi, e.g. irreversible mixed-mode CZM). The 1-D (non-steihaug) TR is energy-only.
@@ -167,6 +223,12 @@ NewtonSNESExecutor::NewtonSNESExecutor(const InputParameters & params)
     paramError("bounded_variable", "bounds=true requires 'bounded_variable'.");
   if (_bounds && _pdas_c <= 0.0)
     paramError("pdas_c", "must be > 0.");
+  // NEPIN reuses the bound-constrained NPC pf sub-solve (vinewtonrsls + the shared PDAS box) to solve
+  // the free band, so it requires the same bounds=true + steihaug TR path as MSPIN.
+  if (_nepin && !(_bounds && _use_trust_region && _tr_steihaug))
+    paramError("npc",
+               "npc=mspin_pne/mspin_fne (NEPIN) requires bounds=true, use_trust_region=true, "
+               "trust_region_solver=steihaug (same path as npc=mspin).");
   // I don't actually know if this is possible with the parser like if the user passes an empty
   // string
   const auto & nl_sys_names = getParam<std::vector<NonlinearSystemName>>("nonlinear_system_names");
@@ -259,8 +321,6 @@ NewtonSNESExecutor::~NewtonSNESExecutor()
   for (Vec * v : {&_active_mask, &_pdas_prev_dstep, &_x_presweep, &_sweep_dir, &_r_stash})
     if (*v)
       PetscCallAbort(this->comm().get(), VecDestroy(v));
-  if (_reduced_ksp)
-    PetscCallAbort(this->comm().get(), KSPDestroy(&_reduced_ksp));
   if (_jac_shell)
     PetscCallAbort(this->comm().get(), MatDestroy(&_jac_shell));
   if (_mat_nest)
@@ -582,6 +642,23 @@ NewtonSNESExecutor::buildLumpedMassInverse()
                _bounded_var_name,
                "' is not in any of this executor's nonlinear systems.");
 
+  // NEPIN[FULL]/[SUBDOMAIN] additionally eliminate the displacement front, so resolve the (single)
+  // non-bounded coupled system as the "disp" system. Both assume a two-system disp+pf coupling.
+  if (_nepin_full)
+  {
+    for (const auto i : index_range(_nl_sys_nums))
+      if (_nl_sys_nums[i] != _bounded_sys_num)
+      {
+        _disp_sys_local = static_cast<unsigned int>(i);
+        _disp_sys_num = _nl_sys_nums[i];
+      }
+    if (_disp_sys_local == libMesh::invalid_uint || _nl_sys_nums.size() != 2)
+      mooseError("NewtonSNESExecutor: npc=mspin_fne expects exactly two coupled systems "
+                 "(displacement + bounded phase field); found ",
+                 _nl_sys_nums.size(),
+                 ".");
+  }
+
   _mass_tag = _fe_problem.getMatrixTagID(_mass_tag_name);
   auto & dsys = _fe_problem.getNonlinearSystemBase(_bounded_sys_num);
   if (!dsys.hasMatrix(_mass_tag))
@@ -664,7 +741,7 @@ NewtonSNESExecutor::computeActiveSet(Vec X)
   // active-set limit cycle). The multiplier lambda = (B^{-1})_ii R_i is lumped-mass scaled, so the
   // dead-band _pdas_lambda_tol is a mesh-independent pointwise driving force: DOFs whose multiplier is
   // numerically indifferent (~roundoff, e.g. the unstressed pre-damage region) stay inactive rather
-  // than chattering in/out of the set.
+  // than oscillating in/out of the set.
   //   lower-active: d <= d_old + ztol  AND  lambda >  +lambda_tol  -> freeze at d_old
   //   upper-active: d >= 1     - ztol  AND  lambda <  -lambda_tol  -> freeze at 1
   const PetscReal ztol = 1e-8;
@@ -713,6 +790,98 @@ NewtonSNESExecutor::computeActiveSet(Vec X)
     _console << "    [PDAS] active=" << (n_lower + n_upper) << " / " << dsys.system().n_dofs()
              << " (lower=" << n_lower << " upper=" << n_upper << ")  changed=" << _active_set_changed
              << std::endl;
+  }
+}
+
+void
+NewtonSNESExecutor::computeHardSet(Vec X)
+{
+  // NEPIN nonlinear-elimination set. The "hard" (strongly nonlinear) DOFs are the phase-field process
+  // zone -- the moving damage band nepin_lo < d < 1 - nepin_hi where g(d) and the u-d coupling vary
+  // steeply. Those get ELIMINATED (left free in the reduced pf sub-solve, box [d_old, 1]); every other
+  // damage DOF (far-field d~0, broken d~1, irreversibly-frozen front) is "easy" and pinned at its
+  // current value. armReducedSolve pins the DOFs it is handed and frees the rest, so we store the EASY
+  // (complement) set here. For NEPIN[PARTIAL] displacement is not touched -- it stays "easy" and the
+  // outer TR moves it. For NEPIN[FULL] we ALSO build the displacement front set below (both fields move
+  // together on the band), which is the variant that actually cuts outer iterations.
+  const auto comm = this->comm().get();
+  Vec Xd;
+  LibmeshPetscCallA(comm, VecNestGetSubVec(X, _bounded_sys_local, &Xd));
+
+  PetscInt lo, hi;
+  LibmeshPetscCallA(comm, VecGetOwnershipRange(Xd, &lo, &hi));
+  const PetscScalar * x_arr;
+  LibmeshPetscCallA(comm, VecGetArrayRead(Xd, &x_arr));
+
+  _nepin_frozen.clear();
+  _nepin_frozen_val.clear();
+  unsigned int n_bad = 0;
+  const PetscInt n = hi - lo;
+  const PetscReal d_hi = 1.0 - _nepin_hi;
+  for (PetscInt j = 0; j < n; ++j)
+  {
+    const PetscReal di = PetscRealPart(x_arr[j]);
+    if (di > _nepin_lo && di < d_hi)
+      ++n_bad; // process zone -> eliminate (free in the reduced pf sub-solve)
+    else
+    {
+      _nepin_frozen.push_back(lo + j); // easy -> pin at current value
+      _nepin_frozen_val.push_back(di);
+    }
+  }
+  LibmeshPetscCallA(comm, VecRestoreArrayRead(Xd, &x_arr));
+
+  // NEPIN[FULL]: the displacement front. The hard disp DOFs are where the coupled residual (force
+  // imbalance from the changing g(d)) is largest -- |R_u,i| > nepin_u_rtol * max|R_u| -- which is the
+  // moving crack front. Freeze the far-field disp (its complement) at current so the reduced disp solve
+  // moves only the band; the frozen ring supplies the Dirichlet anchor that removes rigid-body modes.
+  unsigned int n_bad_u = 0;
+  _nepin_frozen_u.clear();
+  _nepin_frozen_u_val.clear();
+  if (_nepin_full)
+  {
+    Vec Ru, Xu;
+    LibmeshPetscCallA(comm, VecNestGetSubVec(_r_plain, _disp_sys_local, &Ru));
+    LibmeshPetscCallA(comm, VecNestGetSubVec(X, _disp_sys_local, &Xu));
+    PetscReal rmax;
+    LibmeshPetscCallA(comm, VecNorm(Ru, NORM_INFINITY, &rmax));
+    const PetscReal thr = _nepin_u_rtol * rmax;
+
+    PetscInt ulo, uhi;
+    LibmeshPetscCallA(comm, VecGetOwnershipRange(Ru, &ulo, &uhi));
+    const PetscScalar *ru_arr, *xu_arr;
+    LibmeshPetscCallA(comm, VecGetArrayRead(Ru, &ru_arr));
+    LibmeshPetscCallA(comm, VecGetArrayRead(Xu, &xu_arr));
+    const PetscInt nu = uhi - ulo;
+    for (PetscInt j = 0; j < nu; ++j)
+    {
+      const PetscReal ri = PetscAbsReal(PetscRealPart(ru_arr[j]));
+      if (rmax > 0.0 && ri > thr)
+        ++n_bad_u; // front DOF -> eliminate (free, unbounded box)
+      else
+      {
+        _nepin_frozen_u.push_back(ulo + j); // far-field -> pin at current value
+        _nepin_frozen_u_val.push_back(PetscRealPart(xu_arr[j]));
+      }
+    }
+    LibmeshPetscCallA(comm, VecRestoreArrayRead(Ru, &ru_arr));
+    LibmeshPetscCallA(comm, VecRestoreArrayRead(Xu, &xu_arr));
+  }
+
+  if (_verbose)
+  {
+    this->comm().sum(n_bad);
+    auto & dsys = _fe_problem.getNonlinearSystemBase(_bounded_sys_num);
+    _console << "    [NEPIN] hard d(eliminated)=" << n_bad << " / " << dsys.system().n_dofs()
+             << " (band " << _nepin_lo << " < d < " << d_hi << ")";
+    if (_nepin_full)
+    {
+      this->comm().sum(n_bad_u);
+      auto & usys = _fe_problem.getNonlinearSystemBase(_disp_sys_num);
+      _console << "  |  hard u(eliminated)=" << n_bad_u << " / " << usys.system().n_dofs()
+               << " (|R_u|>" << _nepin_u_rtol << "*max)";
+    }
+    _console << std::endl;
   }
 }
 
@@ -778,9 +947,13 @@ NewtonSNESExecutor::clampActiveToBounds(Vec X)
 
 void
 NewtonSNESExecutor::armReducedSolve(const std::vector<PetscInt> & frozen,
-                                    const std::vector<PetscReal> & vals)
+                                    const std::vector<PetscReal> & vals,
+                                    bool bounded_box,
+                                    bool restrict_assembly)
 {
   _reduced_solve_armed = true;
+  _reduced_bounded_box = bounded_box;
+  _reduced_restrict_assembly = restrict_assembly;
   _frozen_dofs = frozen;
   _frozen_vals = vals;
 }
@@ -789,6 +962,7 @@ void
 NewtonSNESExecutor::disarmReducedSolve()
 {
   _reduced_solve_armed = false;
+  _reduced_restrict_assembly = false;
   _frozen_dofs.clear();
   _frozen_vals.clear();
 }
@@ -799,24 +973,35 @@ NewtonSNESExecutor::reducedNewtonSolve()
   const auto sys_num = _nl_sys_nums[0];
   auto & sys = _fe_problem.getNonlinearSystemBase(sys_num);
   auto & lm = _fe_problem.getNonlinearSystem(sys_num).sys();
-  const libMesh::NumericVector<libMesh::Number> & d_old = sys.solutionOld();
 
   // Install our bounds callback on this system's nonlinear solver once (replaces MOOSE's default
-  // compute_bounds for the pf VI sub-solve). It copies lower_bound/upper_bound (filled below) into the
+  // compute_bounds for the VI sub-solve). It copies lower_bound/upper_bound (filled below) into the
   // SNES's VI bound vectors -- MOOSE/libMesh only, no raw PETSc, no shared Vec ownership.
   if (lm.nonlinear_solver->bounds != pdasCopyBounds)
     lm.nonlinear_solver->bounds = pdasCopyBounds;
 
-  // Fill the shared-set VI bounds into the system's MOOSE-owned bound vectors: inactive DOFs get the
-  // physical box [d_old, 1]; outer-active DOFs are pinned (lower = upper = freeze value) so the inner
-  // VI cannot reclassify them -> it reuses the outer active/inactive partition exactly.
+  // Fill the reduced-solve VI bounds into the system's MOOSE-owned bound vectors. FREE DOFs get the
+  // field-appropriate box: the bounded (pf) block uses the damage irreversibility box [d_old, 1]; the
+  // displacement block (NEPIN[FULL]) is unbounded [-inf, +inf], so its free DOFs solve as plain Newton.
+  // FROZEN DOFs are pinned (lower = upper = freeze value) -> dynamic Dirichlet: the pf block reuses the
+  // outer active/inactive partition exactly; the disp block anchors the free front patch against RBM.
   auto & lb = sys.getVector("lower_bound");
   auto & ub = sys.getVector("upper_bound");
-  for (auto i = lb.first_local_index(); i < lb.last_local_index(); ++i)
+  if (_reduced_bounded_box)
   {
-    lb.set(i, d_old(i));
-    ub.set(i, 1.0);
+    const libMesh::NumericVector<libMesh::Number> & d_old = sys.solutionOld();
+    for (auto i = lb.first_local_index(); i < lb.last_local_index(); ++i)
+    {
+      lb.set(i, d_old(i));
+      ub.set(i, 1.0);
+    }
   }
+  else
+    for (auto i = lb.first_local_index(); i < lb.last_local_index(); ++i)
+    {
+      lb.set(i, PETSC_NINFINITY);
+      ub.set(i, PETSC_INFINITY);
+    }
   for (std::size_t k = 0; k < _frozen_dofs.size(); ++k)
   {
     const auto g = static_cast<libMesh::dof_id_type>(_frozen_dofs[k]);
@@ -826,9 +1011,54 @@ NewtonSNESExecutor::reducedNewtonSolve()
   lb.close();
   ub.close();
 
-  // Stock nonlinear solve of the pf block under the VI bounds (vinewtonrsls via the sub-executor
-  // petsc options; correct re-entrant assembly, unlike a hand-rolled Newton).
+  // NEPIN[FULL] band-restricted assembly (nepin_restrict_assembly): restrict the FE assembly to the
+  // locally-owned elements incident to this block's FREE set (owned DOFs not frozen), so the
+  // residual/Jacobian cost scales with the crack-front
+  // band, not the whole mesh. vinewtonrsls already solves only the free (inactive) reduced space, so the
+  // assembly is the sole remaining full-domain cost -- this removes it. All-gather the free set (the mesh
+  // is replicated) so a free DOF's incident elements owned by another rank are assembled there and the
+  // parallel assembly sums the contributions -> free rows are complete; the frozen ring is VI-pinned.
+  if (_reduced_restrict_assembly)
+  {
+    std::set<PetscInt> frozen(_frozen_dofs.begin(), _frozen_dofs.end());
+    const libMesh::DofMap & dm = lm.get_dof_map();
+    std::vector<PetscInt> gfree;
+    for (auto g = dm.first_dof(); g < dm.end_dof(); ++g)
+      if (!frozen.count(static_cast<PetscInt>(g)))
+        gfree.push_back(static_cast<PetscInt>(g));
+    this->comm().allgather(gfree);
+    std::set<PetscInt> band(gfree.begin(), gfree.end());
+    libMesh::MeshBase & mesh = _fe_problem.mesh().getMesh();
+    _band_elems.clear();
+    std::vector<libMesh::dof_id_type> di;
+    for (const libMesh::Elem * e : mesh.active_local_element_ptr_range())
+    {
+      dm.dof_indices(e, di);
+      for (const auto g : di)
+        if (band.count(static_cast<PetscInt>(g)))
+        {
+          _band_elems.push_back(e);
+          break;
+        }
+    }
+    libMesh::ConstElemRange band_range(&_band_elems);
+    _fe_problem.setCurrentAlgebraicElementRange(&band_range); // deep-copies iterators into _band_elems
+
+    if (_verbose)
+    {
+      unsigned int nb = static_cast<unsigned int>(_band_elems.size()), nf = static_cast<unsigned int>(gfree.size());
+      this->comm().sum(nb);
+      _console << "    [NEPIN band] sys " << sys_num << " band elems=" << nb << " free=" << nf << std::endl;
+    }
+  }
+
+  // Stock nonlinear solve of the block under the VI bounds (vinewtonrsls via the sub-executor petsc
+  // options; correct re-entrant assembly, unlike a hand-rolled Newton). Assembly is band-restricted
+  // above when nepin_restrict_assembly; the reduced-space linear solve is unchanged (bit-identical).
   _fe_problem.solve(sys_num);
+
+  if (_reduced_restrict_assembly)
+    _fe_problem.setCurrentAlgebraicElementRange(nullptr); // restore full-domain assembly
 }
 
 void
@@ -1437,7 +1667,9 @@ NewtonSNESExecutor::spinLineSearch(SNESLineSearch ls, void * ctx)
         // eliminated from the coupled operator below (computeActiveSet is not called again this
         // iteration -- see the guarded block after the sweep).
         ex->computePlainResidual(X);
-        ex->computeActiveSet(X);
+        ex->computeActiveSet(X); // for the coupled Steihaug step below (all MSPIN/NEPIN modes)
+        if (ex->_nepin)
+          ex->computeHardSet(X); // NEPIN: process-zone band -> easy-set frozen lists (per field)
         PetscReal r_pre;
         PetscCall(VecNorm(ex->_r_plain, NORM_2, &r_pre)); // full coupled residual BEFORE the sweep
         auto * const nmsm = dynamic_cast<NMSMExecutor *>(ex->_npc_executor);
@@ -1449,10 +1681,10 @@ NewtonSNESExecutor::spinLineSearch(SNESLineSearch ls, void * ctx)
         // The sweep is a semismooth-Newton block step armed by the active set A(X). Under rapid crack
         // propagation A(X) can freeze DOFs that should move, so the swept iterate NPC(X) carries a
         // LARGER KKT residual than X; adopting it unconditionally (outside the trust region's rho
-        // test) sustains a limit cycle (the active set chatters, reduced ||R|| orbits at ~1e-2).
+        // test) sustains a limit cycle (the active set oscillates, reduced ||R|| orbits at ~1e-2).
         // Globalize the sweep by a backtracking line search on the KKT-residual merit
         // phi = 1/2||mask (.) R||^2 (NOT the energy Psi: the block minimization lowers Psi while
-        // raising ||R||, so Psi would not see the chatter). Take the full sweep, then accept the
+        // raising ||R||, so Psi would not see the oscillation). Take the full sweep, then accept the
         // largest t in {1, 1/2, ...} with phi(X_pre + t (NPC(X)-X_pre)) <= phi(X_pre); t=0 rejects a
         // pure-ascent sweep and steps from X_pre (the rho-guarded TR below then makes the progress).
         // Monotone phi across outer iterations -> no limit cycle. In the healthy regime the full
@@ -1464,8 +1696,43 @@ NewtonSNESExecutor::spinLineSearch(SNESLineSearch ls, void * ctx)
         const PetscReal phi0 = ex->reducedResidualMerit(X); // 1/2||mask (.) R(X_pre)||^2
         PetscCall(VecCopy(X, ex->_x_presweep));             // stash pre-sweep iterate
 
-        nmsm->armBoundedSubSolve(ex->_bounded_sys_num, ex->_active_d_dofs, ex->_active_val);
-        PetscCall(SNESSolve(ex->_npc_executor->getSNES(), nullptr, X)); // X <- NPC(X): reduced pf
+        // Arm the sub-solves according to the sweep's SCOPE (npc family):
+        //  MSPIN      : freeze the active set on pf (d=d_old there), solve the whole inactive damage
+        //               field, and sweep every block (disp then pf).
+        //  mspin_pne  : freeze the EASY damage DOFs at current so only the process-zone band is free,
+        //               and restrict the sweep to the pf block alone (disp left to the outer TR).
+        //  mspin_fne  : additionally freeze the far-field displacement (unbounded box on the free
+        //               front band) and run the full multiplicative sweep (disp-band -> pf-band), so
+        //               u and d move together on the front -- the coupled elimination.
+        // Arm the block sub-solves for the elimination sweep (npc family):
+        //  mspin      : freeze the active set on pf; solve the whole inactive damage field; sweep all blocks.
+        //  mspin_pne  : freeze the easy damage DOFs -> only the process-zone band is free; pf block only.
+        //  mspin_fne  : additionally free the disp front (far-field frozen); full sweep (both fields).
+        //               By default (nepin_restrict_assembly) each block sub-solve restricts its FE
+        //               ASSEMBLY to the elements incident to its free set -- band-sized assembly,
+        //               otherwise identical (same vinewtonrsls reduced-space solve, bit-identical iterates).
+        const bool restrict_asm = ex->_nepin_full && ex->_nepin_restrict_assembly;
+        if (ex->_nepin)
+        {
+          nmsm->armBoundedSubSolve(ex->_bounded_sys_num,
+                                   ex->_nepin_frozen,
+                                   ex->_nepin_frozen_val,
+                                   /*bounded_box=*/true,
+                                   restrict_asm);
+          if (ex->_nepin_full)
+            nmsm->armBoundedSubSolve(ex->_disp_sys_num,
+                                     ex->_nepin_frozen_u,
+                                     ex->_nepin_frozen_u_val,
+                                     /*bounded_box=*/false,
+                                     restrict_asm);
+          else
+            nmsm->setNepinOnly(ex->_bounded_sys_num); // PARTIAL: pf-only, no disp sweep
+        }
+        else
+          nmsm->armBoundedSubSolve(ex->_bounded_sys_num, ex->_active_d_dofs, ex->_active_val);
+        PetscCall(SNESSolve(ex->_npc_executor->getSNES(), nullptr, X)); // X <- NPC(X)/E(X)
+        if (ex->_nepin && !ex->_nepin_full)
+          nmsm->clearNepinOnly();
         nmsm->disarmBoundedSubSolve();
         PetscCall(VecWAXPY(ex->_sweep_dir, -1.0, ex->_x_presweep, X)); // sweep_dir = NPC(X) - X_pre
 
@@ -1836,7 +2103,8 @@ NewtonSNESExecutor::spinLineSearch(SNESLineSearch ls, void * ctx)
     {
       // ========== SPIN-preconditioned Steihaug-Toint TRUST REGION (full-space) ==========
       // Solve min g^T p + 1/2 p^T A p s.t. ||p||_P <= Delta by preconditioned truncated CG (see
-      // docs/trust_region_spin.md), accept on the energy-reduction ratio, adapt the radius. Unlike
+      // the SPIN manuscript, spin repo docs/alg/mspin_tr_pdas), accept on the energy-reduction ratio,
+      // adapt the radius. Unlike
       // the 1-D variant, CG explores the whole Krylov subspace, so it finds a descent step even when
       // the single SPIN direction is nearly orthogonal to grad(Psi) (the propagation regime), and it
       // handles the indefinite (softening) Hessian via a negative-curvature-to-boundary exit.
@@ -1988,7 +2256,7 @@ NewtonSNESExecutor::spinLineSearch(SNESLineSearch ls, void * ctx)
         // direction Y are NOT used (convergence is on ||grad Psi|| via outerConvergenceTest; the step
         // comes from the TRS; the block-Jacobi preconditioner, not the multiplicative NPC, is the
         // preconditioner). So we deliberately do NOT run SNESApplyNPC here -- that extra
-        // multiplicative sweep is a full inner disp+pf Newton solve (the pf one chattering on the
+        // multiplicative sweep is a full inner disp+pf Newton solve (the pf one oscillating on the
         // penalty kink) whose result is discarded. Report ||grad Psi|| as the line-search fnorm for
         // the monitor; F is stale but only ever feeds the discarded Krylov RHS.
         PetscReal xnorm;
@@ -2377,7 +2645,7 @@ NewtonSNESExecutor::steihaugTRS(
   // recurrences (no forward P-apply needed) using the CG orthogonalities r_j _|_ d_i, r_j _|_ y_i
   // (i<j): ||d_j||_P^2 = zeta_j + beta_j^2 ||d_{j-1}||_P^2, <p_j,d_j>_P = beta_j(<p_{j-1},d_{j-1}>_P
   // + alpha_{j-1}||d_{j-1}||_P^2), with zeta_j = r_j^T P^{-1} r_j. Step returned in _cg_p.
-  // See docs/trust_region_spin.md.
+  // See the SPIN manuscript: spin repo docs/alg/mspin_tr_pdas.
   PetscFunctionBegin;
   // Bind the block preconditioner to the current diagonal blocks (buildMatNest recreates _mat_nest).
   Mat A00, A11;

@@ -24,6 +24,8 @@ template <typename>
 class PetscMatrix;
 template <typename>
 class NumericVector;
+class Elem;
+class Node;
 }
 
 /**
@@ -69,12 +71,49 @@ private:
   /// the full space (handles indefinite Hessians); false = 1-D model along the single SPIN direction.
   const bool _tr_steihaug;
 
-  /// Nonlinear-preconditioner usage inside the Steihaug trust region (only meaningful when
-  /// _use_trust_region && _tr_steihaug). false = (A) NO NPC: plain coupled Newton-TR on grad^2 Psi
-  /// (monolithic-family). true = (B) NPC EVERY outer iteration: apply one multiplicative-Schwarz
-  /// sweep X <- NPC(X), then a Steihaug-TR step on grad^2 Psi(NPC(X)) -- the "TR version of MSPIN",
-  /// same nonlinear-preconditioning cadence as the App. C line search but TR globalization.
-  const bool _tr_npc;
+  /// True when a per-iteration NPC "sweep" is applied inside the Steihaug TR (i.e. npc != mono):
+  /// either a full MSPIN field sweep (npc=mspin) or a NEPIN hard-set elimination (npc=mspin_pne/fne).
+  /// Resolved in the ctor from the npc enum (or the deprecated tr_npc bool). false = MONO.
+  bool _tr_npc;
+
+  // --- NEPIN nonlinear-elimination layer (INB-NE; Liu-Hwang-Luo-Cai-Keyes, SISC 2022) ----------
+  /// The tr_npc "sweep" is a nonlinear ELIMINATION of the hard (strongly nonlinear) set instead of the full
+  /// MSPIN field sweep. _nepin = any NE (partial or full). _nepin_full = the coupled front-band variant
+  /// (npc=mspin_fne): the displacement solve is ALSO restricted to the front band (both fields move
+  /// together); _nepin && !_nepin_full = the d-only partial variant (npc=mspin_pne): disp is left to
+  /// the outer TR. Resolved in the ctor from the npc enum.
+  bool _nepin;
+  bool _nepin_full;
+  /// Process-zone band defining the hard (eliminated) damage set: nepin_band_lo < d < 1 - nepin_band_hi.
+  /// Everything else (far-field d~0, broken d~1, irreversibly-frozen front) is "easy" and pinned.
+  const Real _nepin_lo;
+  const Real _nepin_hi;
+  /// (FULL only) displacement hard-set relative threshold: a disp DOF is eliminated (freed on the band)
+  /// iff |R_u,i| > nepin_u_rtol * max_i|R_u,i| -- the front force-imbalance selects the coupled front.
+  const Real _nepin_u_rtol;
+  /// NEPIN[FULL] cost option: restrict each block sub-solve's FE assembly to the elements incident to
+  /// its free set (crack-front band). vinewtonrsls already solves only the free reduced space, so this
+  /// makes assembly band-sized too, reproducing the full-assembly iterates bit-for-bit. Default true.
+  const bool _nepin_restrict_assembly;
+  /// Damage easy (frozen) DOFs + current values -- the complement of the damage band, handed to
+  /// armReducedSolve (which pins these and frees the rest in [d_old, 1]). Filled by computeHardSet.
+  std::vector<PetscInt> _nepin_frozen;
+  std::vector<PetscReal> _nepin_frozen_val;
+  /// (FULL only) displacement easy (frozen far-field) DOFs + current values -- pinned so only the front
+  /// band of disp is free. The frozen ring is the Dirichlet anchor that removes the rigid-body modes of
+  /// the free patch (this is NEPIN's eq 2.24 pinning of the easy set). Filled by computeHardSet.
+  std::vector<PetscInt> _nepin_frozen_u;
+  std::vector<PetscReal> _nepin_frozen_u_val;
+  /// Displacement system (the non-bounded coupled system) global number + local index in this
+  /// executor's VecNest. Resolved alongside _bounded_sys_* for the FULL disp elimination.
+  unsigned int _disp_sys_num = libMesh::invalid_uint;
+  unsigned int _disp_sys_local = libMesh::invalid_uint;
+
+  // --- NEPIN[FULL] band-restricted assembly (nepin_restrict_assembly) ---------------------------
+  /// Backing store for the band-restricted assembly range: the locally-owned elements incident to a
+  /// block's free set. Filled per block sub-solve in reducedNewtonSolve. Must persist across the solve
+  /// (libMesh ConstElemRange stores iterators into this, not a copy).
+  std::vector<const libMesh::Elem *> _band_elems;
 
   // --- PDAS bound-constraint layer (design (b), Heister-Wheeler-Wick Alg. 3.2) ------------------
   /// If true, enforce the irreversibility bound d_old <= d <= 1 on _bounded_var_name via a
@@ -144,6 +183,10 @@ private:
   /// previous step. Updates _active_d_dofs, _active_mask, and _active_set_changed. Active criterion
   /// (raccoon d >= d_old convention): (B^{-1})_ii R_i + c (d_old - d^k - delta d^{k-1})_i > 0.
   void computeActiveSet(Vec X);
+  /// NEPIN: identify the hard (eliminated) damage set -- the process-zone band on the current iterate
+  /// \p X -- and fill _nepin_frozen / _nepin_frozen_val with its complement (the easy DOFs pinned at
+  /// their current value) for armReducedSolve. Solving only the hard band is the nonlinear elimination.
+  void computeHardSet(Vec X);
   /// Dynamic Dirichlet elimination of the active set from the coupled Hessian _mat_nest and the
   /// residual _r_plain: zero active rows+cols (diag 1) of the d-diagonal block, active rows of the
   /// (d,u) block, active cols of the (u,d) block, and active entries of R -- so the reduced step has
@@ -168,7 +211,15 @@ public:
   /// sweep so the phase-field block sub-solve respects the shared two-sided PDAS active set. \p frozen
   /// are global DOF indices in this executor's (single) nonlinear system; \p vals the bound each is
   /// pinned to (d_old or 1), aligned with \p frozen.
-  void armReducedSolve(const std::vector<PetscInt> & frozen, const std::vector<PetscReal> & vals);
+  /// \p bounded_box selects the FREE-DOF box: true = the damage irreversibility box [d_old, 1] (pf
+  /// block); false = unbounded [-inf, +inf] (displacement block, NEPIN[FULL]) so the free DOFs solve
+  /// as plain Newton while the frozen ring is pinned (a Dirichlet-anchored reduced solve).
+  /// \p restrict_assembly (NEPIN[FULL], nepin_restrict_assembly): restrict the block's FE assembly to the
+  /// elements incident to its free (non-frozen) set, so residual/Jacobian cost scales with the band.
+  void armReducedSolve(const std::vector<PetscInt> & frozen,
+                       const std::vector<PetscReal> & vals,
+                       bool bounded_box = true,
+                       bool restrict_assembly = false);
   /// Disarm the reduced solve (restore the normal stock sub-solve).
   void disarmReducedSolve();
 
@@ -176,11 +227,13 @@ private:
   /// Whether run() should do a reduced (frozen-set) Newton solve instead of the stock _fe_problem
   /// solve, and the frozen DOF set (this system's global indices).
   bool _reduced_solve_armed = false;
+  /// Free-DOF box for the reduced solve: true = [d_old, 1] (pf), false = unbounded (disp). See above.
+  bool _reduced_bounded_box = true;
+  /// NEPIN[SUBDOMAIN]: restrict this block's FE assembly to the band incident to its free set.
+  bool _reduced_restrict_assembly = false;
   std::vector<PetscInt> _frozen_dofs;
   /// Freeze value for each _frozen_dofs entry (bound the DOF is pinned to; aligned with _frozen_dofs).
   std::vector<PetscReal> _frozen_vals;
-  /// LU KSP for the reduced-subsystem Newton solve (lazily created).
-  KSP _reduced_ksp = nullptr;
 
   /// Newton solve of this single nonlinear system with _frozen_dofs held at d_old (their rows/cols
   /// eliminated from the Jacobian and residual). Used for the bound-constrained NPC phase-field block.

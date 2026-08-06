@@ -90,6 +90,12 @@ NMSMExecutor::run()
   const bool verbose = (std::getenv("SPIN_VERBOSE") != nullptr);
   for (auto * const sub : _sub_snes)
   {
+    // NEPIN nonlinear elimination: run ONLY the bad-set block (the pf/damage sub-solve armed with
+    // the process-zone free set), leaving the "good" fields (displacement, far-field/broken damage)
+    // untouched. This is the whole point vs. MSPIN -- no full disp sweep, cost scales with the thin
+    // crack-front band the parent executor froze the complement of.
+    if (_nepin_only_sys >= 0 && static_cast<int>(sub->getSystem().number()) != _nepin_only_sys)
+      continue;
     result.record(sub->name(), sub->exec());
     if (verbose)
       logSubSolve(sub, false);
@@ -97,7 +103,8 @@ NMSMExecutor::run()
 
   // Backward sweep for symmetric multiplicative, excluding the last element of the
   // forward sweep (which was just solved and has not had any inputs change since).
-  if (_sweep_type == "symmetric_multiplicative")
+  // Skipped in NEPIN single-block mode (nothing else in the sweep to symmetrize against).
+  if (_sweep_type == "symmetric_multiplicative" && _nepin_only_sys < 0)
     for (auto it = std::next(_sub_snes.rbegin()); it != _sub_snes.rend(); ++it)
     {
       result.record((*it)->name(), (*it)->exec());
@@ -111,11 +118,13 @@ NMSMExecutor::run()
 void
 NMSMExecutor::armBoundedSubSolve(unsigned int sys_num,
                                  const std::vector<PetscInt> & frozen,
-                                 const std::vector<PetscReal> & vals)
+                                 const std::vector<PetscReal> & vals,
+                                 bool bounded_box,
+                                 bool restrict_assembly)
 {
   for (auto * const sub : _sub_snes)
     if (sub->getSystem().number() == sys_num)
-      sub->armReducedSolve(frozen, vals);
+      sub->armReducedSolve(frozen, vals, bounded_box, restrict_assembly);
 }
 
 void

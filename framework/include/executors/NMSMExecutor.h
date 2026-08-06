@@ -36,9 +36,17 @@ public:
   /// the parent coupled PDAS executor so the phase-field block sub-solve respects the shared active set.
   void armBoundedSubSolve(unsigned int sys_num,
                           const std::vector<PetscInt> & frozen,
-                          const std::vector<PetscReal> & vals);
+                          const std::vector<PetscReal> & vals,
+                          bool bounded_box = true,
+                          bool restrict_assembly = false);
   /// Undo armBoundedSubSolve on all sub-executors (restore normal stock sub-solves).
   void disarmBoundedSubSolve();
+
+  /// NEPIN nonlinear elimination: restrict the sweep to the single block whose system number is
+  /// sys_num (the bad-set pf sub-solve); skip the other ("good") blocks and the backward sweep.
+  void setNepinOnly(unsigned int sys_num) { _nepin_only_sys = static_cast<int>(sys_num); }
+  /// Restore the full multiplicative sweep.
+  void clearNepinOnly() { _nepin_only_sys = -1; }
 
 protected:
   virtual void setupSNES() override;
@@ -46,6 +54,8 @@ protected:
 private:
   std::vector<NewtonSNESExecutor *> _sub_snes;
   const MooseEnum _sweep_type;
+  /// NEPIN: system number of the sole block to sweep (-1 = full multiplicative sweep, the default).
+  int _nepin_only_sys = -1;
   Vec _block_residual = nullptr;
   Vec _block_update = nullptr;
 
