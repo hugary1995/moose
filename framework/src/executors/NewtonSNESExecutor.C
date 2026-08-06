@@ -19,6 +19,8 @@
 #include "MooseMesh.h"
 #include "BndNode.h"
 #include "Moose.h"
+#include "ADReal.h"
+#include "metaphysicl/dualnumber.h"
 
 #include "libmesh/libmesh.h"
 #include "libmesh/petsc_solver_exception.h"
@@ -1271,7 +1273,13 @@ NewtonSNESExecutor::computeEnergy(Vec x)
   // Re-integrate the total-potential-energy postprocessor at the scattered iterate. EXEC_LINESEARCH
   // carries only the energy postprocessor, so this recomputes its material dependency chain
   // (strain -> elasticity -> psie -> psi_total) at x without other exec-flag side effects.
+  // The merit is value-only (TotalPotentialEnergyDensity reads raw_value(psie)), so disable AD
+  // derivative propagation through the (spectral-decomposition) material chain -- bit-identical merit
+  // value, skips the Jacobian-sized dual-number work. Restored on exit.
+  const bool old_do_derivatives = ADReal::do_derivatives;
+  ADReal::do_derivatives = false;
   _fe_problem.execute(EXEC_LINESEARCH);
+  ADReal::do_derivatives = old_do_derivatives;
   return _fe_problem.getPostprocessorValueByName(_energy_pp_name);
 }
 
@@ -1372,6 +1380,13 @@ void
 NewtonSNESExecutor::computePlainResidual(Vec x)
 {
   scatterToSystems(x);
+  // Residual-only assembly: disable AD derivative seeding/propagation. FEProblemBase::
+  // computeResidualTags sets this, but we bypass that wrapper (we call computeResidualInternal
+  // directly below), so mirror it here -- the derivatives are discarded for a residual anyway.
+  // Bit-identical residual value; skips the (Jacobian-sized) dual-number arithmetic. Restored on exit
+  // so the coupled-Jacobian assembly (which needs derivatives) is unaffected.
+  const bool old_do_derivatives = ADReal::do_derivatives;
+  ADReal::do_derivatives = false;
   const unsigned int n_sys = _fe_problem.numNonlinearSystems();
 
   // Repoint each system's current-solution pointer at the scattered iterate (the residual assembly
@@ -1418,6 +1433,7 @@ NewtonSNESExecutor::computePlainResidual(Vec x)
                       VecNestGetSubVec(_r_plain, static_cast<PetscInt>(i), &sub));
     LibmeshPetscCallA(this->comm().get(), VecCopy(rhs_i, sub));
   }
+  ADReal::do_derivatives = old_do_derivatives;
 }
 
 bool
