@@ -1136,6 +1136,7 @@ NewtonSNESExecutor::buildMatNest()
 void
 NewtonSNESExecutor::assembleOffDiagJacobian()
 {
+  TIME_SECTION("spinOffDiagJac", 3, "SPIN: off-diagonal Jacobian blocks");
   const auto n_sys = _nl_sys_nums.size();
   for (const auto i : make_range(n_sys))
   {
@@ -2694,6 +2695,7 @@ PetscErrorCode
 NewtonSNESExecutor::steihaugTRS(
     Vec g, Real Delta, Real eps, Real & pred, bool & on_boundary, PetscInt & cg_its)
 {
+  TIME_SECTION("spinSteihaugCG", 2, "SPIN: Steihaug-Toint CG");
   // Preconditioned Steihaug-Toint truncated CG on A p = -g within ||p||_P <= Delta, P = symmetric
   // block Gauss-Seidel. The P-norm quantities (||p||_P^2, <p,d>_P, ||d||_P^2) are tracked by scalar
   // recurrences (no forward P-apply needed) using the CG orthogonalities r_j _|_ d_i, r_j _|_ y_i
@@ -2790,6 +2792,7 @@ NewtonSNESExecutor::steihaugTRS(
 PetscErrorCode
 NewtonSNESExecutor::assembleCoupledJacobian(Vec x)
 {
+  TIME_SECTION("spinCoupledJac", 2, "SPIN: assemble coupled Jacobian");
   KSP sub_ksp;
 
   PetscFunctionBegin;
