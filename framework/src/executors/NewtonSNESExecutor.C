@@ -309,6 +309,8 @@ NewtonSNESExecutor::~NewtonSNESExecutor()
     PetscCallAbort(this->comm().get(), VecDestroy(&_r_plain));
   if (_r_base)
     PetscCallAbort(this->comm().get(), VecDestroy(&_r_base));
+  if (_r_merit)
+    PetscCallAbort(this->comm().get(), VecDestroy(&_r_merit));
   if (_fullJ_ksp)
     PetscCallAbort(this->comm().get(), KSPDestroy(&_fullJ_ksp));
   if (_pc_ksp0)
@@ -1304,6 +1306,32 @@ NewtonSNESExecutor::reducedResidualMerit(Vec x)
   return 0.5 * n * n;
 }
 
+Real
+NewtonSNESExecutor::sweepMerit(Vec x, bool reassemble)
+{
+  // Non-destructive reduced KKT merit for the NPC-sweep safeguard. Unlike reducedResidualMerit (which
+  // masks _r_plain in place), this masks a COPY (_r_merit) so _r_plain keeps the full R(x): the caller
+  // can then reuse it for the post-sweep step residual instead of reassembling (the dominant per-iter
+  // cost). reassemble=false reuses the _r_plain already holding R(x) (e.g. the pre-sweep residual).
+  if (reassemble)
+    computePlainResidual(x);
+  if (!(_bounds && _active_mask))
+  {
+    PetscReal nu;
+    LibmeshPetscCallA(this->comm().get(), VecNorm(_r_plain, NORM_2, &nu));
+    return 0.5 * nu * nu;
+  }
+  if (!_r_merit)
+    LibmeshPetscCallA(this->comm().get(), VecDuplicate(_r_plain, &_r_merit));
+  LibmeshPetscCallA(this->comm().get(), VecCopy(_r_plain, _r_merit));
+  Vec Rd;
+  LibmeshPetscCallA(this->comm().get(), VecNestGetSubVec(_r_merit, _bounded_sys_local, &Rd));
+  LibmeshPetscCallA(this->comm().get(), VecPointwiseMult(Rd, Rd, _active_mask));
+  PetscReal n;
+  LibmeshPetscCallA(this->comm().get(), VecNorm(_r_merit, NORM_2, &n));
+  return 0.5 * n * n;
+}
+
 void
 NewtonSNESExecutor::pdasProjectTrial(Vec W)
 {
@@ -1657,6 +1685,8 @@ NewtonSNESExecutor::spinLineSearch(SNESLineSearch ls, void * ctx)
     // then taken at NPC(X) and the Steihaug TRS steps from there -- the "trust-region version of
     // MSPIN" (NPC cadence of the App. C line search, TR globalization). The Jacobian callback skipped
     // the raw-X assembly for this mode, so assemble here.
+    bool rplain_is_full_RX = false; // set true once _r_plain holds full R(X) (lets us skip the
+                                    // redundant post-sweep computePlainResidual below).
     if (ex->_use_trust_region && ex->_tr_steihaug && ex->_tr_npc)
     {
       if (ex->_bounds)
@@ -1693,7 +1723,7 @@ NewtonSNESExecutor::spinLineSearch(SNESLineSearch ls, void * ctx)
           PetscCall(VecDuplicate(X, &ex->_x_presweep));
         if (!ex->_sweep_dir)
           PetscCall(VecDuplicate(X, &ex->_sweep_dir));
-        const PetscReal phi0 = ex->reducedResidualMerit(X); // 1/2||mask (.) R(X_pre)||^2
+        const PetscReal phi0 = ex->sweepMerit(X, /*reassemble=*/false); // reuse _r_plain=R(X_pre) from line 1669
         PetscCall(VecCopy(X, ex->_x_presweep));             // stash pre-sweep iterate
 
         // Arm the sub-solves according to the sweep's SCOPE (npc family):
@@ -1736,7 +1766,7 @@ NewtonSNESExecutor::spinLineSearch(SNESLineSearch ls, void * ctx)
         nmsm->disarmBoundedSubSolve();
         PetscCall(VecWAXPY(ex->_sweep_dir, -1.0, ex->_x_presweep, X)); // sweep_dir = NPC(X) - X_pre
 
-        PetscReal phi = ex->reducedResidualMerit(X); // phi at the full sweep (t = 1)
+        PetscReal phi = ex->sweepMerit(X, /*reassemble=*/true); // full sweep (t=1); leaves _r_plain = full R(NPC(X))
         PetscReal t = 1.0;
         PetscInt bt = 0;
         const PetscInt max_bt = 12;
@@ -1745,17 +1775,23 @@ NewtonSNESExecutor::spinLineSearch(SNESLineSearch ls, void * ctx)
           t *= 0.5;
           ++bt;
           PetscCall(VecWAXPY(X, t, ex->_sweep_dir, ex->_x_presweep)); // X = X_pre + t (NPC(X)-X_pre)
-          phi = ex->reducedResidualMerit(X);
+          phi = ex->sweepMerit(X, /*reassemble=*/true);
         }
         if (phi > phi0) // even the shortest tried step ascends -> reject the sweep entirely
         {
           PetscCall(VecCopy(ex->_x_presweep, X));
           t = 0.0;
         }
+        // sweepMerit left _r_plain = full R(X) for the accepted X, EXCEPT on a reject (t=0), where X
+        // was reset to X_pre but _r_plain still holds R(pre-reject). Track it so the step residual
+        // below is reused (t!=0) instead of reassembled.
+        rplain_is_full_RX = (t != 0.0);
 
         if (ex->_verbose)
         {
-          ex->computePlainResidual(X); // (recomputed unconditionally at line ~1505; here only for print)
+          if (!rplain_is_full_RX)
+            ex->computePlainResidual(X); // stale after a reject: reassemble R(X_pre) for the print
+          rplain_is_full_RX = true;      // _r_plain now holds full R(X)
           PetscReal r_post;
           PetscCall(VecNorm(ex->_r_plain, NORM_2, &r_post)); // full coupled residual AFTER safeguard
           PetscCall(PetscPrintf(PETSC_COMM_WORLD,
@@ -1772,7 +1808,9 @@ NewtonSNESExecutor::spinLineSearch(SNESLineSearch ls, void * ctx)
       PetscCall(ex->assembleCoupledJacobian(X)); // grad^2 Psi at NPC(X)
     }
 
-    ex->computePlainResidual(X); // _r_plain <- R(X) = grad Psi(X)  (F holds F_SPIN, do not use it)
+    if (!rplain_is_full_RX)
+      ex->computePlainResidual(X); // _r_plain <- R(X) = grad Psi(X); skipped when the sweep safeguard
+                                   // already left _r_plain = full R(X). (F holds F_SPIN, do not use it.)
 
     // PDAS bound constraint: eliminate the active set (dynamic Dirichlet) from the coupled Hessian and
     // residual so the TR/CG step below has delta d = 0 on the active set. Done BEFORE the norm so ||R||

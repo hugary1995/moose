@@ -273,6 +273,11 @@ private:
   /// residual-merit Steihaug path (TR steihaug without an energy postprocessor).
   Vec _r_base = nullptr;
 
+  /// Scratch VecNest for the NON-destructive sweep merit: sweepMerit() masks a COPY of _r_plain here
+  /// so _r_plain keeps the full R(x), letting the caller reuse it (skips the redundant post-sweep
+  /// computePlainResidual). Lazily duplicated from _r_plain.
+  Vec _r_merit = nullptr;
+
   /// ||R|| = ||grad Psi|| cached from the last line-search call, and its value at the start of the
   /// current outer solve. The energy-merit path converges on ||grad Psi|| (the nonlinear
   /// preconditioner pre-minimizes the energy, so ||x - NPC(x)|| plateaus while grad Psi -> 0).
@@ -325,6 +330,11 @@ private:
   /// KKT system, used to globalize the NPC sweep (the energy Psi can fall while the KKT residual rises,
   /// so Psi is the wrong merit for the active-set safeguard). OVERWRITES _r_plain with R(x).
   Real reducedResidualMerit(Vec x);
+  /// Non-destructive variant of the reduced KKT merit for the NPC-sweep safeguard: returns
+  /// 1/2||mask (.) R(x)||^2 but leaves _r_plain = full R(x) (masks a scratch copy _r_merit) so the
+  /// caller can reuse the residual. \p reassemble=false skips computePlainResidual and reuses the
+  /// _r_plain already holding R(x) (e.g. the pre-sweep residual). Used only in spinLineSearch's sweep.
+  Real sweepMerit(Vec x, bool reassemble);
   /// Assemble the plain (unpreconditioned) residual F(x) at \p x into _vec_func (== the outer SNES
   /// function vector). This is grad Psi(x), used for the energy line search's slope and App. C.
   void computePlainResidual(Vec x);
