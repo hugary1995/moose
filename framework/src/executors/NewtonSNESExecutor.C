@@ -152,6 +152,20 @@ NewtonSNESExecutor::validParams()
                         "(freed on the front band) iff |R_u,i| > nepin_u_rtol * max_i|R_u,i|. Larger "
                         "-> narrower disp band. Unused for mono/mspin/mspin_pne.");
   params.addParam<bool>(
+      "npc_adaptive",
+      false,
+      "On-demand NPC: apply the sweep only when the monolithic coupled step stalls (adaptive gate), "
+      "instead of every outer iteration. Activate on a trust-region rejection OR reduced-residual "
+      "contraction theta=||R||_k/||R||_{k-1} > npc_theta_on sustained over two post-transient outer "
+      "iterations; deactivate when theta < npc_theta_off. No effect unless npc selects a sweep "
+      "(mspin / mspin_pne / mspin_fne). Thresholds grounded on MONO brittle/ductile statistics.");
+  params.addParam<Real>("npc_theta_on", 0.5,
+                        "npc_adaptive: activate the sweep when the reduced-residual contraction exceeds "
+                        "this for two consecutive post-transient outer iterations.");
+  params.addParam<Real>("npc_theta_off", 0.1,
+                        "npc_adaptive: deactivate the sweep when the reduced-residual contraction drops "
+                        "below this (the monolithic step is converging fast).");
+  params.addParam<bool>(
       "bounds",
       false,
       "Enforce the irreversibility bound constraint d_old <= d <= 1 on 'bounded_variable' via a "
@@ -196,6 +210,9 @@ NewtonSNESExecutor::NewtonSNESExecutor(const InputParameters & params)
     _nepin_hi(getParam<Real>("nepin_band_hi")),
     _nepin_u_rtol(getParam<Real>("nepin_u_rtol")),
     _nepin_restrict_assembly(getParam<bool>("nepin_restrict_assembly")),
+    _npc_adaptive(getParam<bool>("npc_adaptive")),
+    _npc_theta_on(getParam<Real>("npc_theta_on")),
+    _npc_theta_off(getParam<Real>("npc_theta_off")),
     _bounds(getParam<bool>("bounds")),
     _bounded_var_name(_bounds ? getParam<NonlinearVariableName>("bounded_variable")
                               : NonlinearVariableName("")),
@@ -322,7 +339,8 @@ NewtonSNESExecutor::~NewtonSNESExecutor()
   for (Vec * v : {&_cg_p, &_cg_r, &_cg_y, &_cg_d, &_cg_Ad, &_cg_Pp, &_cg_Pd})
     if (*v)
       PetscCallAbort(this->comm().get(), VecDestroy(v));
-  for (Vec * v : {&_active_mask, &_pdas_prev_dstep, &_x_presweep, &_sweep_dir, &_r_stash})
+  for (Vec * v : {&_active_mask, &_pdas_prev_dstep, &_x_presweep, &_sweep_dir, &_r_stash,
+                  &_x_accepted, &_x_diff})
     if (*v)
       PetscCallAbort(this->comm().get(), VecDestroy(v));
   if (_jac_shell)
@@ -1715,10 +1733,49 @@ NewtonSNESExecutor::spinLineSearch(SNESLineSearch ls, void * ctx)
         // iteration -- see the guarded block after the sweep).
         ex->computePlainResidual(X);
         ex->computeActiveSet(X); // for the coupled Steihaug step below (all MSPIN/NEPIN modes)
-        if (ex->_nepin)
-          ex->computeHardSet(X); // NEPIN: process-zone band -> easy-set frozen lists (per field)
         PetscReal r_pre;
         PetscCall(VecNorm(ex->_r_plain, NORM_2, &r_pre)); // full coupled residual BEFORE the sweep
+        // ---- On-demand NPC gate (npc_adaptive): sweep only when the monolithic step stalls ---------
+        // theta = ||R(X_k)|| / ||R(X_{k-1})||; activate on a TR reject (last iter) or theta>on sustained,
+        // deactivate when theta<off. Signals are already in hand, so the gate is essentially free.
+        bool do_sweep = true;
+        if (ex->_npc_adaptive)
+        {
+          PetscInt sit = 0;
+          PetscCall(SNESGetIterationNumber(snes, &sit));
+          if (sit == 0) // new load step -> reset the gate
+          {
+            ex->_ad_active = false;
+            ex->_ad_streak = 0;
+            ex->_ad_prev_rnorm = -1.0;
+            ex->_ad_reject = false;
+          }
+          const PetscReal theta = (ex->_ad_prev_rnorm > 0.0) ? r_pre / ex->_ad_prev_rnorm : 0.0;
+          const bool transient = (sit <= 1); // skip the post-load-increment residual jump
+          if (!ex->_ad_active)
+          {
+            if (ex->_ad_reject)
+              ex->_ad_active = true; // TR rejected last iteration -> monolithic model is failing
+            else if (!transient && theta > ex->_npc_theta_on)
+            {
+              if (++ex->_ad_streak >= 2)
+                ex->_ad_active = true;
+            }
+            else
+              ex->_ad_streak = 0;
+          }
+          else if (!transient && theta < ex->_npc_theta_off)
+            ex->_ad_active = false; // converging fast again -> stand down
+          ex->_ad_prev_rnorm = r_pre;
+          ex->_ad_reject = false;
+          do_sweep = ex->_ad_active;
+          if (ex->_verbose)
+            PetscCall(PetscPrintf(PETSC_COMM_WORLD,
+                                  "    [NPC gate] sit=%d theta=%.3f sweep=%d\n",
+                                  (int)sit, (double)theta, (int)do_sweep));
+        }
+        if (do_sweep && ex->_nepin)
+          ex->computeHardSet(X); // NEPIN: process-zone band -> easy-set frozen lists (per field)
         auto * const nmsm = dynamic_cast<NMSMExecutor *>(ex->_npc_executor);
         if (!nmsm)
           ex->mooseError("bounds=true with tr_npc requires an NMSMExecutor nonlinear preconditioner "
@@ -1736,6 +1793,8 @@ NewtonSNESExecutor::spinLineSearch(SNESLineSearch ls, void * ctx)
         // pure-ascent sweep and steps from X_pre (the rho-guarded TR below then makes the progress).
         // Monotone phi across outer iterations -> no limit cycle. In the healthy regime the full
         // sweep reduces phi and t=1 is taken with a single extra residual evaluation.
+        if (do_sweep)
+        {
         if (!ex->_x_presweep)
           PetscCall(VecDuplicate(X, &ex->_x_presweep));
         if (!ex->_sweep_dir)
@@ -1819,6 +1878,7 @@ NewtonSNESExecutor::spinLineSearch(SNESLineSearch ls, void * ctx)
                                 (double)t,
                                 (int)bt));
         }
+        } // end if (do_sweep): gate-off skips the sweep, leaving X and _r_plain=R(X) as the MONO step
       }
       else
         PetscCall(SNESSolve(ex->_npc_executor->getSNES(), nullptr, X)); // X <- NPC(X) (one sweep)
@@ -1870,8 +1930,27 @@ NewtonSNESExecutor::spinLineSearch(SNESLineSearch ls, void * ctx)
     // Base merit for the trust-region ratio test: total potential energy Psi(X) if provided, else the
     // residual merit 1/2||R(X)||^2 (reduced; reuses gradPsiNorm -- no extra assembly). The trial
     // point uses computeMerit(W).
-    const PetscReal psiX =
-        ex->_has_energy_pp ? ex->computeEnergy(X) : 0.5 * gradPsiNorm * gradPsiNorm;
+    // Base merit Psi(X). Reuse the cached accepted-trial energy when X is bit-identical to that accepted
+    // iterate (no sweep/clamp moved it) -- saving a full energy element loop on the many iterations where
+    // X is unchanged (easy / gate-off steps). ||X - W_accepted||=0 also self-invalidates at a new load
+    // step (X_0 differs). The check is O(N) vector work, negligible against the element loop it avoids.
+    PetscReal psiX;
+    if (ex->_has_energy_pp)
+    {
+      bool reuse = false;
+      if (ex->_psi_cache_valid && ex->_x_accepted)
+      {
+        if (!ex->_x_diff)
+          PetscCall(VecDuplicate(X, &ex->_x_diff));
+        PetscCall(VecWAXPY(ex->_x_diff, -1.0, ex->_x_accepted, X)); // X - W_accepted
+        PetscReal dx;
+        PetscCall(VecNorm(ex->_x_diff, NORM_INFINITY, &dx));
+        reuse = (dx == 0.0);
+      }
+      psiX = reuse ? ex->_psi_accepted : ex->computeEnergy(X);
+    }
+    else
+      psiX = 0.5 * gradPsiNorm * gradPsiNorm;
     // Residual-merit TR: stash the reduced R(X) so it survives the ratio-test retry loop (steihaugTRS
     // re-reads _r_plain=R(X) each rejected re-solve; the per-trial computeMerit(W) overwrites it).
     if (!ex->_has_energy_pp && ex->_r_base)
@@ -2250,7 +2329,13 @@ NewtonSNESExecutor::spinLineSearch(SNESLineSearch ls, void * ctx)
         // ||R_I||-decrease is itself the overshoot safeguard the old !active_set_changed gate provided.
         // ||R_I(W)|| via reducedResidualMerit(W): energy path clobbers _r_plain -> restore from stash.
         bool kkt_progress = false;
-        if (ex->_bounds)
+        // Only evaluate the KKT-progress clause when the energy ratio has NOT already accepted
+        // (rho >= eta1) and we are not in the near-convergence trust branch -- otherwise accept is
+        // already true and kkt_progress is unused, so its ||R_I(W)|| evaluation (a full residual
+        // assembly, energy-merit path) would be pure waste. Guarding it is bit-identical (kkt_progress
+        // cannot change accept when rho >= eta1 || near_conv) and removes one residual loop per healthy
+        // trial -- the common case in benign phases, for both MONO and the sweep families.
+        if (ex->_bounds && rho < eta1 && !near_conv)
         {
           PetscReal kktW;
           if (ex->_has_energy_pp)
@@ -2282,10 +2367,22 @@ NewtonSNESExecutor::spinLineSearch(SNESLineSearch ls, void * ctx)
         {
           if (rho > eta2 && on_bnd) // very good AND radius-limited -> expand
             ex->_tr_radius = PetscMin(gexpand * ex->_tr_radius, Dmax);
+          // Cache the accepted trial's energy Psi(W): next iteration's base Psi(X) equals this (X <- W)
+          // unless the sweep/clamp move X, which the base-Psi ||X - W|| check detects. Energy merit only.
+          if (ex->_has_energy_pp)
+          {
+            if (!ex->_x_accepted)
+              PetscCall(VecDuplicate(W, &ex->_x_accepted));
+            PetscCall(VecCopy(W, ex->_x_accepted));
+            ex->_psi_accepted = psiW;
+            ex->_psi_cache_valid = true;
+          }
           tr_accepted = true;
           break;
         }
+
         // Reject: shrink the radius and re-solve. Log the rejection + the shrink on its own line.
+        ex->_ad_reject = true; // on-demand-NPC gate signal: monolithic model failed at this radius
         const PetscReal rad_before = ex->_tr_radius;
         ex->_tr_radius *= gshrink;
         const bool tr_fail = (ex->_tr_radius < rad_fail || ex->_tr_radius < 1e-14);

@@ -109,6 +109,24 @@ private:
   unsigned int _disp_sys_num = libMesh::invalid_uint;
   unsigned int _disp_sys_local = libMesh::invalid_uint;
 
+  // --- On-demand NPC activation (adaptive gate) --------------------------------------------------
+  /// Apply the field-split / nonlinear-elimination sweep only when the monolithic coupled step stalls,
+  /// instead of every outer iteration. Per-iteration signal is the reduced-residual contraction
+  /// theta = ||R||_k / ||R||_{k-1}: activate on a TR rejection OR theta > _npc_theta_on sustained over two
+  /// post-transient iterations; deactivate when theta < _npc_theta_off. Cheap when the coupled Newton is
+  /// converging (elastic, benign propagation), sweep-robust when it is not (nucleation, sharp softening).
+  /// No effect unless _tr_npc (a sweep family). Thresholds grounded on MONO brittle/ductile statistics.
+  const bool _npc_adaptive;
+  const Real _npc_theta_on;
+  const Real _npc_theta_off;
+  /// Gate state, reset at each load step's first outer iteration (SNES it==0): whether the sweep is
+  /// currently active, the previous iteration's coupled-residual norm, the consecutive theta>on streak,
+  /// and whether the previous outer iteration's trust region rejected a trial.
+  bool _ad_active = false;
+  Real _ad_prev_rnorm = -1.0;
+  int _ad_streak = 0;
+  bool _ad_reject = false;
+
   // --- NEPIN[FULL] band-restricted assembly (nepin_restrict_assembly) ---------------------------
   /// Backing store for the band-restricted assembly range: the locally-owned elements incident to a
   /// block's free set. Filled per block sub-solve in reducedNewtonSolve. Must persist across the solve
@@ -178,6 +196,14 @@ private:
   /// merit), so the decoupled KKT-progress test can evaluate ||R_I(W)|| (which overwrites _r_plain) and
   /// then restore R_I(X) for the next Steihaug re-solve.
   Vec _r_stash = nullptr;
+  /// Energy-merit base-Psi cache: the last accepted trial's Psi(W) and iterate W, reused as the next
+  /// outer iteration's base Psi(X) when X is bit-identical to that accepted iterate (no sweep/clamp
+  /// moved it) -- saves one energy element loop on the many iterations where X is unchanged. _x_diff is
+  /// scratch for the ||X - W_accepted|| check, which self-invalidates the cache at a new load step.
+  Vec _x_accepted = nullptr;
+  Vec _x_diff = nullptr;
+  Real _psi_accepted = 0.0;
+  bool _psi_cache_valid = false;
 
   /// Recompute the PDAS active set from R (= _r_plain), the current iterate \p X, d_old, and the
   /// previous step. Updates _active_d_dofs, _active_mask, and _active_set_changed. Active criterion
